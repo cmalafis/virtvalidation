@@ -1,69 +1,4 @@
-import { useState } from "react";
-
-const MOCK_VMS = [
-  {
-    id: 1, name: "db-primary-01", ip: "10.0.1.10", os: "RHEL 8.6",
-    role: "PostgreSQL Primary", wave: 1,
-    preStatus: "captured", postStatus: "degraded",
-    cpu: 8, mem: 32, disk: "500GB",
-    findings: [
-      { severity: "high", finding: "pg_hba.conf missing replica entry from app-tier subnet 10.0.2.0/24", remediation: "Add: host replication replicator 10.0.2.0/24 md5 to pg_hba.conf and reload PostgreSQL" },
-      { severity: "low", finding: "NTP sync offset elevated (14ms vs 2ms baseline)", remediation: "Verify chrony config against new OCP-Virt network topology" }
-    ]
-  },
-  {
-    id: 2, name: "app-server-01", ip: "10.0.2.11", os: "RHEL 8.6",
-    role: "Apache/Tomcat", wave: 2,
-    preStatus: "captured", postStatus: "healthy",
-    cpu: 4, mem: 16, disk: "200GB",
-    findings: []
-  },
-  {
-    id: 3, name: "app-server-02", ip: "10.0.2.12", os: "RHEL 8.6",
-    role: "Apache/Tomcat", wave: 2,
-    preStatus: "captured", postStatus: "healthy",
-    cpu: 4, mem: 16, disk: "200GB",
-    findings: []
-  },
-  {
-    id: 4, name: "dns-01", ip: "10.0.0.5", os: "RHEL 9.1",
-    role: "BIND DNS Server", wave: 1,
-    preStatus: "captured", postStatus: "healthy",
-    cpu: 2, mem: 4, disk: "50GB",
-    findings: []
-  },
-  {
-    id: 5, name: "legacy-batch-01", ip: "10.0.3.20", os: "RHEL 7.9",
-    role: "Batch Processing", wave: 3,
-    preStatus: "captured", postStatus: "failed",
-    cpu: 16, mem: 64, disk: "2TB",
-    findings: [
-      { severity: "critical", finding: "Custom kernel module kmod-custom-io not loading — module not compatible with OCP-Virt kernel 5.14", remediation: "Recompile kmod-custom-io against target kernel or evaluate DKMS packaging. Escalate to application owner before cutover." },
-      { severity: "high", finding: "3 of 7 cron jobs silently missing from /etc/cron.d after migration", remediation: "Restore from pre-migration baseline: cron-backup-01, cron-etl-nightly, cron-cleanup-tmp" },
-      { severity: "medium", finding: "Disk mount /data/archive missing — LUN not presented to OCP-Virt VM", remediation: "Re-attach storage volume via OpenShift Virtualization console and update /etc/fstab" }
-    ]
-  },
-  {
-    id: 6, name: "ntp-01", ip: "10.0.0.6", os: "RHEL 9.1",
-    role: "Chrony NTP Server", wave: 1,
-    preStatus: "captured", postStatus: "healthy",
-    cpu: 2, mem: 4, disk: "50GB",
-    findings: []
-  },
-  {
-    id: 7, name: "db-replica-01", ip: "10.0.1.11", os: "RHEL 8.6",
-    role: "PostgreSQL Replica", wave: 1,
-    preStatus: "pending", postStatus: "pending",
-    cpu: 8, mem: 32, disk: "500GB",
-    findings: []
-  },
-];
-
-const WAVES = [
-  { id: 1, name: "Wave 1 — Infrastructure", vms: [1, 6, 4, 7], rationale: "Standalone infrastructure services with no upstream dependencies. DNS and NTP must be migrated first to support all subsequent waves." },
-  { id: 2, name: "Wave 2 — Application Tier", vms: [2, 3], rationale: "Apache/Tomcat nodes depend on Wave 1 DNS resolution. Migrate together to maintain load balancer continuity." },
-  { id: 3, name: "Wave 3 — High Risk / Complex", vms: [5], rationale: "Legacy RHEL 7.9 with custom kernel module. Requires manual validation and application owner sign-off before cutover." },
-];
+import { useEffect, useMemo, useState } from "react";
 
 const STATUS_CONFIG = {
   healthy:  { color: "#00ff88", bg: "rgba(0,255,136,0.08)", label: "HEALTHY",  dot: "#00ff88" },
@@ -74,6 +9,36 @@ const STATUS_CONFIG = {
 };
 
 const SEVERITY_COLOR = { critical: "#ff3355", high: "#ffaa00", medium: "#ffdd44", low: "#4488ff" };
+
+const VM_STATUS_MAP = {
+  discovered:         { preStatus: "pending",  postStatus: "pending" },
+  baseline_captured:  { preStatus: "captured", postStatus: "pending" },
+  migrated:           { preStatus: "captured", postStatus: "pending" },
+  validated:          { preStatus: "captured", postStatus: "healthy" },
+  failed:             { preStatus: "captured", postStatus: "failed"  },
+};
+
+function mapVM(vm) {
+  const mapped = VM_STATUS_MAP[vm.status] ?? { preStatus: "pending", postStatus: "pending" };
+  return {
+    id: vm.id,
+    name: vm.name,
+    ip: vm.ip_address ?? "—",
+    os: vm.os_family ?? "—",
+    role: vm.role ?? "—",
+    preStatus: mapped.preStatus,
+    postStatus: mapped.postStatus,
+    rawStatus: vm.status,
+    // Not tracked by the API yet — shown as "—" in the UI.
+    cpu: null,
+    mem: null,
+    disk: null,
+    wave: null,
+    findings: [],
+  };
+}
+
+const fmt = (v) => (v === null || v === undefined || v === "" ? "—" : v);
 
 const StatusBadge = ({ status }) => {
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
@@ -107,16 +72,68 @@ const Metric = ({ label, value }) => (
   </div>
 );
 
+const Notice = ({ children, tone = "info" }) => {
+  const color = tone === "error" ? "#ff3355" : tone === "warn" ? "#ffaa00" : "#4488ff";
+  return (
+    <div style={{
+      padding: "12px 16px", border: `1px solid ${color}33`,
+      background: `${color}0d`, fontSize: 11, color: "#8888aa",
+      fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
+    }}>
+      <span style={{ color, letterSpacing: "0.15em", marginRight: 8, fontFamily: "'Share Tech Mono', monospace", fontSize: 10 }}>
+        {tone === "error" ? "ERROR" : tone === "warn" ? "NOTICE" : "INFO"}
+      </span>
+      {children}
+    </div>
+  );
+};
+
 export default function VirtValidate() {
   const [activeTab, setActiveTab] = useState("validation");
   const [selectedVM, setSelectedVM] = useState(null);
-  const [expandedWave, setExpandedWave] = useState(1);
+  const [vms, setVms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const healthy = MOCK_VMS.filter(v => v.postStatus === "healthy").length;
-  const degraded = MOCK_VMS.filter(v => v.postStatus === "degraded").length;
-  const failed = MOCK_VMS.filter(v => v.postStatus === "failed").length;
-  const pending = MOCK_VMS.filter(v => v.postStatus === "pending").length;
-  const total = MOCK_VMS.length;
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        setLoading(true);
+        const res = await fetch("/api/vms");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) {
+          setVms(data.map(mapVM));
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e.message || "Failed to load VMs");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (selectedVM && !vms.some((v) => v.id === selectedVM.id)) {
+      setSelectedVM(null);
+    }
+  }, [vms, selectedVM]);
+
+  const { healthy, degraded, failed, pending, total, totalFindings } = useMemo(() => {
+    const counts = { healthy: 0, degraded: 0, failed: 0, pending: 0 };
+    let findings = 0;
+    for (const v of vms) {
+      counts[v.postStatus] = (counts[v.postStatus] || 0) + 1;
+      findings += v.findings.length;
+    }
+    return { ...counts, total: vms.length, totalFindings: findings };
+  }, [vms]);
+
+  const validatedPct = total === 0 ? 0 : Math.round(((healthy + degraded + failed) / total) * 100);
 
   const tabs = ["validation", "migration plan", "inventory", "reports"];
 
@@ -129,7 +146,7 @@ export default function VirtValidate() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        ::-webkit-scrollbar { width: 4px; } 
+        ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #0d0d1a; }
         ::-webkit-scrollbar-thumb { background: #2a2a44; border-radius: 2px; }
         .vm-row:hover { background: rgba(68,136,255,0.04) !important; cursor: pointer; }
@@ -215,6 +232,22 @@ export default function VirtValidate() {
         {/* Main content */}
         <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
 
+          {error && (
+            <div style={{ marginBottom: 16 }}>
+              <Notice tone="error">Failed to load VMs from backend: {error}. Is the API running at /api?</Notice>
+            </div>
+          )}
+          {loading && !error && (
+            <div style={{ marginBottom: 16 }}>
+              <Notice>Loading VM inventory from backend…</Notice>
+            </div>
+          )}
+          {!loading && !error && total === 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <Notice tone="warn">No VMs registered yet. POST to /api/vms to add one.</Notice>
+            </div>
+          )}
+
           {/* VALIDATION TAB */}
           {activeTab === "validation" && (
             <div className="fade-in">
@@ -222,13 +255,13 @@ export default function VirtValidate() {
               <div style={{ marginBottom: 24, padding: "16px 20px", border: "1px solid #1a1a2e", background: "#0a0a18" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                   <span style={{ fontSize: 10, color: "#555577", letterSpacing: "0.15em" }}>MIGRATION VALIDATION PROGRESS</span>
-                  <span style={{ fontSize: 11, color: "#4488ff" }}>{Math.round(((healthy + degraded + failed) / total) * 100)}% VALIDATED</span>
+                  <span style={{ fontSize: 11, color: "#4488ff" }}>{validatedPct}% VALIDATED</span>
                 </div>
                 <div style={{ height: 4, background: "#111122", borderRadius: 2, overflow: "hidden" }}>
                   <div style={{ display: "flex", height: "100%" }}>
-                    <div style={{ width: `${(healthy / total) * 100}%`, background: "#00ff88", transition: "width 0.5s" }} />
-                    <div style={{ width: `${(degraded / total) * 100}%`, background: "#ffaa00", transition: "width 0.5s" }} />
-                    <div style={{ width: `${(failed / total) * 100}%`, background: "#ff3355", transition: "width 0.5s" }} />
+                    <div style={{ width: `${total === 0 ? 0 : (healthy / total) * 100}%`, background: "#00ff88", transition: "width 0.5s" }} />
+                    <div style={{ width: `${total === 0 ? 0 : (degraded / total) * 100}%`, background: "#ffaa00", transition: "width 0.5s" }} />
+                    <div style={{ width: `${total === 0 ? 0 : (failed / total) * 100}%`, background: "#ff3355", transition: "width 0.5s" }} />
                   </div>
                 </div>
               </div>
@@ -244,12 +277,12 @@ export default function VirtValidate() {
                     <span key={h} style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em" }}>{h}</span>
                   ))}
                 </div>
-                {MOCK_VMS.map((vm, i) => (
+                {vms.map((vm, i) => (
                   <div key={vm.id} className="vm-row" onClick={() => setSelectedVM(selectedVM?.id === vm.id ? null : vm)}
                     style={{
                       display: "grid", gridTemplateColumns: "2fr 1.2fr 1fr 0.8fr 0.8fr 0.8fr 1fr",
                       padding: "12px 16px",
-                      borderBottom: i < MOCK_VMS.length - 1 ? "1px solid #0f0f1e" : "none",
+                      borderBottom: i < vms.length - 1 ? "1px solid #0f0f1e" : "none",
                       background: selectedVM?.id === vm.id ? "rgba(68,136,255,0.06)" : "transparent",
                       transition: "background 0.15s",
                     }}>
@@ -259,9 +292,9 @@ export default function VirtValidate() {
                     </div>
                     <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{vm.role}</span>
                     <span style={{ fontSize: 11, color: "#6666aa", alignSelf: "center", fontFamily: "'Share Tech Mono'" }}>{vm.ip}</span>
-                    <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{vm.cpu}</span>
-                    <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{vm.mem}GB</span>
-                    <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{vm.disk}</span>
+                    <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{fmt(vm.cpu)}</span>
+                    <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{vm.mem == null ? "—" : `${vm.mem}GB`}</span>
+                    <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{fmt(vm.disk)}</span>
                     <div style={{ alignSelf: "center" }}><StatusBadge status={vm.postStatus} /></div>
                   </div>
                 ))}
@@ -273,7 +306,9 @@ export default function VirtValidate() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                     <div>
                       <div style={{ fontSize: 14, fontFamily: "'Barlow', sans-serif", fontWeight: 700, color: "#eeeeff" }}>{selectedVM.name}</div>
-                      <div style={{ fontSize: 10, color: "#555577", marginTop: 3, letterSpacing: "0.1em" }}>AI VALIDATION REPORT — {selectedVM.role.toUpperCase()}</div>
+                      <div style={{ fontSize: 10, color: "#555577", marginTop: 3, letterSpacing: "0.1em" }}>
+                        AI VALIDATION REPORT — {String(selectedVM.role || "UNASSIGNED").toUpperCase()}
+                      </div>
                     </div>
                     <StatusBadge status={selectedVM.postStatus} />
                   </div>
@@ -281,15 +316,15 @@ export default function VirtValidate() {
                   <div style={{ display: "flex", gap: 32, marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid #111122" }}>
                     <Metric label="PRE-MIGRATION" value={<StatusBadge status={selectedVM.preStatus} />} />
                     <Metric label="POST-MIGRATION" value={<StatusBadge status={selectedVM.postStatus} />} />
-                    <Metric label="WAVE" value={`Wave ${selectedVM.wave}`} />
+                    <Metric label="WAVE" value={selectedVM.wave == null ? "—" : `Wave ${selectedVM.wave}`} />
                     <Metric label="OS" value={selectedVM.os} />
                     <Metric label="IP" value={selectedVM.ip} />
                   </div>
 
                   {selectedVM.findings.length === 0 ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#00ff88", fontSize: 11 }}>
-                      <span style={{ fontSize: 16 }}>✓</span>
-                      <span>No findings. VM is operating within expected parameters post-migration.</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#555577", fontSize: 11 }}>
+                      <span style={{ fontSize: 14, color: "#4488ff" }}>◌</span>
+                      <span>No validation findings available yet. Run validation to generate an AI report.</span>
                     </div>
                   ) : (
                     <div>
@@ -315,58 +350,47 @@ export default function VirtValidate() {
           {/* MIGRATION PLAN TAB */}
           {activeTab === "migration plan" && (
             <div className="fade-in">
-              <div style={{ marginBottom: 16, padding: "12px 16px", border: "1px solid #1a1a2e", background: "#0a0a18", fontSize: 11, color: "#555577", lineHeight: 1.6 }}>
-                <span style={{ color: "#4488ff" }}>AI ANALYSIS — </span>
-                7 VMs analyzed across 3 migration waves. Sequencing based on inferred service dependencies, OS risk profile, and network topology. Wave 1 infrastructure services must complete and validate before Wave 2 proceeds.
+              <div style={{ marginBottom: 16 }}>
+                <Notice tone="warn">
+                  AI migration planner not yet available in this build. VMs are listed below without wave sequencing.
+                </Notice>
               </div>
 
-              {WAVES.map(wave => {
-                const waveVMs = MOCK_VMS.filter(v => wave.vms.includes(v.id));
-                const isOpen = expandedWave === wave.id;
-                return (
-                  <div key={wave.id} style={{ marginBottom: 12, border: "1px solid #1a1a2e" }}>
-                    <div className="wave-header" onClick={() => setExpandedWave(isOpen ? null : wave.id)}
-                      style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", background: "#0a0a16" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{
-                          width: 22, height: 22, border: "1px solid #4488ff44",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 9, color: "#4488ff", fontWeight: 700,
-                        }}>{wave.id}</div>
-                        <span style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 600, color: "#ccccee" }}>{wave.name}</span>
-                        <span style={{ fontSize: 10, color: "#444466" }}>{waveVMs.length} VMs</span>
-                      </div>
-                      <span style={{ fontSize: 12, color: "#333355" }}>{isOpen ? "▲" : "▼"}</span>
-                    </div>
-
-                    {isOpen && (
-                      <div className="fade-in" style={{ padding: "14px 18px", borderTop: "1px solid #0f0f1e" }}>
-                        <div style={{ fontSize: 10, color: "#555577", marginBottom: 14, lineHeight: 1.6, fontFamily: "'Barlow', sans-serif" }}>
-                          <span style={{ color: "#333355" }}>RATIONALE — </span>{wave.rationale}
-                        </div>
-                        {waveVMs.map(vm => (
-                          <div key={vm.id} style={{
-                            display: "flex", alignItems: "center", justifyContent: "space-between",
-                            padding: "10px 0", borderBottom: "1px solid #0f0f1e",
-                          }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                              <div style={{ width: 6, height: 6, background: "#2a2a44", borderRadius: "50%" }} />
-                              <div>
-                                <div style={{ fontSize: 12, color: "#ccccee", fontFamily: "'Barlow', sans-serif", fontWeight: 600 }}>{vm.name}</div>
-                                <div style={{ fontSize: 9, color: "#444466", marginTop: 1 }}>{vm.role} · {vm.os}</div>
-                              </div>
-                            </div>
-                            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                              <span style={{ fontSize: 10, color: "#555577" }}>{vm.ip}</span>
-                              <StatusBadge status={vm.postStatus} />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+              <div style={{ border: "1px solid #1a1a2e" }}>
+                <div className="wave-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", background: "#0a0a16" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{
+                      width: 22, height: 22, border: "1px solid #4488ff44",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 9, color: "#4488ff", fontWeight: 700,
+                    }}>—</div>
+                    <span style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 600, color: "#ccccee" }}>Unsequenced VMs</span>
+                    <span style={{ fontSize: 10, color: "#444466" }}>{vms.length} VMs</span>
                   </div>
-                );
-              })}
+                </div>
+                <div style={{ padding: "14px 18px", borderTop: "1px solid #0f0f1e" }}>
+                  {vms.length === 0 ? (
+                    <div style={{ fontSize: 11, color: "#555577" }}>No VMs to plan.</div>
+                  ) : vms.map(vm => (
+                    <div key={vm.id} style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "10px 0", borderBottom: "1px solid #0f0f1e",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                        <div style={{ width: 6, height: 6, background: "#2a2a44", borderRadius: "50%" }} />
+                        <div>
+                          <div style={{ fontSize: 12, color: "#ccccee", fontFamily: "'Barlow', sans-serif", fontWeight: 600 }}>{vm.name}</div>
+                          <div style={{ fontSize: 9, color: "#444466", marginTop: 1 }}>{vm.role} · {vm.os}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        <span style={{ fontSize: 10, color: "#555577" }}>{vm.ip}</span>
+                        <StatusBadge status={vm.postStatus} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 
@@ -374,7 +398,7 @@ export default function VirtValidate() {
           {activeTab === "inventory" && (
             <div className="fade-in">
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-                {MOCK_VMS.map(vm => (
+                {vms.map(vm => (
                   <div key={vm.id} style={{ border: "1px solid #1a1a2e", background: "#0a0a18", padding: 16 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                       <div>
@@ -386,10 +410,10 @@ export default function VirtValidate() {
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                       <Metric label="OS" value={vm.os} />
                       <Metric label="IP" value={vm.ip} />
-                      <Metric label="vCPU" value={vm.cpu} />
-                      <Metric label="MEMORY" value={`${vm.mem}GB`} />
-                      <Metric label="DISK" value={vm.disk} />
-                      <Metric label="WAVE" value={`Wave ${vm.wave}`} />
+                      <Metric label="vCPU" value={fmt(vm.cpu)} />
+                      <Metric label="MEMORY" value={vm.mem == null ? "—" : `${vm.mem}GB`} />
+                      <Metric label="DISK" value={fmt(vm.disk)} />
+                      <Metric label="WAVE" value={vm.wave == null ? "—" : `Wave ${vm.wave}`} />
                     </div>
                     {vm.findings.length > 0 && (
                       <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #111122" }}>
@@ -448,7 +472,7 @@ export default function VirtValidate() {
               { label: "CLUSTER", value: "ocp-virt-prod-01" },
               { label: "TOTAL VMS", value: total },
               { label: "VALIDATED", value: `${healthy + degraded + failed} / ${total}` },
-              { label: "FINDINGS", value: MOCK_VMS.reduce((a, v) => a + v.findings.length, 0) },
+              { label: "FINDINGS", value: totalFindings },
             ].map(item => (
               <div key={item.label}>
                 <div style={{ fontSize: 8, color: "#333355", letterSpacing: "0.15em", marginBottom: 3 }}>{item.label}</div>
