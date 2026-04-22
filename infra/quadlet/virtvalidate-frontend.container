@@ -1,0 +1,15 @@
+[Unit]
+Description=VirtValidate Frontend Dashboard
+After=virtvalidate-backend.service
+
+[Container]
+Image=localhost/virtvalidate-frontend:latest
+ContainerName=virtvalidate-frontend
+Network=virtvalidate.network
+PublishPort=3000:3000
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

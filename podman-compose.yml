@@ -1,0 +1,64 @@
+version: "3.9"
+
+# VirtValidate — Podman Compose
+# Run with: podman-compose up -d
+# Rootless by default — no daemon required
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Containerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Containerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3:8b}
+      - SECRET_KEY=${SECRET_KEY}
+      - SSH_KEY_PATH=${SSH_KEY_PATH:-/app/keys/id_ed25519}
+    volumes:
+      - ./backend/app/keys:/app/keys:Z
+    depends_on:
+      - postgres
+      - ollama
+    restart: unless-stopped
+
+  postgres:
+    image: docker.io/postgres:16-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-virtvalidate}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_DB=${POSTGRES_DB:-virtvalidate}
+    volumes:
+      - pgdata:/var/lib/postgresql/data:Z
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollamadata:/root/.ollama:Z
+    # Uncomment if you have an NVIDIA GPU:
+    # devices:
+    #   - nvidia.com/gpu=all
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  ollamadata:

@@ -1,0 +1,19 @@
+[Unit]
+Description=VirtValidate PostgreSQL
+After=network-online.target
+
+[Container]
+Image=docker.io/postgres:16-alpine
+ContainerName=virtvalidate-postgres
+Network=virtvalidate.network
+Environment=POSTGRES_USER=virtvalidate
+Environment=POSTGRES_PASSWORD=changeme
+Environment=POSTGRES_DB=virtvalidate
+Volume=pgdata:/var/lib/postgresql/data:Z
+PublishPort=5432:5432
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

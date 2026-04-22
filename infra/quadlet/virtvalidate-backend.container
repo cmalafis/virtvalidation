@@ -1,0 +1,17 @@
+[Unit]
+Description=VirtValidate Backend API
+After=virtvalidate-postgres.service virtvalidate-ollama.service
+
+[Container]
+Image=localhost/virtvalidate-backend:latest
+ContainerName=virtvalidate-backend
+Network=virtvalidate.network
+EnvironmentFile=%h/.config/virtvalidate/env
+Volume=%h/.local/share/virtvalidate/keys:/app/keys:Z
+PublishPort=8000:8000
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

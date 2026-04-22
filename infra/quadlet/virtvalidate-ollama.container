@@ -1,0 +1,18 @@
+[Unit]
+Description=VirtValidate Ollama LLM Engine
+After=network-online.target
+
+[Container]
+Image=docker.io/ollama/ollama:latest
+ContainerName=virtvalidate-ollama
+Network=virtvalidate.network
+Volume=ollamadata:/root/.ollama:Z
+PublishPort=11434:11434
+# Uncomment for GPU passthrough:
+# AddDevice=nvidia.com/gpu=all
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
