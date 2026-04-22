@@ -1,10 +1,24 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.vms import router as vms_router
+from app.core.db import Base, engine
+from app.models import vm as _vm_models  # noqa: F401  (register models on Base)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    yield
+
 
 app = FastAPI(
     title="VirtValidate API",
     description="VM migration validation platform — air-gapped, local LLM",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -14,6 +28,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(vms_router)
+
 
 @app.get("/health")
 def health():
