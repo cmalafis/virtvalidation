@@ -72,6 +72,19 @@ def create_plan(payload: PlanCreate, db: Session = Depends(get_db)) -> Migration
     return plan
 
 
+@router.get("", response_model=list[PlanRead])
+def list_plans(
+    db: Session = Depends(get_db),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[MigrationPlan]:
+    stmt = (
+        select(MigrationPlan)
+        .order_by(MigrationPlan.created_at.desc())
+        .limit(limit)
+    )
+    return list(db.scalars(stmt).all())
+
+
 @router.get("/{plan_id}", response_model=PlanRead)
 def get_plan(plan_id: int, db: Session = Depends(get_db)) -> MigrationPlan:
     plan = db.get(MigrationPlan, plan_id)

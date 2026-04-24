@@ -8,7 +8,17 @@ const STATUS_CONFIG = {
   pending:  { color: "#666677", bg: "rgba(102,102,119,0.08)",label: "PENDING",  dot: "#666677" },
 };
 
-const SEVERITY_COLOR = { critical: "#ff3355", high: "#ffaa00", medium: "#ffdd44", low: "#4488ff" };
+const SEVERITY_COLOR = {
+  critical: "#ff3355",
+  warn:     "#ffaa00",
+  info:     "#4488ff",
+  // legacy fallbacks for anything older in the payload
+  high:     "#ffaa00",
+  medium:   "#ffdd44",
+  low:      "#4488ff",
+};
+
+const RISK_COLOR = { low: "#00ff88", medium: "#ffaa00", high: "#ff3355" };
 
 const VM_STATUS_MAP = {
   discovered:         { preStatus: "pending",  postStatus: "pending" },
@@ -17,6 +27,8 @@ const VM_STATUS_MAP = {
   validated:          { preStatus: "captured", postStatus: "healthy" },
   failed:             { preStatus: "captured", postStatus: "failed"  },
 };
+
+const VERDICT_TO_STATUS = { pass: "healthy", warn: "degraded", fail: "failed" };
 
 function mapVM(vm) {
   const mapped = VM_STATUS_MAP[vm.status] ?? { preStatus: "pending", postStatus: "pending" };
@@ -33,8 +45,6 @@ function mapVM(vm) {
     cpu: null,
     mem: null,
     disk: null,
-    wave: null,
-    findings: [],
   };
 }
 
@@ -56,14 +66,17 @@ const StatusBadge = ({ status }) => {
   );
 };
 
-const SeverityTag = ({ s }) => (
-  <span style={{
-    fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
-    color: SEVERITY_COLOR[s], border: `1px solid ${SEVERITY_COLOR[s]}44`,
-    padding: "2px 7px", borderRadius: 2, letterSpacing: "0.1em",
-    textTransform: "uppercase", fontWeight: 700,
-  }}>{s}</span>
-);
+const SeverityTag = ({ s }) => {
+  const color = SEVERITY_COLOR[s] || "#666677";
+  return (
+    <span style={{
+      fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
+      color, border: `1px solid ${color}44`,
+      padding: "2px 7px", borderRadius: 2, letterSpacing: "0.1em",
+      textTransform: "uppercase", fontWeight: 700,
+    }}>{s || "—"}</span>
+  );
+};
 
 const Metric = ({ label, value }) => (
   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -88,54 +101,158 @@ const Notice = ({ children, tone = "info" }) => {
   );
 };
 
+async function fetchJSON(url, { signal } = {}) {
+  const res = await fetch(url, { signal });
+  if (res.status === 404) return { status: 404, data: null };
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return { status: res.status, data: await res.json() };
+}
+
 export default function VirtValidate() {
   const [activeTab, setActiveTab] = useState("validation");
-  const [selectedVM, setSelectedVM] = useState(null);
-  const [vms, setVms] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [selectedVMId, setSelectedVMId] = useState(null);
 
+  // Inventory (GET /api/vms)
+  const [vms, setVms] = useState([]);
+  const [vmsLoading, setVmsLoading] = useState(true);
+  const [vmsError, setVmsError] = useState(null);
+
+  // VM detail (GET /api/vms/{id})
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(null);
+
+  // VM validation (GET /api/vms/{id}/validation/latest)
+  const [validation, setValidation] = useState(null);
+  const [validationLoading, setValidationLoading] = useState(false);
+  const [validationError, setValidationError] = useState(null);
+  const [validationMissing, setValidationMissing] = useState(false);
+
+  // Migration plan (GET /api/plans)
+  const [plan, setPlan] = useState(null);
+  const [planLoading, setPlanLoading] = useState(true);
+  const [planError, setPlanError] = useState(null);
+
+  // Inventory
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
+    const ctrl = new AbortController();
+    (async () => {
       try {
-        setLoading(true);
-        const res = await fetch("/api/vms");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (!cancelled) {
-          setVms(data.map(mapVM));
-          setError(null);
-        }
+        setVmsLoading(true);
+        const { data } = await fetchJSON("/api/vms", { signal: ctrl.signal });
+        setVms((data || []).map(mapVM));
+        setVmsError(null);
       } catch (e) {
-        if (!cancelled) setError(e.message || "Failed to load VMs");
+        if (e.name !== "AbortError") setVmsError(e.message || "Failed to load VMs");
       } finally {
-        if (!cancelled) setLoading(false);
+        setVmsLoading(false);
       }
-    }
-    load();
-    return () => { cancelled = true; };
+    })();
+    return () => ctrl.abort();
   }, []);
 
+  // Latest plan
   useEffect(() => {
-    if (selectedVM && !vms.some((v) => v.id === selectedVM.id)) {
-      setSelectedVM(null);
-    }
-  }, [vms, selectedVM]);
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        setPlanLoading(true);
+        const { data } = await fetchJSON("/api/plans?limit=1", { signal: ctrl.signal });
+        setPlan(Array.isArray(data) && data.length > 0 ? data[0] : null);
+        setPlanError(null);
+      } catch (e) {
+        if (e.name !== "AbortError") setPlanError(e.message || "Failed to load plans");
+      } finally {
+        setPlanLoading(false);
+      }
+    })();
+    return () => ctrl.abort();
+  }, []);
 
-  const { healthy, degraded, failed, pending, total, totalFindings } = useMemo(() => {
-    const counts = { healthy: 0, degraded: 0, failed: 0, pending: 0 };
-    let findings = 0;
-    for (const v of vms) {
-      counts[v.postStatus] = (counts[v.postStatus] || 0) + 1;
-      findings += v.findings.length;
+  // VM detail + latest validation when a row is selected
+  useEffect(() => {
+    if (selectedVMId == null) {
+      setDetail(null);
+      setValidation(null);
+      setValidationMissing(false);
+      setDetailError(null);
+      setValidationError(null);
+      return;
     }
-    return { ...counts, total: vms.length, totalFindings: findings };
+    const ctrl = new AbortController();
+    (async () => {
+      setDetailLoading(true);
+      setValidationLoading(true);
+      setDetailError(null);
+      setValidationError(null);
+      setValidationMissing(false);
+      try {
+        const [detailRes, valRes] = await Promise.all([
+          fetchJSON(`/api/vms/${selectedVMId}`, { signal: ctrl.signal }).catch((e) => ({ error: e })),
+          fetchJSON(`/api/vms/${selectedVMId}/validation/latest`, { signal: ctrl.signal }).catch((e) => ({ error: e })),
+        ]);
+
+        if (detailRes.error) {
+          if (detailRes.error.name !== "AbortError") {
+            setDetailError(detailRes.error.message || "Failed to load VM detail");
+          }
+        } else {
+          setDetail(detailRes.data);
+        }
+
+        if (valRes.error) {
+          if (valRes.error.name !== "AbortError") {
+            setValidationError(valRes.error.message || "Failed to load validation");
+          }
+        } else if (valRes.status === 404) {
+          setValidationMissing(true);
+          setValidation(null);
+        } else {
+          setValidation(valRes.data);
+          setValidationMissing(false);
+        }
+      } finally {
+        setDetailLoading(false);
+        setValidationLoading(false);
+      }
+    })();
+    return () => ctrl.abort();
+  }, [selectedVMId]);
+
+  // Clear selection if the VM was removed server-side
+  useEffect(() => {
+    if (selectedVMId != null && !vms.some((v) => v.id === selectedVMId)) {
+      setSelectedVMId(null);
+    }
+  }, [vms, selectedVMId]);
+
+  const selectedVM = useMemo(
+    () => vms.find((v) => v.id === selectedVMId) || null,
+    [vms, selectedVMId]
+  );
+
+  const vmNameById = useMemo(() => {
+    const m = new Map();
+    for (const v of vms) m.set(v.id, v.name);
+    return m;
+  }, [vms]);
+
+  // Aggregate counts for header. postStatus comes from VM.status on the list;
+  // validation results would override per-VM but we only fetch validation for
+  // the selected VM, so header counts reflect list-level state only.
+  const { healthy, degraded, failed, pending, total } = useMemo(() => {
+    const counts = { healthy: 0, degraded: 0, failed: 0, pending: 0 };
+    for (const v of vms) counts[v.postStatus] = (counts[v.postStatus] || 0) + 1;
+    return { ...counts, total: vms.length };
   }, [vms]);
 
   const validatedPct = total === 0 ? 0 : Math.round(((healthy + degraded + failed) / total) * 100);
 
   const tabs = ["validation", "migration plan", "inventory", "reports"];
+
+  const detailPostStatus = validation
+    ? VERDICT_TO_STATUS[validation.status] || "pending"
+    : selectedVM?.postStatus;
 
   return (
     <div style={{
@@ -232,17 +349,17 @@ export default function VirtValidate() {
         {/* Main content */}
         <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
 
-          {error && (
+          {vmsError && (
             <div style={{ marginBottom: 16 }}>
-              <Notice tone="error">Failed to load VMs from backend: {error}. Is the API running at /api?</Notice>
+              <Notice tone="error">Failed to load VMs from backend: {vmsError}. Is the API running at /api?</Notice>
             </div>
           )}
-          {loading && !error && (
+          {vmsLoading && !vmsError && (
             <div style={{ marginBottom: 16 }}>
               <Notice>Loading VM inventory from backend…</Notice>
             </div>
           )}
-          {!loading && !error && total === 0 && (
+          {!vmsLoading && !vmsError && total === 0 && (
             <div style={{ marginBottom: 16 }}>
               <Notice tone="warn">No VMs registered yet. POST to /api/vms to add one.</Notice>
             </div>
@@ -278,12 +395,12 @@ export default function VirtValidate() {
                   ))}
                 </div>
                 {vms.map((vm, i) => (
-                  <div key={vm.id} className="vm-row" onClick={() => setSelectedVM(selectedVM?.id === vm.id ? null : vm)}
+                  <div key={vm.id} className="vm-row" onClick={() => setSelectedVMId(selectedVMId === vm.id ? null : vm.id)}
                     style={{
                       display: "grid", gridTemplateColumns: "2fr 1.2fr 1fr 0.8fr 0.8fr 0.8fr 1fr",
                       padding: "12px 16px",
                       borderBottom: i < vms.length - 1 ? "1px solid #0f0f1e" : "none",
-                      background: selectedVM?.id === vm.id ? "rgba(68,136,255,0.06)" : "transparent",
+                      background: selectedVMId === vm.id ? "rgba(68,136,255,0.06)" : "transparent",
                       transition: "background 0.15s",
                     }}>
                     <div>
@@ -310,36 +427,97 @@ export default function VirtValidate() {
                         AI VALIDATION REPORT — {String(selectedVM.role || "UNASSIGNED").toUpperCase()}
                       </div>
                     </div>
-                    <StatusBadge status={selectedVM.postStatus} />
+                    <StatusBadge status={detailPostStatus} />
                   </div>
+
+                  {detailError && (
+                    <div style={{ marginBottom: 12 }}>
+                      <Notice tone="error">Failed to load VM detail: {detailError}</Notice>
+                    </div>
+                  )}
+                  {detailLoading && !detailError && (
+                    <div style={{ marginBottom: 12 }}>
+                      <Notice>Loading VM detail from /api/vms/{selectedVM.id}…</Notice>
+                    </div>
+                  )}
 
                   <div style={{ display: "flex", gap: 32, marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid #111122" }}>
                     <Metric label="PRE-MIGRATION" value={<StatusBadge status={selectedVM.preStatus} />} />
-                    <Metric label="POST-MIGRATION" value={<StatusBadge status={selectedVM.postStatus} />} />
-                    <Metric label="WAVE" value={selectedVM.wave == null ? "—" : `Wave ${selectedVM.wave}`} />
-                    <Metric label="OS" value={selectedVM.os} />
-                    <Metric label="IP" value={selectedVM.ip} />
+                    <Metric label="POST-MIGRATION" value={<StatusBadge status={detailPostStatus} />} />
+                    <Metric label="OS" value={detail?.os_family ?? selectedVM.os} />
+                    <Metric label="IP" value={detail?.ip_address ?? selectedVM.ip} />
+                    <Metric
+                      label="VALIDATED AT"
+                      value={validation?.validated_at ? new Date(validation.validated_at).toLocaleString() : "—"}
+                    />
                   </div>
 
-                  {selectedVM.findings.length === 0 ? (
+                  {validationLoading && (
+                    <Notice>Loading validation results from /api/vms/{selectedVM.id}/validation/latest…</Notice>
+                  )}
+
+                  {!validationLoading && validationError && (
+                    <Notice tone="error">Failed to load validation: {validationError}</Notice>
+                  )}
+
+                  {!validationLoading && !validationError && validationMissing && (
                     <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#555577", fontSize: 11 }}>
                       <span style={{ fontSize: 14, color: "#4488ff" }}>◌</span>
-                      <span>No validation findings available yet. Run validation to generate an AI report.</span>
+                      <span>No validation results available yet. Run validation to generate an AI report.</span>
                     </div>
-                  ) : (
+                  )}
+
+                  {!validationLoading && !validationError && validation && (
                     <div>
-                      <div style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em", marginBottom: 12 }}>AI FINDINGS & REMEDIATION</div>
-                      {selectedVM.findings.map((f, i) => (
-                        <div key={i} className="finding-row" style={{ borderLeftColor: SEVERITY_COLOR[f.severity] }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                            <SeverityTag s={f.severity} />
-                          </div>
-                          <div style={{ fontSize: 12, color: "#bbbbcc", marginBottom: 6, fontFamily: "'Barlow', sans-serif", lineHeight: 1.5 }}>{f.finding}</div>
-                          <div style={{ fontSize: 11, color: "#555577", fontFamily: "'Barlow', sans-serif", lineHeight: 1.5 }}>
-                            <span style={{ color: "#333355" }}>→ </span>{f.remediation}
-                          </div>
+                      {validation.summary && (
+                        <div style={{ fontSize: 12, color: "#bbbbcc", fontFamily: "'Barlow', sans-serif", lineHeight: 1.6, marginBottom: 16, paddingBottom: 12, borderBottom: "1px solid #111122" }}>
+                          {validation.summary}
                         </div>
-                      ))}
+                      )}
+
+                      <div style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em", marginBottom: 12 }}>AI FINDINGS</div>
+                      {validation.findings.length === 0 ? (
+                        <div style={{ fontSize: 11, color: "#555577", marginBottom: 16 }}>No findings recorded.</div>
+                      ) : (
+                        validation.findings.map((f, i) => (
+                          <div key={i} className="finding-row" style={{ borderLeftColor: SEVERITY_COLOR[f.severity] || "#555577" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                              <SeverityTag s={f.severity} />
+                              {f.category && (
+                                <span style={{ fontSize: 9, color: "#555577", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                                  {f.category}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: 12, color: "#bbbbcc", fontFamily: "'Barlow', sans-serif", lineHeight: 1.5 }}>
+                              {f.message}
+                            </div>
+                          </div>
+                        ))
+                      )}
+
+                      {validation.remediation.length > 0 && (
+                        <>
+                          <div style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em", margin: "20px 0 12px" }}>REMEDIATION</div>
+                          {validation.remediation.map((r, i) => (
+                            <div key={i} style={{ marginBottom: 10, fontFamily: "'Barlow', sans-serif" }}>
+                              <div style={{ fontSize: 11, color: "#bbbbcc", lineHeight: 1.5 }}>
+                                <span style={{ color: "#4488ff", marginRight: 6 }}>{r.step ?? i + 1}.</span>
+                                {r.action}
+                              </div>
+                              {r.command && (
+                                <div style={{
+                                  fontSize: 11, color: "#8888aa", marginTop: 4, padding: "6px 10px",
+                                  background: "#07070f", border: "1px solid #111122", borderRadius: 2,
+                                  fontFamily: "'Share Tech Mono', monospace",
+                                }}>
+                                  $ {r.command}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -350,47 +528,90 @@ export default function VirtValidate() {
           {/* MIGRATION PLAN TAB */}
           {activeTab === "migration plan" && (
             <div className="fade-in">
-              <div style={{ marginBottom: 16 }}>
-                <Notice tone="warn">
-                  AI migration planner not yet available in this build. VMs are listed below without wave sequencing.
-                </Notice>
-              </div>
-
-              <div style={{ border: "1px solid #1a1a2e" }}>
-                <div className="wave-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", background: "#0a0a16" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{
-                      width: 22, height: 22, border: "1px solid #4488ff44",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 9, color: "#4488ff", fontWeight: 700,
-                    }}>—</div>
-                    <span style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 600, color: "#ccccee" }}>Unsequenced VMs</span>
-                    <span style={{ fontSize: 10, color: "#444466" }}>{vms.length} VMs</span>
-                  </div>
+              {planError && (
+                <div style={{ marginBottom: 16 }}>
+                  <Notice tone="error">Failed to load plans: {planError}</Notice>
                 </div>
-                <div style={{ padding: "14px 18px", borderTop: "1px solid #0f0f1e" }}>
-                  {vms.length === 0 ? (
-                    <div style={{ fontSize: 11, color: "#555577" }}>No VMs to plan.</div>
-                  ) : vms.map(vm => (
-                    <div key={vm.id} style={{
-                      display: "flex", alignItems: "center", justifyContent: "space-between",
-                      padding: "10px 0", borderBottom: "1px solid #0f0f1e",
-                    }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                        <div style={{ width: 6, height: 6, background: "#2a2a44", borderRadius: "50%" }} />
-                        <div>
-                          <div style={{ fontSize: 12, color: "#ccccee", fontFamily: "'Barlow', sans-serif", fontWeight: 600 }}>{vm.name}</div>
-                          <div style={{ fontSize: 9, color: "#444466", marginTop: 1 }}>{vm.role} · {vm.os}</div>
-                        </div>
+              )}
+              {planLoading && !planError && (
+                <div style={{ marginBottom: 16 }}>
+                  <Notice>Loading migration plan from /api/plans…</Notice>
+                </div>
+              )}
+              {!planLoading && !planError && !plan && (
+                <div style={{ marginBottom: 16 }}>
+                  <Notice tone="warn">
+                    No migration plans have been generated yet. POST to /api/plans with a list of vm_ids to generate one.
+                  </Notice>
+                </div>
+              )}
+
+              {plan && (
+                <>
+                  <div style={{ marginBottom: 16, padding: "14px 18px", border: "1px solid #1a1a2e", background: "#0a0a18" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontSize: 10, color: "#555577", letterSpacing: "0.15em" }}>
+                        PLAN #{plan.id} · {plan.waves.length} WAVE{plan.waves.length === 1 ? "" : "S"} · {plan.vm_ids.length} VMs
+                      </span>
+                      <span style={{ fontSize: 10, color: "#444466" }}>
+                        {new Date(plan.created_at).toLocaleString()} · {plan.model}
+                      </span>
+                    </div>
+                    {plan.summary && (
+                      <div style={{ fontSize: 11, color: "#8888aa", fontFamily: "'Barlow', sans-serif", lineHeight: 1.6 }}>
+                        {plan.summary}
                       </div>
-                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                        <span style={{ fontSize: 10, color: "#555577" }}>{vm.ip}</span>
-                        <StatusBadge status={vm.postStatus} />
+                    )}
+                  </div>
+
+                  {plan.waves.map((wave) => (
+                    <div key={wave.wave_number} style={{ border: "1px solid #1a1a2e", marginBottom: 12 }}>
+                      <div className="wave-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", background: "#0a0a16" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                          <div style={{
+                            width: 22, height: 22, border: "1px solid #4488ff44",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 9, color: "#4488ff", fontWeight: 700,
+                          }}>{wave.wave_number}</div>
+                          <span style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 600, color: "#ccccee" }}>
+                            Wave {wave.wave_number}
+                          </span>
+                          <span style={{ fontSize: 10, color: "#444466" }}>{wave.vm_ids.length} VMs</span>
+                        </div>
+                        <span style={{
+                          fontSize: 9, letterSpacing: "0.12em", fontWeight: 700,
+                          color: RISK_COLOR[wave.estimated_risk] || "#666677",
+                          border: `1px solid ${(RISK_COLOR[wave.estimated_risk] || "#666677")}44`,
+                          padding: "2px 7px", borderRadius: 2, textTransform: "uppercase",
+                        }}>
+                          RISK · {wave.estimated_risk}
+                        </span>
+                      </div>
+                      {wave.rationale && (
+                        <div style={{ padding: "12px 18px", borderTop: "1px solid #0f0f1e", fontSize: 11, color: "#8888aa", fontFamily: "'Barlow', sans-serif", lineHeight: 1.6 }}>
+                          {wave.rationale}
+                        </div>
+                      )}
+                      <div style={{ padding: "8px 18px 14px", borderTop: "1px solid #0f0f1e" }}>
+                        {wave.vm_ids.map((vid) => (
+                          <div key={vid} style={{
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                            padding: "8px 0", borderBottom: "1px solid #0f0f1e",
+                          }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                              <div style={{ width: 6, height: 6, background: "#2a2a44", borderRadius: "50%" }} />
+                              <div style={{ fontSize: 12, color: "#ccccee", fontFamily: "'Barlow', sans-serif", fontWeight: 600 }}>
+                                {vmNameById.get(vid) || `vm_id=${vid}`}
+                              </div>
+                            </div>
+                            <span style={{ fontSize: 10, color: "#555577" }}>id {vid}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))}
-                </div>
-              </div>
+                </>
+              )}
             </div>
           )}
 
@@ -413,13 +634,8 @@ export default function VirtValidate() {
                       <Metric label="vCPU" value={fmt(vm.cpu)} />
                       <Metric label="MEMORY" value={vm.mem == null ? "—" : `${vm.mem}GB`} />
                       <Metric label="DISK" value={fmt(vm.disk)} />
-                      <Metric label="WAVE" value={vm.wave == null ? "—" : `Wave ${vm.wave}`} />
+                      <Metric label="STATUS" value={vm.rawStatus} />
                     </div>
-                    {vm.findings.length > 0 && (
-                      <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #111122" }}>
-                        <span style={{ fontSize: 9, color: "#ff335588", letterSpacing: "0.1em" }}>{vm.findings.length} FINDING{vm.findings.length > 1 ? "S" : ""}</span>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -467,12 +683,12 @@ export default function VirtValidate() {
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {[
               { label: "APPLIANCE", value: "v0.1.0-alpha" },
-              { label: "MODEL", value: "llama3:8b" },
+              { label: "MODEL", value: plan?.model || "llama3:8b" },
               { label: "INFERENCE", value: "LOCAL / OLLAMA" },
               { label: "CLUSTER", value: "ocp-virt-prod-01" },
               { label: "TOTAL VMS", value: total },
               { label: "VALIDATED", value: `${healthy + degraded + failed} / ${total}` },
-              { label: "FINDINGS", value: totalFindings },
+              { label: "LATEST PLAN", value: plan ? `#${plan.id}` : "—" },
             ].map(item => (
               <div key={item.label}>
                 <div style={{ fontSize: 8, color: "#333355", letterSpacing: "0.15em", marginBottom: 3 }}>{item.label}</div>

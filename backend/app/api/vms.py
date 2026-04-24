@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 
 from app.core.baseline import synthesize_profile
 from app.core.db import get_db
+from app.models.validation import ValidationResult
 from app.models.vm import VM, BaselineSnapshot, VMStatus
+from app.schemas.validation import ValidationResultRead
 from app.schemas.vm import (
     BaselineProfile,
     SnapshotCreate,
@@ -125,6 +127,24 @@ def get_snapshot(
             status_code=404, detail=f"Snapshot {snapshot_id} not found for VM {vm_id}"
         )
     return snapshot
+
+
+@router.get("/{vm_id}/validation/latest", response_model=ValidationResultRead)
+def latest_validation(
+    vm_id: int, db: Session = Depends(get_db)
+) -> ValidationResult:
+    _get_vm_or_404(db, vm_id)
+    row = db.scalars(
+        select(ValidationResult)
+        .where(ValidationResult.vm_id == vm_id)
+        .order_by(ValidationResult.validated_at.desc())
+        .limit(1)
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"No validation results for VM {vm_id}"
+        )
+    return row
 
 
 @router.get("/{vm_id}/baseline/history", response_model=list[SnapshotRead])
