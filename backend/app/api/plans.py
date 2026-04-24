@@ -17,15 +17,10 @@ router = APIRouter(prefix="/plans", tags=["plans"])
 
 def _assemble_vm_profiles(db: Session, vm_ids: list[int]) -> list[dict]:
     unique_ids = list(dict.fromkeys(vm_ids))
-    vms = {
-        vm.id: vm
-        for vm in db.scalars(select(VM).where(VM.id.in_(unique_ids))).all()
-    }
+    vms = {vm.id: vm for vm in db.scalars(select(VM).where(VM.id.in_(unique_ids))).all()}
     missing = [vid for vid in unique_ids if vid not in vms]
     if missing:
-        raise HTTPException(
-            status_code=404, detail=f"Unknown vm_ids: {missing}"
-        )
+        raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
 
     profiles: list[dict] = []
     for vid in unique_ids:
@@ -77,11 +72,7 @@ def list_plans(
     db: Session = Depends(get_db),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> list[MigrationPlan]:
-    stmt = (
-        select(MigrationPlan)
-        .order_by(MigrationPlan.created_at.desc())
-        .limit(limit)
-    )
+    stmt = select(MigrationPlan).order_by(MigrationPlan.created_at.desc()).limit(limit)
     return list(db.scalars(stmt).all())
 
 
@@ -93,9 +84,7 @@ def get_plan(plan_id: int, db: Session = Depends(get_db)) -> MigrationPlan:
     return plan
 
 
-def _latest_validations_for(
-    db: Session, vm_ids: list[int]
-) -> dict[int, ValidationResult]:
+def _latest_validations_for(db: Session, vm_ids: list[int]) -> dict[int, ValidationResult]:
     latest: dict[int, ValidationResult] = {}
     for vid in vm_ids:
         row = db.scalars(
@@ -120,9 +109,7 @@ def wave_report(
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
 
-    wave = next(
-        (w for w in plan.waves if w.get("wave_number") == wave_number), None
-    )
+    wave = next((w for w in plan.waves if w.get("wave_number") == wave_number), None)
     if wave is None:
         raise HTTPException(
             status_code=404,
@@ -131,14 +118,9 @@ def wave_report(
 
     vm_ids: list[int] = list(wave.get("vm_ids") or [])
     if not vm_ids:
-        raise HTTPException(
-            status_code=422, detail=f"Wave {wave_number} has no VMs"
-        )
+        raise HTTPException(status_code=422, detail=f"Wave {wave_number} has no VMs")
 
-    vms_by_id = {
-        vm.id: vm
-        for vm in db.scalars(select(VM).where(VM.id.in_(vm_ids))).all()
-    }
+    vms_by_id = {vm.id: vm for vm in db.scalars(select(VM).where(VM.id.in_(vm_ids))).all()}
     latest = _latest_validations_for(db, vm_ids)
     missing = [vid for vid in vm_ids if vid not in latest]
     if missing:

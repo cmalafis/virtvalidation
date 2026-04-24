@@ -4,6 +4,7 @@ Baseline profile synthesis.
 Aggregates multiple BaselineSnapshot rows for a VM into a single profile that
 summarizes what is stable vs transient across collections.
 """
+
 from __future__ import annotations
 
 from collections import Counter
@@ -21,9 +22,7 @@ def _mount_key(entry: dict) -> tuple:
     return (entry.get("target"), entry.get("source"), entry.get("fstype"))
 
 
-def synthesize_profile(
-    vm_id: int, snapshots: Iterable[BaselineSnapshot]
-) -> BaselineProfile:
+def synthesize_profile(vm_id: int, snapshots: Iterable[BaselineSnapshot]) -> BaselineProfile:
     snapshots = list(snapshots)
 
     if not snapshots:

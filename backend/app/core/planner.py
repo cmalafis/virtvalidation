@@ -6,6 +6,7 @@ each VM's role and dependencies, then group them into dependency-ordered
 migration waves. All LLM calls go to the local Ollama instance — never to
 external APIs.
 """
+
 from __future__ import annotations
 
 import json
@@ -124,9 +125,7 @@ class MigrationPlanner:
         try:
             plan: Any = json.loads(raw)
         except json.JSONDecodeError as e:
-            raise PlannerError(
-                f"Planner output was not valid JSON: {e}\n{raw[:500]}"
-            ) from e
+            raise PlannerError(f"Planner output was not valid JSON: {e}\n{raw[:500]}") from e
 
         if not isinstance(plan, dict):
             raise PlannerError("Planner output was not a JSON object")
@@ -185,9 +184,7 @@ class MigrationPlanner:
 
         missing = provided_ids - seen_ids
         if missing:
-            raise PlannerError(
-                f"planner did not place vm_ids {sorted(missing)} into any wave"
-            )
+            raise PlannerError(f"planner did not place vm_ids {sorted(missing)} into any wave")
 
         normalized_waves.sort(key=lambda w: w["wave_number"])
 

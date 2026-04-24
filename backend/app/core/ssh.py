@@ -3,6 +3,7 @@ SSH Collection Engine
 Connects to VMs via Ed25519 keys, collects system state for
 pre-migration baseline capture and post-migration validation.
 """
+
 from __future__ import annotations
 
 import re
@@ -100,8 +101,7 @@ class SSHCollector:
     def _collect_services(self, client: paramiko.SSHClient) -> list[dict]:
         out = self._run(
             client,
-            "systemctl list-units --type=service --state=running "
-            "--no-legend --no-pager --plain",
+            "systemctl list-units --type=service --state=running " "--no-legend --no-pager --plain",
         )
         services = []
         for line in out.splitlines():
@@ -212,8 +212,7 @@ class SSHCollector:
                 continue
             body = self._run(client, f"crontab -l -u {shlex.quote(user)} 2>/dev/null")
             entries = [
-                ln for ln in body.splitlines()
-                if ln.strip() and not ln.lstrip().startswith("#")
+                ln for ln in body.splitlines() if ln.strip() and not ln.lstrip().startswith("#")
             ]
             if entries:
                 user_crons[user] = entries
@@ -230,8 +229,7 @@ class SSHCollector:
                 continue
             body = self._run(client, f"cat {shlex.quote(path)}")
             entries = [
-                ln for ln in body.splitlines()
-                if ln.strip() and not ln.lstrip().startswith("#")
+                ln for ln in body.splitlines() if ln.strip() and not ln.lstrip().startswith("#")
             ]
             if entries:
                 system_entries.append({"path": path, "entries": entries})

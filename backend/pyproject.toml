@@ -1,0 +1,69 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["app/keys"]
+
+[tool.ruff.lint]
+# Start with a reasonable-not-pedantic ruleset; can tighten over time.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "W",   # pycodestyle warnings
+    "B",   # flake8-bugbear
+]
+ignore = [
+    "E501",  # line length — handled by formatter
+    "B008",  # FastAPI `Depends(...)` in defaults is idiomatic
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]  # allow `assert False` style in tests
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_redundant_casts = true
+warn_unused_ignores = true
+# Third-party packages without stubs (paramiko, apscheduler, reportlab) would
+# otherwise produce `import-untyped` noise — silence that specific code.
+disable_error_code = ["import-untyped"]
+# Keep untyped code tolerant for now; tighten incrementally.
+check_untyped_defs = false
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic.*",
+    "ignore::DeprecationWarning:apscheduler.*",
+]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+    "app/main.py",
+    "app/core/scheduler.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

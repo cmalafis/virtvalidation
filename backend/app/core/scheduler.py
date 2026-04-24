@@ -4,6 +4,7 @@ Scheduled baseline collection.
 Runs SSH collection against every enrolled VM twice daily (06:00 and 18:00
 local time) and persists each result as a BaselineSnapshot.
 """
+
 from __future__ import annotations
 
 import logging
@@ -46,8 +47,9 @@ def collect_baselines_for_all_vms() -> None:
 
             next_number = (
                 db.scalar(
-                    select(func.coalesce(func.max(BaselineSnapshot.snapshot_number), 0))
-                    .where(BaselineSnapshot.vm_id == vm.id)
+                    select(func.coalesce(func.max(BaselineSnapshot.snapshot_number), 0)).where(
+                        BaselineSnapshot.vm_id == vm.id
+                    )
                 )
                 + 1
             )
@@ -61,9 +63,7 @@ def collect_baselines_for_all_vms() -> None:
             if vm.status == VMStatus.discovered:
                 vm.status = VMStatus.baseline_captured
             db.commit()
-            logger.info(
-                "baseline #%d stored for VM %s", next_number, vm.name
-            )
+            logger.info("baseline #%d stored for VM %s", next_number, vm.name)
     finally:
         db.close()
 

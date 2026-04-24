@@ -33,11 +33,11 @@ def create_vm(payload: VMCreate, db: Session = Depends(get_db)) -> VM:
     db.add(vm)
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as e:
         db.rollback()
         raise HTTPException(
             status_code=409, detail=f"VM with name '{payload.name}' already exists"
-        )
+        ) from e
     db.refresh(vm)
     return vm
 
@@ -88,14 +88,13 @@ def create_snapshot(
     vm = _get_vm_or_404(db, vm_id)
     next_number = (
         db.scalar(
-            select(func.coalesce(func.max(BaselineSnapshot.snapshot_number), 0))
-            .where(BaselineSnapshot.vm_id == vm.id)
+            select(func.coalesce(func.max(BaselineSnapshot.snapshot_number), 0)).where(
+                BaselineSnapshot.vm_id == vm.id
+            )
         )
         + 1
     )
-    snapshot = BaselineSnapshot(
-        vm_id=vm.id, snapshot_number=next_number, **payload.model_dump()
-    )
+    snapshot = BaselineSnapshot(vm_id=vm.id, snapshot_number=next_number, **payload.model_dump())
     db.add(snapshot)
     if vm.status == VMStatus.discovered:
         vm.status = VMStatus.baseline_captured
@@ -105,9 +104,7 @@ def create_snapshot(
 
 
 @router.get("/{vm_id}/snapshots", response_model=list[SnapshotRead])
-def list_snapshots(
-    vm_id: int, db: Session = Depends(get_db)
-) -> list[BaselineSnapshot]:
+def list_snapshots(vm_id: int, db: Session = Depends(get_db)) -> list[BaselineSnapshot]:
     _get_vm_or_404(db, vm_id)
     stmt = (
         select(BaselineSnapshot)
@@ -118,9 +115,7 @@ def list_snapshots(
 
 
 @router.get("/{vm_id}/snapshots/{snapshot_id}", response_model=SnapshotRead)
-def get_snapshot(
-    vm_id: int, snapshot_id: int, db: Session = Depends(get_db)
-) -> BaselineSnapshot:
+def get_snapshot(vm_id: int, snapshot_id: int, db: Session = Depends(get_db)) -> BaselineSnapshot:
     snapshot = db.get(BaselineSnapshot, snapshot_id)
     if snapshot is None or snapshot.vm_id != vm_id:
         raise HTTPException(
@@ -130,9 +125,7 @@ def get_snapshot(
 
 
 @router.get("/{vm_id}/validation/latest", response_model=ValidationResultRead)
-def latest_validation(
-    vm_id: int, db: Session = Depends(get_db)
-) -> ValidationResult:
+def latest_validation(vm_id: int, db: Session = Depends(get_db)) -> ValidationResult:
     _get_vm_or_404(db, vm_id)
     row = db.scalars(
         select(ValidationResult)
@@ -141,16 +134,12 @@ def latest_validation(
         .limit(1)
     ).first()
     if row is None:
-        raise HTTPException(
-            status_code=404, detail=f"No validation results for VM {vm_id}"
-        )
+        raise HTTPException(status_code=404, detail=f"No validation results for VM {vm_id}")
     return row
 
 
 @router.get("/{vm_id}/baseline/history", response_model=list[SnapshotRead])
-def baseline_history(
-    vm_id: int, db: Session = Depends(get_db)
-) -> list[BaselineSnapshot]:
+def baseline_history(vm_id: int, db: Session = Depends(get_db)) -> list[BaselineSnapshot]:
     _get_vm_or_404(db, vm_id)
     stmt = (
         select(BaselineSnapshot)
@@ -161,9 +150,7 @@ def baseline_history(
 
 
 @router.get("/{vm_id}/baseline/profile", response_model=BaselineProfile)
-def baseline_profile(
-    vm_id: int, db: Session = Depends(get_db)
-) -> BaselineProfile:
+def baseline_profile(vm_id: int, db: Session = Depends(get_db)) -> BaselineProfile:
     _get_vm_or_404(db, vm_id)
     stmt = (
         select(BaselineSnapshot)

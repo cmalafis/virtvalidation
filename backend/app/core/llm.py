@@ -2,6 +2,7 @@
 LLM Client — Ollama (local, air-gapped)
 Sends VM state diffs to local Llama 3 for reasoning and verdict generation.
 """
+
 from __future__ import annotations
 
 import json
@@ -135,21 +136,11 @@ class LLMClient:
     @staticmethod
     def _diff_state(baseline: dict, current: dict) -> dict:
         return {
-            "services": _diff_services(
-                baseline.get("services", []), current.get("services", [])
-            ),
-            "ports": _diff_ports(
-                baseline.get("ports", []), current.get("ports", [])
-            ),
-            "mounts": _diff_mounts(
-                baseline.get("mounts", []), current.get("mounts", [])
-            ),
-            "network": _diff_network(
-                baseline.get("network", {}), current.get("network", {})
-            ),
-            "cron": _diff_cron(
-                baseline.get("cron", {}), current.get("cron", {})
-            ),
+            "services": _diff_services(baseline.get("services", []), current.get("services", [])),
+            "ports": _diff_ports(baseline.get("ports", []), current.get("ports", [])),
+            "mounts": _diff_mounts(baseline.get("mounts", []), current.get("mounts", [])),
+            "network": _diff_network(baseline.get("network", {}), current.get("network", {})),
+            "cron": _diff_cron(baseline.get("cron", {}), current.get("cron", {})),
         }
 
 
@@ -181,8 +172,8 @@ def _diff_ports(before: list[dict], after: list[dict]) -> dict:
 
 
 def _diff_mounts(before: list[dict], after: list[dict]) -> dict:
-    before_by_target = {m.get("target"): m for m in before if m.get("target")}
-    after_by_target = {m.get("target"): m for m in after if m.get("target")}
+    before_by_target: dict[str, dict] = {m["target"]: m for m in before if m.get("target")}
+    after_by_target: dict[str, dict] = {m["target"]: m for m in after if m.get("target")}
 
     removed = sorted(set(before_by_target) - set(after_by_target))
     added = sorted(set(after_by_target) - set(before_by_target))
@@ -242,10 +233,12 @@ def _diff_cron(before: dict, after: dict) -> dict:
                 "removed": sorted(b - a),
             }
 
-    before_sys = {item["path"]: set(item.get("entries", []))
-                  for item in before.get("system", []) or []}
-    after_sys = {item["path"]: set(item.get("entries", []))
-                 for item in after.get("system", []) or []}
+    before_sys = {
+        item["path"]: set(item.get("entries", [])) for item in before.get("system", []) or []
+    }
+    after_sys = {
+        item["path"]: set(item.get("entries", [])) for item in after.get("system", []) or []
+    }
     system_diff: dict[str, dict] = {}
     for path in sorted(set(before_sys) | set(after_sys)):
         b = before_sys.get(path, set())

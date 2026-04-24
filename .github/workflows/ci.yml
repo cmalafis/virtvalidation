@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    name: lint / type-check / test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Mypy
+        run: mypy app
+
+      - name: Pytest + coverage
+        id: tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pytest \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-report=json \
+            --cov-fail-under=70 \
+            tests 2>&1 | tee pytest-output.txt
+
+      - name: Post coverage comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const outputPath = path.join('backend', 'pytest-output.txt');
+            const covPath = path.join('backend', 'coverage.json');
+            if (!fs.existsSync(outputPath)) {
+              core.warning('pytest-output.txt not found — skipping comment');
+              return;
+            }
+            const output = fs.readFileSync(outputPath, 'utf8');
+            let pct = 'unknown';
+            if (fs.existsSync(covPath)) {
+              try {
+                const cov = JSON.parse(fs.readFileSync(covPath, 'utf8'));
+                pct = cov.totals.percent_covered.toFixed(2) + '%';
+              } catch (e) {
+                core.warning(`failed to parse coverage.json: ${e.message}`);
+              }
+            }
+            const tail = output.trim().split('\n').slice(-40).join('\n');
+            const status = '${{ steps.tests.outcome }}' === 'success' ? 'passed' : 'failed';
+            const body = [
+              `### CI report — tests ${status}`,
+              '',
+              `**Coverage: ${pct}** (threshold: 70%)`,
+              '',
+              '<details><summary>pytest tail</summary>',
+              '',
+              '```',
+              tail,
+              '```',
+              '',
+              '</details>',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            backend/coverage.xml
+            backend/coverage.json
+            backend/pytest-output.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce test + coverage result
+        if: steps.tests.outcome != 'success'
+        run: |
+          echo "::error::Tests failed or coverage is below the 70% threshold."
+          exit 1

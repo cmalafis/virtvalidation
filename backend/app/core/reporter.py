@@ -5,6 +5,7 @@ Aggregates per-VM validation verdicts for a single migration wave and asks the
 local Ollama model for a CISO-level executive summary, then returns a structured
 WaveReport plus a PDF rendering.
 """
+
 from __future__ import annotations
 
 import json
@@ -130,9 +131,7 @@ class WaveReporter:
         return content
 
     @staticmethod
-    def _render_prompt(
-        wave: dict, validation_results: list[dict], counts: dict[str, int]
-    ) -> str:
+    def _render_prompt(wave: dict, validation_results: list[dict], counts: dict[str, int]) -> str:
         return (
             f"Wave {wave['wave_number']} "
             f"(estimated_risk={wave.get('estimated_risk', 'unknown')})\n"
@@ -148,9 +147,7 @@ class WaveReporter:
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as e:
-            raise ReporterError(
-                f"Reporter output was not valid JSON: {e}\n{raw[:500]}"
-            ) from e
+            raise ReporterError(f"Reporter output was not valid JSON: {e}\n{raw[:500]}") from e
 
         if not isinstance(parsed, dict):
             raise ReporterError("Reporter output was not a JSON object")
@@ -209,9 +206,7 @@ def render_pdf(report: dict) -> bytes:
         title=f"VirtValidate Wave {report['wave_number']} Report",
     )
     styles = getSampleStyleSheet()
-    body = ParagraphStyle(
-        "body", parent=styles["BodyText"], fontSize=10, leading=14, spaceAfter=8
-    )
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=10, leading=14, spaceAfter=8)
     heading = ParagraphStyle(
         "heading",
         parent=styles["Heading2"],
@@ -284,8 +279,7 @@ def render_pdf(report: dict) -> bytes:
         }.get(status, "#111827")
         story.append(
             Paragraph(
-                f'<b>{_escape(name)}</b> — '
-                f'<font color="{status_color}">{status}</font>',
+                f"<b>{_escape(name)}</b> — " f'<font color="{status_color}">{status}</font>',
                 body,
             )
         )
@@ -308,8 +302,4 @@ def render_pdf(report: dict) -> bytes:
 
 def _escape(s: object) -> str:
     text = "" if s is None else str(s)
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

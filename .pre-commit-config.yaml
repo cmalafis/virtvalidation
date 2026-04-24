@@ -1,0 +1,22 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        # Use the mypy already installed in the developer's venv rather than
+        # pre-commit's isolated environment so type stubs for our own app
+        # modules resolve correctly.
+        entry: bash -c 'cd backend && mypy app'
+        language: system
+        types: [python]
+        files: ^backend/app/
+        pass_filenames: false
