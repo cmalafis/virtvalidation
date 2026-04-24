@@ -1,13 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.baseline import synthesize_profile
 from app.core.db import get_db
 from app.core.planner import MigrationPlanner, PlannerError
+from app.core.reporter import ReporterError, WaveReporter, render_pdf
 from app.models.plan import MigrationPlan
+from app.models.validation import ValidationResult
 from app.models.vm import VM, BaselineSnapshot
 from app.schemas.plan import PlanCreate, PlanRead
+from app.schemas.report import WaveReport
 
 router = APIRouter(prefix="/plans", tags=["plans"])
 
@@ -75,3 +78,90 @@ def get_plan(plan_id: int, db: Session = Depends(get_db)) -> MigrationPlan:
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
     return plan
+
+
+def _latest_validations_for(
+    db: Session, vm_ids: list[int]
+) -> dict[int, ValidationResult]:
+    latest: dict[int, ValidationResult] = {}
+    for vid in vm_ids:
+        row = db.scalars(
+            select(ValidationResult)
+            .where(ValidationResult.vm_id == vid)
+            .order_by(ValidationResult.validated_at.desc())
+            .limit(1)
+        ).first()
+        if row is not None:
+            latest[vid] = row
+    return latest
+
+
+@router.get("/{plan_id}/waves/{wave_number}/report")
+def wave_report(
+    plan_id: int,
+    wave_number: int,
+    format: str = Query(default="json", pattern="^(json|pdf)$"),
+    db: Session = Depends(get_db),
+):
+    plan = db.get(MigrationPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+
+    wave = next(
+        (w for w in plan.waves if w.get("wave_number") == wave_number), None
+    )
+    if wave is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Wave {wave_number} not found in plan {plan_id}",
+        )
+
+    vm_ids: list[int] = list(wave.get("vm_ids") or [])
+    if not vm_ids:
+        raise HTTPException(
+            status_code=422, detail=f"Wave {wave_number} has no VMs"
+        )
+
+    vms_by_id = {
+        vm.id: vm
+        for vm in db.scalars(select(VM).where(VM.id.in_(vm_ids))).all()
+    }
+    latest = _latest_validations_for(db, vm_ids)
+    missing = [vid for vid in vm_ids if vid not in latest]
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Missing validation results for vm_ids {missing}; "
+                "run validation before requesting a wave report"
+            ),
+        )
+
+    validation_payload = [
+        {
+            "vm_id": vid,
+            "vm_name": vms_by_id[vid].name if vid in vms_by_id else "",
+            "status": latest[vid].status.value,
+            "summary": latest[vid].summary,
+            "findings": latest[vid].findings or [],
+            "remediation": latest[vid].remediation or [],
+        }
+        for vid in vm_ids
+    ]
+
+    reporter = WaveReporter()
+    try:
+        report = reporter.generate(wave, validation_payload)
+    except ReporterError as e:
+        raise HTTPException(status_code=502, detail=f"Reporter failed: {e}") from e
+
+    if format == "pdf":
+        pdf_bytes = render_pdf(report)
+        filename = f"wave-{wave_number}-plan-{plan_id}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    return WaveReport(**report)

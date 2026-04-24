@@ -8,6 +8,7 @@ from app.api.vms import router as vms_router
 from app.core.db import Base, engine
 from app.core.scheduler import shutdown_scheduler, start_scheduler
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)
+from app.models import validation as _validation_models  # noqa: F401  (register models on Base)
 from app.models import vm as _vm_models  # noqa: F401  (register models on Base)
 
 
