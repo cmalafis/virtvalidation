@@ -40,7 +40,7 @@ class VMRead(VMBase):
 
 class SnapshotCreate(BaseModel):
     ssh_user: str = Field(min_length=1, max_length=64)
-    state: dict
+    raw_data: dict
     checksum: str | None = Field(default=None, max_length=64)
 
 
@@ -49,7 +49,21 @@ class SnapshotRead(BaseModel):
 
     id: int
     vm_id: int
+    snapshot_number: int
     ssh_user: str
-    state: dict
+    raw_data: dict
     checksum: str | None
-    captured_at: datetime
+    collected_at: datetime
+
+
+class BaselineProfile(BaseModel):
+    vm_id: int
+    snapshot_count: int
+    first_collected_at: datetime | None
+    last_collected_at: datetime | None
+    latest_meta: dict
+    services: list[str]
+    open_ports: list[dict]
+    stable_mounts: list[dict]
+    dns_servers: list[str]
+    interfaces: dict

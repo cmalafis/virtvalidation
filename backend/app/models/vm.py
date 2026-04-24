@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -44,7 +44,7 @@ class VM(Base):
     snapshots: Mapped[list["BaselineSnapshot"]] = relationship(
         back_populates="vm",
         cascade="all, delete-orphan",
-        order_by="BaselineSnapshot.captured_at.desc()",
+        order_by="BaselineSnapshot.collected_at.desc()",
     )
 
 
@@ -55,13 +55,22 @@ class BaselineSnapshot(Base):
     vm_id: Mapped[int] = mapped_column(
         ForeignKey("vms.id", ondelete="CASCADE"), index=True
     )
+    snapshot_number: Mapped[int] = mapped_column(Integer, nullable=False)
     ssh_user: Mapped[str] = mapped_column(String(64))
-    state: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    raw_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
     checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    captured_at: Mapped[datetime] = mapped_column(
+    collected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     vm: Mapped[VM] = relationship(back_populates="snapshots")
 
-    __table_args__ = (Index("ix_snapshots_vm_captured_at", "vm_id", "captured_at"),)
+    __table_args__ = (
+        Index("ix_snapshots_vm_collected_at", "vm_id", "collected_at"),
+        Index(
+            "ix_snapshots_vm_snapshot_number",
+            "vm_id",
+            "snapshot_number",
+            unique=True,
+        ),
+    )

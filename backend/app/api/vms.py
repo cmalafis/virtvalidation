@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.baseline import synthesize_profile
 from app.core.db import get_db
 from app.models.vm import VM, BaselineSnapshot, VMStatus
 from app.schemas.vm import (
+    BaselineProfile,
     SnapshotCreate,
     SnapshotRead,
     VMCreate,
@@ -82,7 +84,16 @@ def create_snapshot(
     vm_id: int, payload: SnapshotCreate, db: Session = Depends(get_db)
 ) -> BaselineSnapshot:
     vm = _get_vm_or_404(db, vm_id)
-    snapshot = BaselineSnapshot(vm_id=vm.id, **payload.model_dump())
+    next_number = (
+        db.scalar(
+            select(func.coalesce(func.max(BaselineSnapshot.snapshot_number), 0))
+            .where(BaselineSnapshot.vm_id == vm.id)
+        )
+        + 1
+    )
+    snapshot = BaselineSnapshot(
+        vm_id=vm.id, snapshot_number=next_number, **payload.model_dump()
+    )
     db.add(snapshot)
     if vm.status == VMStatus.discovered:
         vm.status = VMStatus.baseline_captured
@@ -99,7 +110,7 @@ def list_snapshots(
     stmt = (
         select(BaselineSnapshot)
         .where(BaselineSnapshot.vm_id == vm_id)
-        .order_by(BaselineSnapshot.captured_at.desc())
+        .order_by(BaselineSnapshot.collected_at.desc())
     )
     return list(db.scalars(stmt).all())
 
@@ -114,3 +125,30 @@ def get_snapshot(
             status_code=404, detail=f"Snapshot {snapshot_id} not found for VM {vm_id}"
         )
     return snapshot
+
+
+@router.get("/{vm_id}/baseline/history", response_model=list[SnapshotRead])
+def baseline_history(
+    vm_id: int, db: Session = Depends(get_db)
+) -> list[BaselineSnapshot]:
+    _get_vm_or_404(db, vm_id)
+    stmt = (
+        select(BaselineSnapshot)
+        .where(BaselineSnapshot.vm_id == vm_id)
+        .order_by(BaselineSnapshot.collected_at.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+@router.get("/{vm_id}/baseline/profile", response_model=BaselineProfile)
+def baseline_profile(
+    vm_id: int, db: Session = Depends(get_db)
+) -> BaselineProfile:
+    _get_vm_or_404(db, vm_id)
+    stmt = (
+        select(BaselineSnapshot)
+        .where(BaselineSnapshot.vm_id == vm_id)
+        .order_by(BaselineSnapshot.collected_at.asc())
+    )
+    snapshots = list(db.scalars(stmt).all())
+    return synthesize_profile(vm_id, snapshots)
