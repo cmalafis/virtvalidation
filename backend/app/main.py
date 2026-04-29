@@ -44,14 +44,9 @@ app.add_middleware(
 )
 app.add_middleware(AuditMiddleware)
 
-app.include_router(vms_router)
-app.include_router(plans_router)
-app.include_router(health_router)
-app.include_router(system_router)
-app.include_router(settings_router)
-app.include_router(audit_router)
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "version": "0.1.0"}
+app.include_router(vms_router, prefix="/api/vms")
+app.include_router(plans_router, prefix="/api/plans")
+app.include_router(health_router, prefix="/api/health")
+app.include_router(system_router, prefix="/api/system")
+app.include_router(settings_router, prefix="/api/settings")
+app.include_router(audit_router, prefix="/api/audit")

@@ -10,7 +10,7 @@ from app.core.db import get_db
 from app.models.audit import AuditLog
 from app.schemas.audit import AuditLogRead
 
-router = APIRouter(prefix="/audit", tags=["audit"])
+router = APIRouter(tags=["audit"])
 
 
 @router.get("", response_model=list[AuditLogRead])

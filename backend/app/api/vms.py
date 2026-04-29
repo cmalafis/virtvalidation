@@ -19,7 +19,7 @@ from app.schemas.vm import (
     VMUpdate,
 )
 
-router = APIRouter(prefix="/vms", tags=["vms"])
+router = APIRouter(tags=["vms"])
 
 
 def _get_vm_or_404(db: Session, vm_id: int) -> VM:

@@ -22,8 +22,8 @@ from app.schemas.settings import (
     SSHPublicKey,
 )
 
-settings_router = APIRouter(prefix="/settings", tags=["settings"])
-system_router = APIRouter(prefix="/system", tags=["system"])
+settings_router = APIRouter(tags=["settings"])
+system_router = APIRouter(tags=["system"])
 
 _SETTINGS_ID = 1
 

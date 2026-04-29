@@ -13,7 +13,7 @@ from app.models.vm import VM, BaselineSnapshot
 from app.schemas.plan import PlanCreate, PlanRead
 from app.schemas.report import WaveReport
 
-router = APIRouter(prefix="/plans", tags=["plans"])
+router = APIRouter(tags=["plans"])
 
 
 def _assemble_vm_profiles(db: Session, vm_ids: list[int]) -> list[dict]:

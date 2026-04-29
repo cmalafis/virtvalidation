@@ -30,7 +30,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if request.method not in self.LOG_METHODS:
             return response
         path = request.url.path
-        if path.startswith("/audit"):
+        if path.startswith("/api/audit"):
             return response
 
         try:

@@ -16,13 +16,13 @@ from app.models.audit import AuditLog
 
 # (method, compiled regex, action, resource_type, group index for resource_id)
 _ACTIONS: list[tuple[str, re.Pattern[str], str, str | None, int | None]] = [
-    ("POST", re.compile(r"^/vms/?$"), "vm.create", "vm", None),
-    ("POST", re.compile(r"^/vms/bulk/?$"), "vm.bulk_create", "vm", None),
-    ("PATCH", re.compile(r"^/vms/(\d+)/?$"), "vm.update", "vm", 1),
-    ("DELETE", re.compile(r"^/vms/(\d+)/?$"), "vm.delete", "vm", 1),
-    ("POST", re.compile(r"^/vms/(\d+)/snapshots/?$"), "baseline.create", "baseline", 1),
-    ("POST", re.compile(r"^/plans/?$"), "plan.create", "plan", None),
-    ("PUT", re.compile(r"^/settings/?$"), "settings.update", "settings", None),
+    ("POST", re.compile(r"^/api/vms/?$"), "vm.create", "vm", None),
+    ("POST", re.compile(r"^/api/vms/bulk/?$"), "vm.bulk_create", "vm", None),
+    ("PATCH", re.compile(r"^/api/vms/(\d+)/?$"), "vm.update", "vm", 1),
+    ("DELETE", re.compile(r"^/api/vms/(\d+)/?$"), "vm.delete", "vm", 1),
+    ("POST", re.compile(r"^/api/vms/(\d+)/snapshots/?$"), "baseline.create", "baseline", 1),
+    ("POST", re.compile(r"^/api/plans/?$"), "plan.create", "plan", None),
+    ("PUT", re.compile(r"^/api/settings/?$"), "settings.update", "settings", None),
 ]
 
 
