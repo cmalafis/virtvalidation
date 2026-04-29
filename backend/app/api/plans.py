@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
 from app.core.db import get_db
 from app.core.planner import MigrationPlanner, PlannerError
@@ -161,8 +162,27 @@ def _pdf_response(report: dict, plan_id: int, wave_number: int) -> Response:
     )
 
 
+def _record_report_export(
+    db: Session,
+    plan_id: int,
+    wave_number: int,
+    actor: str,
+) -> None:
+    """Audit a PDF export. Called from GET endpoints (middleware skips reads)."""
+    record_audit(
+        db,
+        action="report.export",
+        actor=actor or "anonymous",
+        resource_type="plan",
+        resource_id=plan_id,
+        details={"wave_number": wave_number, "format": "pdf"},
+    )
+    db.commit()
+
+
 @router.get("/{plan_id}/waves/{wave_number}/report")
 def wave_report(
+    request: Request,
     plan_id: int,
     wave_number: int,
     format: str = Query(default="json", pattern="^(json|pdf)$"),
@@ -170,6 +190,7 @@ def wave_report(
 ):
     report = _build_wave_report(db, plan_id, wave_number)
     if format == "pdf":
+        _record_report_export(db, plan_id, wave_number, request.headers.get("x-actor", "anonymous"))
         return _pdf_response(report, plan_id, wave_number)
     return WaveReport(**report)
 
@@ -179,10 +200,12 @@ def wave_report(
     responses={200: {"content": {"application/pdf": {}}}},
 )
 def wave_report_pdf(
+    request: Request,
     plan_id: int,
     wave_number: int,
     db: Session = Depends(get_db),
 ) -> Response:
     """Dedicated PDF endpoint — always returns Content-Type: application/pdf."""
     report = _build_wave_report(db, plan_id, wave_number)
+    _record_report_export(db, plan_id, wave_number, request.headers.get("x-actor", "anonymous"))
     return _pdf_response(report, plan_id, wave_number)

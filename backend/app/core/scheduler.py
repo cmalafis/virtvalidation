@@ -14,6 +14,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import func, select
 
+from app.core.audit import record_audit
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.ssh import SSHCollectionError, SSHCollector
@@ -82,6 +83,21 @@ def collect_baselines_for_all_vms() -> None:
             db.add(snapshot)
             if vm.status == VMStatus.discovered:
                 vm.status = VMStatus.baseline_captured
+            db.commit()
+            db.refresh(snapshot)
+            record_audit(
+                db,
+                action="baseline.collected",
+                actor="scheduler",
+                resource_type="baseline",
+                resource_id=snapshot.id,
+                details={
+                    "vm_id": vm.id,
+                    "vm_name": vm.name,
+                    "snapshot_number": next_number,
+                    "ssh_user": ssh_user,
+                },
+            )
             db.commit()
             logger.info("baseline #%d stored for VM %s", next_number, vm.name)
     finally:

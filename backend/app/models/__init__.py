@@ -1,3 +1,4 @@
+from app.models.audit import AuditLog
 from app.models.plan import MigrationPlan
 from app.models.settings import AppSettings, SchedulePreset
 from app.models.validation import ValidationResult, ValidationStatus
@@ -12,4 +13,5 @@ __all__ = [
     "ValidationStatus",
     "AppSettings",
     "SchedulePreset",
+    "AuditLog",
 ]

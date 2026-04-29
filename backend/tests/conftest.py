@@ -59,7 +59,12 @@ def client(engine):
     FastAPI lifespan (which starts the APScheduler job and targets the
     production engine). Dependency overrides give us a clean DB per test
     without standing up the scheduler.
+
+    SessionLocal is rebound at the module level so middleware that opens its
+    own session (e.g. AuditMiddleware) hits the same test database.
     """
+    from app.core import db as _db
+
     Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
     def _get_db():
@@ -69,11 +74,14 @@ def client(engine):
         finally:
             s.close()
 
+    original_sessionlocal = _db.SessionLocal
+    _db.SessionLocal = Session
     app.dependency_overrides[get_db] = _get_db
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.clear()
+        _db.SessionLocal = original_sessionlocal
 
 
 # ---------- shared data fixtures ----------

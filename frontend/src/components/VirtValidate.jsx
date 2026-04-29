@@ -863,6 +863,14 @@ export default function VirtValidate() {
   const [planError, setPlanError] = useState(null);
   const [planRetrying, setPlanRetrying] = useState(false);
 
+  // Audit log
+  const [auditEntries, setAuditEntries] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState(null);
+  const [auditRetrying, setAuditRetrying] = useState(false);
+  const [auditActionFilter, setAuditActionFilter] = useState("");
+  const [auditResourceFilter, setAuditResourceFilter] = useState("");
+
   const loadVMs = useCallback(async ({ retry = false } = {}) => {
     if (retry) setVmsRetrying(true); else setVmsLoading(true);
     try {
@@ -890,6 +898,24 @@ export default function VirtValidate() {
     } finally {
       setPlanLoading(false);
       setPlanRetrying(false);
+    }
+  }, []);
+
+  const loadAudit = useCallback(async ({ retry = false, action, resourceType } = {}) => {
+    if (retry) setAuditRetrying(true); else setAuditLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: "100" });
+      if (action) params.set("action", action);
+      if (resourceType) params.set("resource_type", resourceType);
+      const { data } = await fetchJSON(`/api/audit?${params.toString()}`);
+      setAuditEntries(Array.isArray(data) ? data : []);
+      setAuditError(null);
+    } catch (e) {
+      setAuditError(e.message || "Failed to load audit log");
+      if (retry) toast.error(e.message || "Retry failed", TOAST_OPTS);
+    } finally {
+      setAuditLoading(false);
+      setAuditRetrying(false);
     }
   }, []);
 
@@ -933,6 +959,12 @@ export default function VirtValidate() {
   // Initial loads
   useEffect(() => { loadVMs(); }, [loadVMs]);
   useEffect(() => { loadPlan(); }, [loadPlan]);
+
+  // Audit log: fetch lazily when tab opens, and re-fetch on filter change.
+  useEffect(() => {
+    if (activeTab !== "audit log") return;
+    loadAudit({ action: auditActionFilter, resourceType: auditResourceFilter });
+  }, [activeTab, auditActionFilter, auditResourceFilter, loadAudit]);
 
   // Refetch on selection change
   useEffect(() => {
@@ -993,7 +1025,7 @@ export default function VirtValidate() {
   }, [vms]);
 
   const validatedPct = total === 0 ? 0 : Math.round(((healthy + degraded + failed) / total) * 100);
-  const tabs = ["validation", "migration plan", "inventory", "reports"];
+  const tabs = ["validation", "migration plan", "inventory", "reports", "audit log"];
 
   const detailPostStatus = validation
     ? VERDICT_TO_STATUS[validation.status] || "pending"
@@ -1521,6 +1553,132 @@ export default function VirtValidate() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* AUDIT LOG TAB */}
+          {activeTab === "audit log" && (
+            <div className="fade-in">
+              <div style={{ marginBottom: 16, padding: "14px 18px", border: "1px solid #1a1a2e", background: "#0a0a18", display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 14 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <span style={{ fontSize: 9, color: "#555577", letterSpacing: "0.15em", fontFamily: "'Share Tech Mono', monospace" }}>ACTION</span>
+                  <select
+                    value={auditActionFilter}
+                    onChange={(e) => setAuditActionFilter(e.target.value)}
+                    style={{
+                      background: "#07070f", border: "1px solid #1a1a2e",
+                      color: "#ccccdd", padding: "8px 10px", fontSize: 11,
+                      fontFamily: "'Share Tech Mono', monospace", outline: "none", minWidth: 200,
+                    }}
+                  >
+                    <option value="">All actions</option>
+                    <option value="vm.create">vm.create</option>
+                    <option value="vm.bulk_create">vm.bulk_create</option>
+                    <option value="vm.update">vm.update</option>
+                    <option value="vm.delete">vm.delete</option>
+                    <option value="baseline.create">baseline.create</option>
+                    <option value="baseline.collected">baseline.collected</option>
+                    <option value="plan.create">plan.create</option>
+                    <option value="settings.update">settings.update</option>
+                    <option value="report.export">report.export</option>
+                  </select>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <span style={{ fontSize: 9, color: "#555577", letterSpacing: "0.15em", fontFamily: "'Share Tech Mono', monospace" }}>RESOURCE TYPE</span>
+                  <select
+                    value={auditResourceFilter}
+                    onChange={(e) => setAuditResourceFilter(e.target.value)}
+                    style={{
+                      background: "#07070f", border: "1px solid #1a1a2e",
+                      color: "#ccccdd", padding: "8px 10px", fontSize: 11,
+                      fontFamily: "'Share Tech Mono', monospace", outline: "none", minWidth: 160,
+                    }}
+                  >
+                    <option value="">All resources</option>
+                    <option value="vm">vm</option>
+                    <option value="baseline">baseline</option>
+                    <option value="plan">plan</option>
+                    <option value="settings">settings</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}/>
+                <SecondaryButton
+                  onClick={() => loadAudit({ retry: true, action: auditActionFilter, resourceType: auditResourceFilter })}
+                  disabled={auditLoading || auditRetrying}
+                >
+                  {auditRetrying ? <Spinner size={11}/> : "↻"} Refresh
+                </SecondaryButton>
+              </div>
+
+              {auditError ? (
+                <ErrorState
+                  title="Couldn't load audit log"
+                  message={auditError}
+                  onRetry={() => loadAudit({ retry: true, action: auditActionFilter, resourceType: auditResourceFilter })}
+                  retrying={auditRetrying}
+                />
+              ) : auditLoading ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <Shimmer key={i} width="100%" height={42}/>
+                  ))}
+                </div>
+              ) : auditEntries.length === 0 ? (
+                <EmptyState
+                  icon="◌"
+                  title={auditActionFilter || auditResourceFilter ? "No matching audit entries" : "No audit entries yet"}
+                  description={
+                    auditActionFilter || auditResourceFilter
+                      ? "Try clearing the filters above. The audit trail records every mutating API call as soon as one fires."
+                      : "Every meaningful action — VM enrollment, baseline collection, plan generation, settings update, report export — appends a row here."
+                  }
+                  ctaLabel={auditActionFilter || auditResourceFilter ? "Clear Filters" : null}
+                  onCta={() => { setAuditActionFilter(""); setAuditResourceFilter(""); }}
+                />
+              ) : (
+                <div style={{ border: "1px solid #1a1a2e" }}>
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "1.4fr 1fr 1.2fr 1fr 0.6fr 1.4fr",
+                    padding: "8px 14px", borderBottom: "1px solid #1a1a2e",
+                    background: "#0a0a16",
+                  }}>
+                    {["TIMESTAMP", "ACTOR", "ACTION", "RESOURCE", "STATUS", "DETAILS"].map(h => (
+                      <span key={h} style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em" }}>{h}</span>
+                    ))}
+                  </div>
+                  {auditEntries.map((e, i) => {
+                    const status = e.details?.status_code;
+                    const statusColor =
+                      status == null ? "#666688" :
+                      status >= 500 ? "#ff3355" :
+                      status >= 400 ? "#ffaa00" :
+                      status >= 200 ? "#00ff88" : "#666688";
+                    const detailJson = JSON.stringify(e.details ?? {});
+                    return (
+                      <div key={e.id} style={{
+                        display: "grid",
+                        gridTemplateColumns: "1.4fr 1fr 1.2fr 1fr 0.6fr 1.4fr",
+                        padding: "10px 14px",
+                        borderBottom: i < auditEntries.length - 1 ? "1px solid #0f0f1e" : "none",
+                        fontSize: 11, color: "#aaaacc", fontFamily: "'Share Tech Mono', monospace",
+                      }}>
+                        <span style={{ color: "#8888aa" }}>{new Date(e.timestamp).toLocaleString()}</span>
+                        <span style={{ color: "#ccccee" }}>{e.actor}</span>
+                        <span style={{ color: "#4488ff" }}>{e.action}</span>
+                        <span style={{ color: "#8888aa" }}>
+                          {e.resource_type ?? "—"}
+                          {e.resource_id ? <span style={{ color: "#555577" }}> · {e.resource_id}</span> : null}
+                        </span>
+                        <span style={{ color: statusColor, fontWeight: 700 }}>{status ?? "—"}</span>
+                        <span title={detailJson} style={{
+                          color: "#666688", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>{detailJson}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>

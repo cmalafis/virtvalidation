@@ -3,12 +3,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.audit import router as audit_router
 from app.api.health import router as health_router
 from app.api.plans import router as plans_router
 from app.api.settings import settings_router, system_router
 from app.api.vms import router as vms_router
 from app.core.db import Base, engine
 from app.core.scheduler import shutdown_scheduler, start_scheduler
+from app.middleware.audit import AuditMiddleware
+from app.models import audit as _audit_models  # noqa: F401  (register models on Base)
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)
 from app.models import settings as _settings_models  # noqa: F401  (register models on Base)
 from app.models import validation as _validation_models  # noqa: F401  (register models on Base)
@@ -39,12 +42,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(AuditMiddleware)
 
 app.include_router(vms_router)
 app.include_router(plans_router)
 app.include_router(health_router)
 app.include_router(system_router)
 app.include_router(settings_router)
+app.include_router(audit_router)
 
 
 @app.get("/health")
