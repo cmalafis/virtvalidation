@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
+import { Link } from "react-router-dom";
 
 const STATUS_CONFIG = {
   healthy:  { color: "#00ff88", bg: "rgba(0,255,136,0.08)", label: "HEALTHY",  dot: "#00ff88" },
@@ -1090,6 +1091,16 @@ export default function VirtValidate() {
             >
               + Add VMs
             </button>
+            <Link to="/settings" title="System configuration" style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              background: "transparent", border: "1px solid #2a2a44",
+              color: "#8888aa", textDecoration: "none",
+              padding: "8px 14px", fontSize: 10,
+              fontFamily: "'Share Tech Mono', monospace",
+              letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 700,
+            }}>
+              ⚙ Settings
+            </Link>
           </div>
         </div>
 

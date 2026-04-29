@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.ssh import SSHCollectionError, SSHCollector
+from app.models.settings import AppSettings, SchedulePreset
 from app.models.vm import VM, BaselineSnapshot, VMStatus
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,24 @@ _SCHEDULED_SSH_USER = "virtvalidate"
 _JOB_ID = "baseline-collection"
 
 _scheduler: Optional[BackgroundScheduler] = None
+
+
+def _trigger_for(preset: SchedulePreset) -> CronTrigger:
+    """Map a high-level preset to an APScheduler CronTrigger (UTC)."""
+    if preset == SchedulePreset.once_daily:
+        return CronTrigger(hour=6, minute=0)
+    if preset == SchedulePreset.hourly:
+        return CronTrigger(minute=0)
+    return CronTrigger(hour="6,18", minute=0)  # twice_daily (default)
+
+
+def _load_preset() -> SchedulePreset:
+    db = SessionLocal()
+    try:
+        existing = db.get(AppSettings, 1)
+        return existing.schedule_preset if existing else SchedulePreset.twice_daily
+    finally:
+        db.close()
 
 
 def collect_baselines_for_all_vms() -> None:
@@ -70,15 +89,16 @@ def collect_baselines_for_all_vms() -> None:
 
 
 def start_scheduler() -> BackgroundScheduler:
-    """Start the background scheduler with the twice-daily baseline job."""
+    """Start the background scheduler with the configured baseline cadence."""
     global _scheduler
     if _scheduler is not None:
         return _scheduler
 
+    preset = _load_preset()
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(
         collect_baselines_for_all_vms,
-        trigger=CronTrigger(hour="6,18", minute=0),
+        trigger=_trigger_for(preset),
         id=_JOB_ID,
         replace_existing=True,
         max_instances=1,
@@ -86,8 +106,16 @@ def start_scheduler() -> BackgroundScheduler:
     )
     scheduler.start()
     _scheduler = scheduler
-    logger.info("baseline scheduler started (06:00 and 18:00 UTC)")
+    logger.info("baseline scheduler started with preset=%s", preset.value)
     return scheduler
+
+
+def reschedule_baseline_job(preset: SchedulePreset) -> None:
+    """Apply a new schedule preset to the running baseline job."""
+    if _scheduler is None:
+        return
+    _scheduler.reschedule_job(_JOB_ID, trigger=_trigger_for(preset))
+    logger.info("baseline scheduler rescheduled to preset=%s", preset.value)
 
 
 def shutdown_scheduler() -> None:

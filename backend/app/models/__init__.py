@@ -1,4 +1,5 @@
 from app.models.plan import MigrationPlan
+from app.models.settings import AppSettings, SchedulePreset
 from app.models.validation import ValidationResult, ValidationStatus
 from app.models.vm import VM, BaselineSnapshot, VMStatus
 
@@ -9,4 +10,6 @@ __all__ = [
     "MigrationPlan",
     "ValidationResult",
     "ValidationStatus",
+    "AppSettings",
+    "SchedulePreset",
 ]
