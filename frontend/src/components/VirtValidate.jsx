@@ -7,7 +7,7 @@ const STATUS_CONFIG = {
   degraded: { color: "#ffaa00", bg: "rgba(255,170,0,0.08)",  label: "DEGRADED", dot: "#ffaa00" },
   failed:   { color: "#ff3355", bg: "rgba(255,51,85,0.08)",  label: "FAILED",   dot: "#ff3355" },
   captured: { color: "#4488ff", bg: "rgba(68,136,255,0.08)", label: "CAPTURED", dot: "#4488ff" },
-  pending:  { color: "#666677", bg: "rgba(102,102,119,0.08)",label: "PENDING",  dot: "#666677" },
+  pending:  { color: "#8888aa", bg: "rgba(102,102,119,0.08)",label: "PENDING",  dot: "#8888aa" },
 };
 
 const SEVERITY_COLOR = {
@@ -97,7 +97,7 @@ const StatusBadge = ({ status }) => {
 };
 
 const SeverityTag = ({ s }) => {
-  const color = SEVERITY_COLOR[s] || "#666677";
+  const color = SEVERITY_COLOR[s] || "#8888aa";
   return (
     <span style={{
       fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
@@ -110,7 +110,7 @@ const SeverityTag = ({ s }) => {
 
 const Metric = ({ label, value }) => (
   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-    <span style={{ fontSize: 9, color: "#555577", fontFamily: "'Share Tech Mono', monospace", letterSpacing: "0.1em" }}>{label}</span>
+    <span style={{ fontSize: 9, color: "#8888aa", fontFamily: "'Share Tech Mono', monospace", letterSpacing: "0.1em" }}>{label}</span>
     <span style={{ fontSize: 13, color: "#aaaacc", fontFamily: "'Share Tech Mono', monospace" }}>{value}</span>
   </div>
 );
@@ -153,7 +153,7 @@ const TableSkeleton = ({ rows = 5 }) => {
         background: "#0a0a16",
       }}>
         {["VM NAME", "ROLE", "IP ADDRESS", "vCPU", "MEM", "DISK", "STATUS"].map(h => (
-          <span key={h} style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em" }}>{h}</span>
+          <span key={h} style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.15em" }}>{h}</span>
         ))}
       </div>
       {Array.from({ length: rows }).map((_, i) => (
@@ -181,7 +181,7 @@ const PrimaryButton = ({ children, onClick, disabled, type = "button" }) => (
       display: "inline-flex", alignItems: "center", gap: 8,
       background: disabled ? "#1a1a2e" : "#1d3a8a",
       border: `1px solid ${disabled ? "#222244" : "#4488ff"}`,
-      color: disabled ? "#444466" : "#dde4ff",
+      color: disabled ? "#6666aa" : "#dde4ff",
       padding: "9px 18px", fontSize: 10,
       fontFamily: "'Share Tech Mono', monospace",
       letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 700,
@@ -197,7 +197,7 @@ const SecondaryButton = ({ children, onClick, disabled, type = "button" }) => (
     style={{
       background: "transparent",
       border: `1px solid ${disabled ? "#222244" : "#2a2a44"}`,
-      color: disabled ? "#444466" : "#8888aa",
+      color: disabled ? "#6666aa" : "#8888aa",
       padding: "8px 14px", fontSize: 9,
       fontFamily: "'Share Tech Mono', monospace",
       letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 700,
@@ -216,7 +216,7 @@ const EmptyState = ({ icon = "◌", title, description, ctaLabel, onCta }) => (
   }}>
     <div style={{ fontSize: 36, color: "#2a2a44", marginBottom: 12, lineHeight: 1 }}>{icon}</div>
     <div style={{ fontSize: 14, color: "#ccccee", fontFamily: "'Barlow', sans-serif", fontWeight: 600, marginBottom: 6 }}>{title}</div>
-    <div style={{ fontSize: 11, color: "#666688", fontFamily: "'Barlow', sans-serif", maxWidth: 420, margin: "0 auto 20px", lineHeight: 1.5 }}>{description}</div>
+    <div style={{ fontSize: 11, color: "#8888aa", fontFamily: "'Barlow', sans-serif", maxWidth: 420, margin: "0 auto 20px", lineHeight: 1.5 }}>{description}</div>
     {ctaLabel && (
       <PrimaryButton onClick={onCta}>+ {ctaLabel}</PrimaryButton>
     )}
@@ -305,7 +305,7 @@ function Modal({ open, onClose, title, children, footer, width = 520 }) {
           <div style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 700, color: "#eeeeff", letterSpacing: "0.06em" }}>{title}</div>
           <button onClick={onClose} aria-label="Close"
             style={{
-              background: "transparent", border: "none", color: "#666688",
+              background: "transparent", border: "none", color: "#8888aa",
               fontSize: 18, cursor: "pointer", lineHeight: 1, padding: 4,
             }}>×</button>
         </div>
@@ -327,14 +327,14 @@ function Modal({ open, onClose, title, children, footer, width = 520 }) {
 const FormField = ({ label, hint, children, required }) => (
   <label style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 14 }}>
     <span style={{
-      fontSize: 9, color: "#555577", letterSpacing: "0.15em",
+      fontSize: 9, color: "#8888aa", letterSpacing: "0.15em",
       fontFamily: "'Share Tech Mono', monospace",
     }}>
       {label.toUpperCase()}{required && <span style={{ color: "#ff3355", marginLeft: 4 }}>*</span>}
     </span>
     {children}
     {hint && (
-      <span style={{ fontSize: 10, color: "#444466", fontFamily: "'Barlow', sans-serif" }}>{hint}</span>
+      <span style={{ fontSize: 10, color: "#6666aa", fontFamily: "'Barlow', sans-serif" }}>{hint}</span>
     )}
   </label>
 );
@@ -456,7 +456,7 @@ const PreviewTable = ({ payloads }) => (
       display: "grid",
       gridTemplateColumns: "1.4fr 1.6fr 1.1fr 0.9fr 0.9fr 0.9fr",
       padding: "8px 12px", borderBottom: "1px solid #1a1a2e",
-      background: "#0a0a16", fontSize: 9, color: "#444466",
+      background: "#0a0a16", fontSize: 9, color: "#6666aa",
       letterSpacing: "0.15em", fontFamily: "'Share Tech Mono', monospace",
     }}>
       <span>NAME</span><span>HOSTNAME</span><span>IP</span>
@@ -479,7 +479,7 @@ const PreviewTable = ({ payloads }) => (
       </div>
     ))}
     {payloads.length > 50 && (
-      <div style={{ padding: "8px 12px", fontSize: 10, color: "#555577", fontFamily: "'Barlow', sans-serif" }}>
+      <div style={{ padding: "8px 12px", fontSize: 10, color: "#8888aa", fontFamily: "'Barlow', sans-serif" }}>
         … and {payloads.length - 50} more
       </div>
     )}
@@ -493,7 +493,7 @@ const TabButton = ({ active, onClick, children }) => (
       padding: "10px 14px", fontSize: 10,
       fontFamily: "'Share Tech Mono', monospace", letterSpacing: "0.15em",
       textTransform: "uppercase", fontWeight: 700,
-      color: active ? "#4488ff" : "#555577",
+      color: active ? "#4488ff" : "#8888aa",
       borderBottom: active ? "2px solid #4488ff" : "2px solid transparent",
       transition: "all 0.15s",
     }}>
@@ -621,7 +621,7 @@ function BulkTab({
         }}>
           {parsing ? <Spinner size={11}/> : "📁"} Choose {kind.toUpperCase()} file
         </label>
-        <div style={{ flex: 1, fontSize: 11, color: "#666688", fontFamily: "'Barlow', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ flex: 1, fontSize: 11, color: "#8888aa", fontFamily: "'Barlow', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {filename || (kind === "csv"
             ? "Headers: name, hostname, ip, os, role, ssh_user (any subset)"
             : "RVTools export — vInfo sheet preferred")}
@@ -632,7 +632,7 @@ function BulkTab({
       </div>
 
       {kind === "xlsx" && meta?.sheetName && (
-        <div style={{ fontSize: 10, color: "#555577", marginBottom: 10, fontFamily: "'Share Tech Mono', monospace" }}>
+        <div style={{ fontSize: 10, color: "#8888aa", marginBottom: 10, fontFamily: "'Share Tech Mono', monospace" }}>
           Reading sheet · <span style={{ color: "#aaaacc" }}>{meta.sheetName}</span>
         </div>
       )}
@@ -645,7 +645,7 @@ function BulkTab({
           <div style={{
             marginTop: 6, padding: "8px 10px", maxHeight: 80, overflowY: "auto",
             background: "#07070f", border: "1px solid #1a1a2e",
-            fontSize: 10, color: "#776677", fontFamily: "'Share Tech Mono', monospace",
+            fontSize: 10, color: "#998888", fontFamily: "'Share Tech Mono', monospace",
           }}>
             {errors.slice(0, 20).map((e, i) => <div key={i}>{e}</div>)}
             {errors.length > 20 && <div>… and {errors.length - 20} more</div>}
@@ -655,7 +655,7 @@ function BulkTab({
 
       {payloads.length > 0 ? (
         <>
-          <div style={{ fontSize: 10, color: "#555577", letterSpacing: "0.15em", marginBottom: 6, fontFamily: "'Share Tech Mono', monospace" }}>
+          <div style={{ fontSize: 10, color: "#8888aa", letterSpacing: "0.15em", marginBottom: 6, fontFamily: "'Share Tech Mono', monospace" }}>
             PREVIEW · {payloads.length} VM{payloads.length === 1 ? "" : "s"}
           </div>
           <PreviewTable payloads={payloads}/>
@@ -819,7 +819,7 @@ function GeneratePlanModal({ open, onClose, vms, onCreated }) {
                 <input type="checkbox" checked={checked} onChange={() => toggle(vm.id)} style={{ accentColor: "#4488ff" }}/>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 12, color: "#ccccee", fontFamily: "'Barlow', sans-serif", fontWeight: 600 }}>{vm.name}</div>
-                  <div style={{ fontSize: 9, color: "#555577", marginTop: 2 }}>{vm.role} · {vm.os} · {vm.ip}</div>
+                  <div style={{ fontSize: 9, color: "#8888aa", marginTop: 2 }}>{vm.role} · {vm.os} · {vm.ip}</div>
                 </div>
                 <StatusBadge status={vm.postStatus}/>
               </label>
@@ -1083,7 +1083,7 @@ export default function VirtValidate() {
               <div style={{ fontSize: 15, fontFamily: "'Barlow', sans-serif", fontWeight: 700, color: "#eeeeff", letterSpacing: "0.08em" }}>
                 VIRTVALIDATE
               </div>
-              <div style={{ fontSize: 9, color: "#444466", letterSpacing: "0.2em" }}>VM MIGRATION VALIDATION PLATFORM</div>
+              <div style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.2em" }}>VM MIGRATION VALIDATION PLATFORM</div>
             </div>
           </div>
 
@@ -1093,18 +1093,18 @@ export default function VirtValidate() {
                 { label: "HEALTHY", val: healthy, color: "#00ff88" },
                 { label: "DEGRADED", val: degraded, color: "#ffaa00" },
                 { label: "FAILED", val: failed, color: "#ff3355" },
-                { label: "PENDING", val: pending, color: "#555577" },
+                { label: "PENDING", val: pending, color: "#8888aa" },
               ].map(s => (
                 <div key={s.label} style={{ textAlign: "center" }}>
                   <div style={{ fontSize: 18, fontWeight: 700, color: s.color, fontFamily: "'Barlow', sans-serif", lineHeight: 1 }}>{s.val}</div>
-                  <div style={{ fontSize: 8, color: "#444466", letterSpacing: "0.15em", marginTop: 2 }}>{s.label}</div>
+                  <div style={{ fontSize: 8, color: "#6666aa", letterSpacing: "0.15em", marginTop: 2 }}>{s.label}</div>
                 </div>
               ))}
             </div>
             <div style={{ width: 1, height: 32, background: "#1a1a2e" }} />
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em" }}>CLUSTER</div>
-              <div style={{ fontSize: 11, color: "#6666aa" }}>ocp-virt-prod-01</div>
+              <div style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.15em" }}>CLUSTER</div>
+              <div style={{ fontSize: 11, color: "#aaaacc" }}>ocp-virt-prod-01</div>
             </div>
             <div style={{ width: 1, height: 32, background: "#1a1a2e" }} />
             <button
@@ -1144,7 +1144,7 @@ export default function VirtValidate() {
               padding: "10px 20px", fontSize: 10,
               fontFamily: "'Share Tech Mono', monospace", letterSpacing: "0.15em",
               textTransform: "uppercase",
-              color: activeTab === tab ? "#4488ff" : "#444466",
+              color: activeTab === tab ? "#4488ff" : "#6666aa",
               borderBottom: activeTab === tab ? "2px solid #4488ff" : "2px solid transparent",
               transition: "all 0.15s",
             }}>{tab}</button>
@@ -1163,7 +1163,7 @@ export default function VirtValidate() {
               {/* Progress bar — stays visible even during loading, just empty */}
               <div style={{ marginBottom: 24, padding: "16px 20px", border: "1px solid #1a1a2e", background: "#0a0a18" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                  <span style={{ fontSize: 10, color: "#555577", letterSpacing: "0.15em" }}>MIGRATION VALIDATION PROGRESS</span>
+                  <span style={{ fontSize: 10, color: "#8888aa", letterSpacing: "0.15em" }}>MIGRATION VALIDATION PROGRESS</span>
                   <span style={{ fontSize: 11, color: "#4488ff" }}>{validatedPct}% VALIDATED</span>
                 </div>
                 <div style={{ height: 4, background: "#111122", borderRadius: 2, overflow: "hidden" }}>
@@ -1208,7 +1208,7 @@ export default function VirtValidate() {
                       background: "#0a0a16",
                     }}>
                       {["VM NAME", "ROLE", "IP ADDRESS", "vCPU", "MEM", "DISK", "STATUS"].map(h => (
-                        <span key={h} style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em" }}>{h}</span>
+                        <span key={h} style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.15em" }}>{h}</span>
                       ))}
                     </div>
                     {vms.map((vm, i) => (
@@ -1222,10 +1222,10 @@ export default function VirtValidate() {
                         }}>
                         <div>
                           <div style={{ fontSize: 12, color: "#ccccee", fontFamily: "'Barlow', sans-serif", fontWeight: 600 }}>{vm.name}</div>
-                          <div style={{ fontSize: 9, color: "#444466", marginTop: 2 }}>{vm.os}</div>
+                          <div style={{ fontSize: 9, color: "#6666aa", marginTop: 2 }}>{vm.os}</div>
                         </div>
                         <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{vm.role}</span>
-                        <span style={{ fontSize: 11, color: "#6666aa", alignSelf: "center", fontFamily: "'Share Tech Mono'" }}>{vm.ip}</span>
+                        <span style={{ fontSize: 11, color: "#aaaacc", alignSelf: "center", fontFamily: "'Share Tech Mono'" }}>{vm.ip}</span>
                         <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{fmt(vm.cpu)}</span>
                         <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{vm.mem == null ? "—" : `${vm.mem}GB`}</span>
                         <span style={{ fontSize: 11, color: "#8888aa", alignSelf: "center" }}>{fmt(vm.disk)}</span>
@@ -1242,7 +1242,7 @@ export default function VirtValidate() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                     <div>
                       <div style={{ fontSize: 14, fontFamily: "'Barlow', sans-serif", fontWeight: 700, color: "#eeeeff" }}>{selectedVM.name}</div>
-                      <div style={{ fontSize: 10, color: "#555577", marginTop: 3, letterSpacing: "0.1em" }}>
+                      <div style={{ fontSize: 10, color: "#8888aa", marginTop: 3, letterSpacing: "0.1em" }}>
                         AI VALIDATION REPORT — {String(selectedVM.role || "UNASSIGNED").toUpperCase()}
                       </div>
                     </div>
@@ -1288,7 +1288,7 @@ export default function VirtValidate() {
 
                   {validationLoading || validationRunning ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#6666aa", fontSize: 11 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#aaaacc", fontSize: 11 }}>
                         <Spinner size={13}/>
                         <span style={{ letterSpacing: "0.12em", fontWeight: 700 }}>
                           {validationRunning ? "RUNNING VALIDATION" : "LOADING VALIDATION"}…
@@ -1321,16 +1321,16 @@ export default function VirtValidate() {
                         </div>
                       )}
 
-                      <div style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em", marginBottom: 12 }}>AI FINDINGS</div>
+                      <div style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.15em", marginBottom: 12 }}>AI FINDINGS</div>
                       {validation.findings.length === 0 ? (
-                        <div style={{ fontSize: 11, color: "#555577", marginBottom: 16 }}>No findings recorded.</div>
+                        <div style={{ fontSize: 11, color: "#8888aa", marginBottom: 16 }}>No findings recorded.</div>
                       ) : (
                         validation.findings.map((f, i) => (
-                          <div key={i} className="finding-row" style={{ borderLeftColor: SEVERITY_COLOR[f.severity] || "#555577" }}>
+                          <div key={i} className="finding-row" style={{ borderLeftColor: SEVERITY_COLOR[f.severity] || "#8888aa" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                               <SeverityTag s={f.severity} />
                               {f.category && (
-                                <span style={{ fontSize: 9, color: "#555577", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                                <span style={{ fontSize: 9, color: "#8888aa", letterSpacing: "0.1em", textTransform: "uppercase" }}>
                                   {f.category}
                                 </span>
                               )}
@@ -1344,7 +1344,7 @@ export default function VirtValidate() {
 
                       {validation.remediation.length > 0 && (
                         <>
-                          <div style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em", margin: "20px 0 12px" }}>REMEDIATION</div>
+                          <div style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.15em", margin: "20px 0 12px" }}>REMEDIATION</div>
                           {validation.remediation.map((r, i) => (
                             <div key={i} style={{ marginBottom: 10, fontFamily: "'Barlow', sans-serif" }}>
                               <div style={{ fontSize: 11, color: "#bbbbcc", lineHeight: 1.5 }}>
@@ -1399,11 +1399,11 @@ export default function VirtValidate() {
                 <>
                   <div style={{ marginBottom: 16, padding: "14px 18px", border: "1px solid #1a1a2e", background: "#0a0a18" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                      <span style={{ fontSize: 10, color: "#555577", letterSpacing: "0.15em" }}>
+                      <span style={{ fontSize: 10, color: "#8888aa", letterSpacing: "0.15em" }}>
                         PLAN #{plan.id} · {plan.waves.length} WAVE{plan.waves.length === 1 ? "" : "S"} · {plan.vm_ids.length} VMs
                       </span>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <span style={{ fontSize: 10, color: "#444466" }}>
+                        <span style={{ fontSize: 10, color: "#6666aa" }}>
                           {new Date(plan.created_at).toLocaleString()} · {plan.model}
                         </span>
                         <SecondaryButton onClick={() => setPlanModalOpen(true)}>+ New Plan</SecondaryButton>
@@ -1428,12 +1428,12 @@ export default function VirtValidate() {
                           <span style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 600, color: "#ccccee" }}>
                             Wave {wave.wave_number}
                           </span>
-                          <span style={{ fontSize: 10, color: "#444466" }}>{wave.vm_ids.length} VMs</span>
+                          <span style={{ fontSize: 10, color: "#6666aa" }}>{wave.vm_ids.length} VMs</span>
                         </div>
                         <span style={{
                           fontSize: 9, letterSpacing: "0.12em", fontWeight: 700,
-                          color: RISK_COLOR[wave.estimated_risk] || "#666677",
-                          border: `1px solid ${(RISK_COLOR[wave.estimated_risk] || "#666677")}44`,
+                          color: RISK_COLOR[wave.estimated_risk] || "#8888aa",
+                          border: `1px solid ${(RISK_COLOR[wave.estimated_risk] || "#8888aa")}44`,
                           padding: "2px 7px", borderRadius: 2, textTransform: "uppercase",
                         }}>
                           RISK · {wave.estimated_risk}
@@ -1456,7 +1456,7 @@ export default function VirtValidate() {
                                 {vmNameById.get(vid) || `vm_id=${vid}`}
                               </div>
                             </div>
-                            <span style={{ fontSize: 10, color: "#555577" }}>id {vid}</span>
+                            <span style={{ fontSize: 10, color: "#8888aa" }}>id {vid}</span>
                           </div>
                         ))}
                       </div>
@@ -1503,7 +1503,7 @@ export default function VirtValidate() {
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                         <div>
                           <div style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 700, color: "#eeeeff" }}>{vm.name}</div>
-                          <div style={{ fontSize: 9, color: "#444466", marginTop: 2 }}>{vm.role}</div>
+                          <div style={{ fontSize: 9, color: "#6666aa", marginTop: 2 }}>{vm.role}</div>
                         </div>
                         <StatusBadge status={vm.postStatus} />
                       </div>
@@ -1541,12 +1541,12 @@ export default function VirtValidate() {
                       <span style={{ fontSize: 18, color: "#2a2a44" }}>{r.icon}</span>
                       <div>
                         <div style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 600, color: "#ccccee" }}>{r.name}</div>
-                        <div style={{ fontSize: 10, color: "#444466", marginTop: 2 }}>{r.desc}</div>
+                        <div style={{ fontSize: 10, color: "#6666aa", marginTop: 2 }}>{r.desc}</div>
                       </div>
                     </div>
                     <button onClick={() => toast("Report export wires up to /api/plans/{id}/waves/{n}/report/pdf", { ...TOAST_OPTS, icon: "ℹ️" })}
                       style={{
-                        background: "none", border: "1px solid #2a2a44", color: "#6666aa",
+                        background: "none", border: "1px solid #2a2a44", color: "#aaaacc",
                         padding: "6px 16px", fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
                         letterSpacing: "0.12em", cursor: "pointer",
                       }}>EXPORT PDF</button>
@@ -1561,7 +1561,7 @@ export default function VirtValidate() {
             <div className="fade-in">
               <div style={{ marginBottom: 16, padding: "14px 18px", border: "1px solid #1a1a2e", background: "#0a0a18", display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 14 }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                  <span style={{ fontSize: 9, color: "#555577", letterSpacing: "0.15em", fontFamily: "'Share Tech Mono', monospace" }}>ACTION</span>
+                  <span style={{ fontSize: 9, color: "#8888aa", letterSpacing: "0.15em", fontFamily: "'Share Tech Mono', monospace" }}>ACTION</span>
                   <select
                     value={auditActionFilter}
                     onChange={(e) => setAuditActionFilter(e.target.value)}
@@ -1584,7 +1584,7 @@ export default function VirtValidate() {
                   </select>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                  <span style={{ fontSize: 9, color: "#555577", letterSpacing: "0.15em", fontFamily: "'Share Tech Mono', monospace" }}>RESOURCE TYPE</span>
+                  <span style={{ fontSize: 9, color: "#8888aa", letterSpacing: "0.15em", fontFamily: "'Share Tech Mono', monospace" }}>RESOURCE TYPE</span>
                   <select
                     value={auditResourceFilter}
                     onChange={(e) => setAuditResourceFilter(e.target.value)}
@@ -1644,16 +1644,16 @@ export default function VirtValidate() {
                     background: "#0a0a16",
                   }}>
                     {["TIMESTAMP", "ACTOR", "ACTION", "RESOURCE", "STATUS", "DETAILS"].map(h => (
-                      <span key={h} style={{ fontSize: 9, color: "#444466", letterSpacing: "0.15em" }}>{h}</span>
+                      <span key={h} style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.15em" }}>{h}</span>
                     ))}
                   </div>
                   {auditEntries.map((e, i) => {
                     const status = e.details?.status_code;
                     const statusColor =
-                      status == null ? "#666688" :
+                      status == null ? "#8888aa" :
                       status >= 500 ? "#ff3355" :
                       status >= 400 ? "#ffaa00" :
-                      status >= 200 ? "#00ff88" : "#666688";
+                      status >= 200 ? "#00ff88" : "#8888aa";
                     const detailJson = JSON.stringify(e.details ?? {});
                     return (
                       <div key={e.id} style={{
@@ -1668,11 +1668,11 @@ export default function VirtValidate() {
                         <span style={{ color: "#4488ff" }}>{e.action}</span>
                         <span style={{ color: "#8888aa" }}>
                           {e.resource_type ?? "—"}
-                          {e.resource_id ? <span style={{ color: "#555577" }}> · {e.resource_id}</span> : null}
+                          {e.resource_id ? <span style={{ color: "#8888aa" }}> · {e.resource_id}</span> : null}
                         </span>
                         <span style={{ color: statusColor, fontWeight: 700 }}>{status ?? "—"}</span>
                         <span title={detailJson} style={{
-                          color: "#666688", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          color: "#8888aa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                         }}>{detailJson}</span>
                       </div>
                     );
@@ -1685,7 +1685,7 @@ export default function VirtValidate() {
 
         {/* Right sidebar — system info */}
         <div style={{ width: 220, borderLeft: "1px solid #1a1a2e", padding: 16, background: "#080814", flexShrink: 0 }}>
-          <div style={{ fontSize: 9, color: "#333355", letterSpacing: "0.15em", marginBottom: 16 }}>SYSTEM</div>
+          <div style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.15em", marginBottom: 16 }}>SYSTEM</div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {[
@@ -1698,14 +1698,14 @@ export default function VirtValidate() {
               { label: "LATEST PLAN", value: planLoading ? "…" : (plan ? `#${plan.id}` : "—") },
             ].map(item => (
               <div key={item.label}>
-                <div style={{ fontSize: 8, color: "#333355", letterSpacing: "0.15em", marginBottom: 3 }}>{item.label}</div>
-                <div style={{ fontSize: 11, color: "#6666aa" }}>{item.value}</div>
+                <div style={{ fontSize: 8, color: "#6666aa", letterSpacing: "0.15em", marginBottom: 3 }}>{item.label}</div>
+                <div style={{ fontSize: 11, color: "#aaaacc" }}>{item.value}</div>
               </div>
             ))}
           </div>
 
           <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid #111122" }}>
-            <div style={{ fontSize: 9, color: "#333355", letterSpacing: "0.15em", marginBottom: 12 }}>QUICK ACTIONS</div>
+            <div style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.15em", marginBottom: 12 }}>QUICK ACTIONS</div>
 
             <button className="quick-action"
               onClick={onRunValidation}
@@ -1714,7 +1714,7 @@ export default function VirtValidate() {
               style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", marginBottom: 8,
                 background: "none", border: "1px solid #1a1a2e",
-                color: validationRunning || selectedVMId == null ? "#333355" : "#555577",
+                color: validationRunning || selectedVMId == null ? "#6666aa" : "#8888aa",
                 padding: "8px 10px", fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
                 letterSpacing: "0.1em", cursor: validationRunning || selectedVMId == null ? "not-allowed" : "pointer", textAlign: "left",
                 transition: "all 0.15s",
@@ -1727,7 +1727,7 @@ export default function VirtValidate() {
               onClick={onCaptureBaseline}
               style={{
                 display: "block", width: "100%", marginBottom: 8,
-                background: "none", border: "1px solid #1a1a2e", color: "#555577",
+                background: "none", border: "1px solid #1a1a2e", color: "#8888aa",
                 padding: "8px 10px", fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
                 letterSpacing: "0.1em", cursor: "pointer", textAlign: "left",
                 transition: "all 0.15s",
@@ -1739,7 +1739,7 @@ export default function VirtValidate() {
               style={{
                 display: "block", width: "100%", marginBottom: 8,
                 background: "none", border: "1px solid #1a1a2e",
-                color: vmsLoading ? "#333355" : "#555577",
+                color: vmsLoading ? "#6666aa" : "#8888aa",
                 padding: "8px 10px", fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
                 letterSpacing: "0.1em", cursor: vmsLoading ? "wait" : "pointer", textAlign: "left",
                 transition: "all 0.15s",
@@ -1749,7 +1749,7 @@ export default function VirtValidate() {
               onClick={() => setAddVMOpen(true)}
               style={{
                 display: "block", width: "100%", marginBottom: 8,
-                background: "none", border: "1px solid #1a1a2e", color: "#555577",
+                background: "none", border: "1px solid #1a1a2e", color: "#8888aa",
                 padding: "8px 10px", fontSize: 9, fontFamily: "'Share Tech Mono', monospace",
                 letterSpacing: "0.1em", cursor: "pointer", textAlign: "left",
                 transition: "all 0.15s",
@@ -1757,7 +1757,7 @@ export default function VirtValidate() {
           </div>
 
           <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid #111122" }}>
-            <div style={{ fontSize: 9, color: "#333355", letterSpacing: "0.15em", marginBottom: 8 }}>AI ENGINE</div>
+            <div style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.15em", marginBottom: 8 }}>AI ENGINE</div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#00ff88", boxShadow: "0 0 8px #00ff88", animation: "pulse 2s infinite" }} />
               <span style={{ fontSize: 10, color: "#00ff8899" }}>ONLINE — AIR GAPPED</span>
