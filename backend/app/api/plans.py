@@ -98,13 +98,13 @@ def _latest_validations_for(db: Session, vm_ids: list[int]) -> dict[int, Validat
     return latest
 
 
-@router.get("/{plan_id}/waves/{wave_number}/report")
-def wave_report(
-    plan_id: int,
-    wave_number: int,
-    format: str = Query(default="json", pattern="^(json|pdf)$"),
-    db: Session = Depends(get_db),
-):
+def _build_wave_report(db: Session, plan_id: int, wave_number: int) -> dict:
+    """Load the plan + wave + per-VM verdicts and call the LLM reporter.
+
+    Centralized so both the JSON and PDF endpoints share the same loading
+    rules (404 for missing plan/wave, 409 for missing validations, 502 for
+    LLM failures).
+    """
     plan = db.get(MigrationPlan, plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
@@ -146,17 +146,43 @@ def wave_report(
 
     reporter = WaveReporter()
     try:
-        report = reporter.generate(wave, validation_payload)
+        return reporter.generate(wave, validation_payload)
     except ReporterError as e:
         raise HTTPException(status_code=502, detail=f"Reporter failed: {e}") from e
 
-    if format == "pdf":
-        pdf_bytes = render_pdf(report)
-        filename = f"wave-{wave_number}-plan-{plan_id}.pdf"
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
 
+def _pdf_response(report: dict, plan_id: int, wave_number: int) -> Response:
+    pdf_bytes = render_pdf(report)
+    filename = f"wave-{wave_number}-plan-{plan_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{plan_id}/waves/{wave_number}/report")
+def wave_report(
+    plan_id: int,
+    wave_number: int,
+    format: str = Query(default="json", pattern="^(json|pdf)$"),
+    db: Session = Depends(get_db),
+):
+    report = _build_wave_report(db, plan_id, wave_number)
+    if format == "pdf":
+        return _pdf_response(report, plan_id, wave_number)
     return WaveReport(**report)
+
+
+@router.get(
+    "/{plan_id}/waves/{wave_number}/report/pdf",
+    responses={200: {"content": {"application/pdf": {}}}},
+)
+def wave_report_pdf(
+    plan_id: int,
+    wave_number: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    """Dedicated PDF endpoint — always returns Content-Type: application/pdf."""
+    report = _build_wave_report(db, plan_id, wave_number)
+    return _pdf_response(report, plan_id, wave_number)

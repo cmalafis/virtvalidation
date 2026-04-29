@@ -12,6 +12,7 @@ class VMBase(BaseModel):
     ip_address: str | None = Field(default=None, max_length=45)
     os_family: str | None = Field(default=None, max_length=32)
     role: str | None = Field(default=None, max_length=64)
+    ssh_user: str | None = Field(default=None, max_length=64)
     notes: str | None = Field(default=None, max_length=1024)
 
 
@@ -25,6 +26,7 @@ class VMUpdate(BaseModel):
     ip_address: str | None = Field(default=None, max_length=45)
     os_family: str | None = Field(default=None, max_length=32)
     role: str | None = Field(default=None, max_length=64)
+    ssh_user: str | None = Field(default=None, max_length=64)
     status: VMStatus | None = None
     notes: str | None = Field(default=None, max_length=1024)
 
@@ -36,6 +38,21 @@ class VMRead(VMBase):
     status: VMStatus
     created_at: datetime
     updated_at: datetime
+
+
+class BulkVMCreate(BaseModel):
+    vms: list[VMCreate] = Field(min_length=1, max_length=500)
+
+
+class BulkVMSkipped(BaseModel):
+    name: str
+    reason: str
+
+
+class BulkVMResult(BaseModel):
+    total: int
+    created: list[VMRead]
+    skipped: list[BulkVMSkipped]
 
 
 class SnapshotCreate(BaseModel):

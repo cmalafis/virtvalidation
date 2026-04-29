@@ -39,8 +39,9 @@ def collect_baselines_for_all_vms() -> None:
             if not host:
                 logger.warning("skipping VM %s: no host/ip", vm.name)
                 continue
+            ssh_user = vm.ssh_user or _SCHEDULED_SSH_USER
             try:
-                state = collector.collect(host=host, username=_SCHEDULED_SSH_USER)
+                state = collector.collect(host=host, username=ssh_user)
             except SSHCollectionError as e:
                 logger.error("baseline collection failed for %s: %s", vm.name, e)
                 continue
@@ -51,12 +52,12 @@ def collect_baselines_for_all_vms() -> None:
                         BaselineSnapshot.vm_id == vm.id
                     )
                 )
-                + 1
-            )
+                or 0
+            ) + 1
             snapshot = BaselineSnapshot(
                 vm_id=vm.id,
                 snapshot_number=next_number,
-                ssh_user=_SCHEDULED_SSH_USER,
+                ssh_user=ssh_user,
                 raw_data=state,
             )
             db.add(snapshot)

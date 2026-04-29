@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     ollama_host: str = "http://ollama:11434"
     ollama_model: str = "llama3:8b"
     ssh_key_path: str = "/app/keys/id_ed25519"
+    cluster_name: str = "ocp-virt-prod-01"
 
 
 settings = Settings()

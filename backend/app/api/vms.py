@@ -10,6 +10,8 @@ from app.models.vm import VM, BaselineSnapshot, VMStatus
 from app.schemas.validation import ValidationResultRead
 from app.schemas.vm import (
     BaselineProfile,
+    BulkVMCreate,
+    BulkVMResult,
     SnapshotCreate,
     SnapshotRead,
     VMCreate,
@@ -40,6 +42,43 @@ def create_vm(payload: VMCreate, db: Session = Depends(get_db)) -> VM:
         ) from e
     db.refresh(vm)
     return vm
+
+
+@router.post("/bulk", response_model=BulkVMResult)
+def create_vms_bulk(payload: BulkVMCreate, db: Session = Depends(get_db)) -> dict:
+    """Best-effort batch enrollment.
+
+    Pre-loads existing VM names so duplicates don't trigger per-row
+    IntegrityErrors. Returns the created rows and a list of names that were
+    skipped (with reason). Within-batch duplicates are also caught.
+    """
+    existing_names: set[str] = set(db.scalars(select(VM.name)).all())
+    seen_in_batch: set[str] = set()
+    created: list[VM] = []
+    skipped: list[dict] = []
+
+    for entry in payload.vms:
+        name = entry.name
+        if name in existing_names:
+            skipped.append({"name": name, "reason": "already enrolled"})
+            continue
+        if name in seen_in_batch:
+            skipped.append({"name": name, "reason": "duplicate within batch"})
+            continue
+        seen_in_batch.add(name)
+        vm = VM(**entry.model_dump())
+        db.add(vm)
+        created.append(vm)
+
+    db.commit()
+    for vm in created:
+        db.refresh(vm)
+
+    return {
+        "total": len(payload.vms),
+        "created": created,
+        "skipped": skipped,
+    }
 
 
 @router.get("", response_model=list[VMRead])
@@ -92,8 +131,8 @@ def create_snapshot(
                 BaselineSnapshot.vm_id == vm.id
             )
         )
-        + 1
-    )
+        or 0
+    ) + 1
     snapshot = BaselineSnapshot(vm_id=vm.id, snapshot_number=next_number, **payload.model_dump())
     db.add(snapshot)
     if vm.status == VMStatus.discovered:

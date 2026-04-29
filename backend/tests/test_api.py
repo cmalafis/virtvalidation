@@ -85,3 +85,58 @@ def test_list_vms_respects_limit(client):
     r = client.get("/vms?limit=3")
     assert r.status_code == 200
     assert len(r.json()) == 3
+
+
+def test_bulk_create_persists_and_reports_dupes(client, mock_vm_payload):
+    # Seed an existing VM that the bulk request will collide with.
+    client.post("/vms", json=mock_vm_payload)
+
+    r = client.post(
+        "/vms/bulk",
+        json={
+            "vms": [
+                {"name": "db-01", "source_hostname": "db-01.vmware.local"},  # collision
+                {"name": "app-01", "source_hostname": "app-01.local", "ssh_user": "ec2-user"},
+                {"name": "app-02", "source_hostname": "app-02.local"},
+                {"name": "app-01", "source_hostname": "app-01.local"},  # within-batch dup
+            ]
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 4
+    assert len(body["created"]) == 2
+    created_names = sorted(vm["name"] for vm in body["created"])
+    assert created_names == ["app-01", "app-02"]
+
+    skipped = body["skipped"]
+    assert len(skipped) == 2
+    skipped_by_name = {s["name"]: s["reason"] for s in skipped}
+    assert "already enrolled" in skipped_by_name["db-01"]
+    assert "batch" in skipped_by_name["app-01"]
+
+    # The two new VMs landed in the DB
+    listing = client.get("/vms").json()
+    assert {v["name"] for v in listing} == {"db-01", "app-01", "app-02"}
+
+    # ssh_user round-trips
+    app01 = next(v for v in listing if v["name"] == "app-01")
+    assert app01["ssh_user"] == "ec2-user"
+
+
+def test_bulk_create_validates_entries(client):
+    r = client.post("/vms/bulk", json={"vms": []})
+    assert r.status_code == 422
+
+
+def test_create_vm_accepts_ssh_user(client):
+    r = client.post(
+        "/vms",
+        json={
+            "name": "db-99",
+            "source_hostname": "db-99.local",
+            "ssh_user": "rocky",
+        },
+    )
+    assert r.status_code == 201
+    assert r.json()["ssh_user"] == "rocky"

@@ -25,6 +25,7 @@ class VM(Base):
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
     os_family: Mapped[str | None] = mapped_column(String(32), nullable=True)
     role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ssh_user: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[VMStatus] = mapped_column(
         Enum(VMStatus, name="vm_status"), default=VMStatus.discovered, nullable=False
     )
