@@ -14,6 +14,11 @@ class VMBase(BaseModel):
     role: str | None = Field(default=None, max_length=64)
     ssh_user: str | None = Field(default=None, max_length=64)
     notes: str | None = Field(default=None, max_length=1024)
+    vsphere_networks: list[str] = Field(default_factory=list)
+    vsphere_datastores: list[str] = Field(default_factory=list)
+    target_namespace: str | None = Field(default=None, max_length=253)
+    target_storage_class: str | None = Field(default=None, max_length=253)
+    target_network_attachment: str | None = Field(default=None, max_length=253)
 
 
 class VMCreate(VMBase):
@@ -29,6 +34,11 @@ class VMUpdate(BaseModel):
     ssh_user: str | None = Field(default=None, max_length=64)
     status: VMStatus | None = None
     notes: str | None = Field(default=None, max_length=1024)
+    vsphere_networks: list[str] | None = None
+    vsphere_datastores: list[str] | None = None
+    target_namespace: str | None = Field(default=None, max_length=253)
+    target_storage_class: str | None = Field(default=None, max_length=253)
+    target_network_attachment: str | None = Field(default=None, max_length=253)
 
 
 class VMRead(VMBase):

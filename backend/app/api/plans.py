@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
 from app.core.db import get_db
+from app.core.mtv import MTVGenerationError, WaveContext, generate_wave_yaml
 from app.core.planner import MigrationPlanner, PlannerError
 from app.core.reporter import ReporterError, WaveReporter, render_pdf
 from app.models.plan import MigrationPlan
@@ -40,6 +41,11 @@ def _assemble_vm_profiles(db: Session, vm_ids: list[int]) -> list[dict]:
                 "name": vm.name,
                 "role": vm.role or "",
                 "os_family": vm.os_family or "",
+                "vsphere_networks": list(vm.vsphere_networks or []),
+                "vsphere_datastores": list(vm.vsphere_datastores or []),
+                "target_namespace": vm.target_namespace or "",
+                "target_storage_class": vm.target_storage_class or "",
+                "target_network_attachment": vm.target_network_attachment or "",
                 "baseline": profile.model_dump(mode="json"),
             }
         )
@@ -209,3 +215,74 @@ def wave_report_pdf(
     report = _build_wave_report(db, plan_id, wave_number)
     _record_report_export(db, plan_id, wave_number, request.headers.get("x-actor", "anonymous"))
     return _pdf_response(report, plan_id, wave_number)
+
+
+@router.get(
+    "/{plan_id}/waves/{wave_number}/mtv-yaml",
+    responses={200: {"content": {"application/yaml": {}}}},
+)
+def wave_mtv_yaml(
+    request: Request,
+    plan_id: int,
+    wave_number: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    """Render the wave as a multi-doc MTV/Forklift YAML for ``oc apply -f``."""
+    plan = db.get(MigrationPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+
+    wave = next((w for w in plan.waves if w.get("wave_number") == wave_number), None)
+    if wave is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Wave {wave_number} not found in plan {plan_id}",
+        )
+
+    vm_ids: list[int] = list(wave.get("vm_ids") or [])
+    if not vm_ids:
+        raise HTTPException(status_code=422, detail=f"Wave {wave_number} has no VMs")
+
+    vms_by_id = {vm.id: vm for vm in db.scalars(select(VM).where(VM.id.in_(vm_ids))).all()}
+    missing = [vid for vid in vm_ids if vid not in vms_by_id]
+    if missing:
+        raise HTTPException(status_code=409, detail=f"Unknown vm_ids in wave: {missing}")
+
+    vm_payloads = [
+        {
+            "name": vms_by_id[vid].name,
+            "vsphere_networks": list(vms_by_id[vid].vsphere_networks or []),
+            "vsphere_datastores": list(vms_by_id[vid].vsphere_datastores or []),
+            "target_namespace": vms_by_id[vid].target_namespace or "",
+            "target_storage_class": vms_by_id[vid].target_storage_class or "",
+            "target_network_attachment": vms_by_id[vid].target_network_attachment or "",
+        }
+        for vid in vm_ids
+    ]
+
+    ctx = WaveContext.from_settings(
+        plan_id=plan_id,
+        wave_number=wave_number,
+        rationale=wave.get("rationale", ""),
+    )
+    try:
+        yaml_text = generate_wave_yaml(ctx, vm_payloads)
+    except MTVGenerationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    record_audit(
+        db,
+        action="plan.export_mtv_yaml",
+        actor=request.headers.get("x-actor", "anonymous"),
+        resource_type="plan",
+        resource_id=plan_id,
+        details={"wave_number": wave_number},
+    )
+    db.commit()
+
+    filename = f"wave-{wave_number}-plan-{plan_id}.yaml"
+    return Response(
+        content=yaml_text,
+        media_type="application/yaml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

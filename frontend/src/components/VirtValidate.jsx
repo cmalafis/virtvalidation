@@ -56,6 +56,11 @@ function mapVM(vm) {
     postStatus: mapped.postStatus,
     rawStatus: vm.status,
     cpu: null, mem: null, disk: null,
+    vsphereNetworks: Array.isArray(vm.vsphere_networks) ? vm.vsphere_networks : [],
+    vsphereDatastores: Array.isArray(vm.vsphere_datastores) ? vm.vsphere_datastores : [],
+    targetNamespace: vm.target_namespace ?? null,
+    targetStorageClass: vm.target_storage_class ?? null,
+    targetNetworkAttachment: vm.target_network_attachment ?? null,
   };
 }
 
@@ -114,6 +119,139 @@ const Metric = ({ label, value }) => (
     <span style={{ fontSize: 13, color: "#aaaacc", fontFamily: "'Share Tech Mono', monospace" }}>{value}</span>
   </div>
 );
+
+// Per-wave Download MTV YAML button + applied-with popover. The download is
+// streamed straight from the API endpoint (which sets Content-Disposition),
+// and the popover surfaces the kubectl/oc one-liner so operators don't have
+// to bounce to the docs.
+function WaveMTVDownload({ planId, waveNumber }) {
+  const [downloading, setDownloading] = useState(false);
+  const [showHint, setShowHint] = useState(false);
+  const filename = `wave-${waveNumber}-plan-${planId}.yaml`;
+
+  const onDownload = async () => {
+    setDownloading(true);
+    try {
+      const res = await fetch(`/api/plans/${planId}/waves/${waveNumber}/mtv-yaml`);
+      if (!res.ok) {
+        let detail = "";
+        try { detail = (await res.json())?.detail ?? ""; } catch { /* ignore */ }
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setShowHint(true);
+    } catch (e) {
+      toast.error(e.message || "Failed to download MTV YAML", TOAST_OPTS);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <button onClick={onDownload} disabled={downloading}
+        style={{
+          background: "transparent", border: "1px solid #4488ff66",
+          color: downloading ? "#4466aa" : "#88aaff",
+          padding: "5px 12px", fontSize: 9,
+          fontFamily: "'Share Tech Mono', monospace",
+          letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700,
+          cursor: downloading ? "wait" : "pointer", whiteSpace: "nowrap",
+        }}>
+        {downloading ? <Spinner size={10}/> : "↓"} MTV YAML
+      </button>
+      <button
+        type="button"
+        onClick={() => setShowHint((s) => !s)}
+        onMouseEnter={() => setShowHint(true)}
+        onMouseLeave={() => setShowHint(false)}
+        aria-label="How to apply this YAML"
+        style={{
+          background: "transparent", border: "1px solid #2a2a44",
+          color: "#8888aa", width: 20, height: 20, padding: 0,
+          fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
+          cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
+        }}>
+        ⓘ
+      </button>
+      {showHint && (
+        <div style={{
+          position: "absolute", top: "100%", right: 0, marginTop: 6,
+          background: "#0a0a18", border: "1px solid #2a2a44",
+          padding: "10px 12px", zIndex: 50, minWidth: 280,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+        }}>
+          <div style={{
+            fontSize: 9, color: "#8888aa", letterSpacing: "0.15em",
+            fontFamily: "'Share Tech Mono', monospace", marginBottom: 4,
+          }}>
+            APPLY WITH
+          </div>
+          <code style={{
+            display: "block",
+            fontSize: 11, color: "#ccccee", fontFamily: "'Share Tech Mono', monospace",
+            background: "#07070f", padding: "6px 8px", border: "1px solid #1a1a2e",
+            wordBreak: "break-all",
+          }}>
+            oc apply -f {filename}
+          </code>
+          <div style={{
+            fontSize: 10, color: "#8888aa", marginTop: 6,
+            fontFamily: "'Barlow', sans-serif", lineHeight: 1.5,
+          }}>
+            Review the rendered NetworkMap, StorageMap, and Plan resources
+            before applying. The Plan defaults to a warm migration.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// MTV mapping rendered as a compact section under the inventory metric grid.
+// Renders nothing when the VM has no source/target mapping at all — keeps
+// the card height stable for VMs operators haven't filled out yet.
+const VMMTVMapping = ({ vm }) => {
+  const networks = vm.vsphereNetworks || [];
+  const datastores = vm.vsphereDatastores || [];
+  const hasSource = networks.length > 0 || datastores.length > 0;
+  const hasTarget = vm.targetNamespace || vm.targetStorageClass || vm.targetNetworkAttachment;
+  if (!hasSource && !hasTarget) return null;
+
+  const row = (label, value) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
+      <span style={{ fontSize: 9, color: "#8888aa", fontFamily: "'Share Tech Mono', monospace", letterSpacing: "0.1em", flexShrink: 0 }}>{label}</span>
+      <span style={{
+        fontSize: 11, color: "#aaaacc", fontFamily: "'Share Tech Mono', monospace",
+        textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+      }} title={value}>{value || "—"}</span>
+    </div>
+  );
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #14142a" }}>
+      <div style={{
+        fontSize: 9, color: "#6666aa", letterSpacing: "0.15em",
+        fontFamily: "'Share Tech Mono', monospace", marginBottom: 4,
+      }}>
+        MTV MAPPING
+      </div>
+      {networks.length > 0 && row("NETWORKS", networks.join(", "))}
+      {datastores.length > 0 && row("DATASTORES", datastores.join(", "))}
+      {vm.targetNamespace && row("→ NAMESPACE", vm.targetNamespace)}
+      {vm.targetStorageClass && row("→ STORAGECLASS", vm.targetStorageClass)}
+      {vm.targetNetworkAttachment && row("→ NAD", vm.targetNetworkAttachment)}
+    </div>
+  );
+};
 
 // Skeleton bar — animated shimmer for loading rows
 const Shimmer = ({ width = "100%", height = 12 }) => (
@@ -356,12 +494,29 @@ const inputStyle = {
 // VM payload field. Tuned to handle both VirtValidate-native CSV and the
 // RVTools "vInfo" sheet column names.
 const HEADER_ALIASES = {
-  name:            ["name", "vm", "vmname"],
-  source_hostname: ["hostname", "sourcehostname", "dnsname", "fqdn"],
-  ip_address:      ["ip", "ipaddress", "primaryipaddress"],
-  os_family:       ["os", "osfamily", "osaccordingtotheconfigurationfile", "guestos", "guestosfullname"],
-  role:            ["role", "tag", "annotation"],
-  ssh_user:        ["sshuser", "username", "user"],
+  name:                       ["name", "vm", "vmname"],
+  source_hostname:            ["hostname", "sourcehostname", "dnsname", "fqdn"],
+  ip_address:                 ["ip", "ipaddress", "primaryipaddress"],
+  os_family:                  ["os", "osfamily", "osaccordingtotheconfigurationfile", "guestos", "guestosfullname"],
+  role:                       ["role", "tag", "annotation"],
+  ssh_user:                   ["sshuser", "sshusername", "username", "user"],
+  notes:                      ["notes", "comment", "comments", "annotation_notes"],
+  vsphere_networks:           ["vspherenetworks", "networks", "portgroups", "portgroup", "network"],
+  vsphere_datastores:         ["vspheredatastores", "datastores", "datastore"],
+  target_namespace:           ["targetnamespace", "namespace"],
+  target_storage_class:       ["targetstorageclass", "storageclass"],
+  target_network_attachment:  ["targetnetworkattachment", "networkattachment", "nad"],
+};
+
+// vsphere_networks and vsphere_datastores are list-typed; CSV operators put
+// multiple values in one cell separated by ";" (and tolerate a stray ","
+// since RVTools sometimes uses that).
+const _splitList = (raw) => {
+  if (!raw) return [];
+  return String(raw)
+    .split(/[;,]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 };
 
 const _normKey = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -401,6 +556,12 @@ function rowToPayload(rawRow) {
     os_family: _shortenOSFamily(get("os_family")),
     role: get("role"),
     ssh_user: get("ssh_user"),
+    notes: get("notes"),
+    vsphere_networks: _splitList(get("vsphere_networks")),
+    vsphere_datastores: _splitList(get("vsphere_datastores")),
+    target_namespace: get("target_namespace"),
+    target_storage_class: get("target_storage_class"),
+    target_network_attachment: get("target_network_attachment"),
   };
 }
 
@@ -450,32 +611,43 @@ async function parseXLSX(file) {
   return { sheetName, rows };
 }
 
+const PREVIEW_COLS = "1.2fr 1.4fr 0.9fr 0.7fr 0.8fr 1.2fr 1.2fr 1.1fr";
+
 const PreviewTable = ({ payloads }) => (
   <div style={{ border: "1px solid #1a1a2e", maxHeight: 280, overflowY: "auto" }}>
     <div style={{
       display: "grid",
-      gridTemplateColumns: "1.4fr 1.6fr 1.1fr 0.9fr 0.9fr 0.9fr",
+      gridTemplateColumns: PREVIEW_COLS,
       padding: "8px 12px", borderBottom: "1px solid #1a1a2e",
       background: "#0a0a16", fontSize: 9, color: "#6666aa",
       letterSpacing: "0.15em", fontFamily: "'Share Tech Mono', monospace",
     }}>
       <span>NAME</span><span>HOSTNAME</span><span>IP</span>
-      <span>OS</span><span>ROLE</span><span>SSH USER</span>
+      <span>OS</span><span>ROLE</span><span>NETWORKS</span>
+      <span>DATASTORES</span><span>TARGET NS</span>
     </div>
     {payloads.slice(0, 50).map((p, i) => (
       <div key={i} style={{
         display: "grid",
-        gridTemplateColumns: "1.4fr 1.6fr 1.1fr 0.9fr 0.9fr 0.9fr",
+        gridTemplateColumns: PREVIEW_COLS,
         padding: "8px 12px", borderBottom: "1px solid #0f0f1e",
         fontSize: 11, color: "#aaaacc",
         fontFamily: "'Share Tech Mono', monospace",
       }}>
         <span style={{ color: "#ccccee", fontWeight: 600 }}>{p.name || "—"}</span>
-        <span>{p.source_hostname || "—"}</span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.source_hostname || "—"}</span>
         <span>{p.ip_address || "—"}</span>
         <span>{p.os_family || "—"}</span>
         <span>{p.role || "—"}</span>
-        <span>{p.ssh_user || "—"}</span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              title={(p.vsphere_networks || []).join(", ")}>
+          {(p.vsphere_networks || []).join(", ") || "—"}
+        </span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              title={(p.vsphere_datastores || []).join(", ")}>
+          {(p.vsphere_datastores || []).join(", ") || "—"}
+        </span>
+        <span>{p.target_namespace || "—"}</span>
       </div>
     ))}
     {payloads.length > 50 && (
@@ -623,7 +795,7 @@ function BulkTab({
         </label>
         <div style={{ flex: 1, fontSize: 11, color: "#8888aa", fontFamily: "'Barlow', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {filename || (kind === "csv"
-            ? "Headers: name, hostname, ip, os, role, ssh_user (any subset)"
+            ? "Columns: hostname, ip, ssh_username, role, vsphere_networks, vsphere_datastores, target_namespace, target_storage_class, target_network_attachment, notes (lists are ;-separated)"
             : "RVTools export — vInfo sheet preferred")}
         </div>
         {payloads.length > 0 && (
@@ -1430,14 +1602,17 @@ export default function VirtValidate() {
                           </span>
                           <span style={{ fontSize: 10, color: "#6666aa" }}>{wave.vm_ids.length} VMs</span>
                         </div>
-                        <span style={{
-                          fontSize: 9, letterSpacing: "0.12em", fontWeight: 700,
-                          color: RISK_COLOR[wave.estimated_risk] || "#8888aa",
-                          border: `1px solid ${(RISK_COLOR[wave.estimated_risk] || "#8888aa")}44`,
-                          padding: "2px 7px", borderRadius: 2, textTransform: "uppercase",
-                        }}>
-                          RISK · {wave.estimated_risk}
-                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <WaveMTVDownload planId={plan.id} waveNumber={wave.wave_number} />
+                          <span style={{
+                            fontSize: 9, letterSpacing: "0.12em", fontWeight: 700,
+                            color: RISK_COLOR[wave.estimated_risk] || "#8888aa",
+                            border: `1px solid ${(RISK_COLOR[wave.estimated_risk] || "#8888aa")}44`,
+                            padding: "2px 7px", borderRadius: 2, textTransform: "uppercase",
+                          }}>
+                            RISK · {wave.estimated_risk}
+                          </span>
+                        </div>
                       </div>
                       {wave.rationale && (
                         <div style={{ padding: "12px 18px", borderTop: "1px solid #0f0f1e", fontSize: 11, color: "#8888aa", fontFamily: "'Barlow', sans-serif", lineHeight: 1.6 }}>
@@ -1515,6 +1690,7 @@ export default function VirtValidate() {
                         <Metric label="DISK" value={fmt(vm.disk)} />
                         <Metric label="STATUS" value={vm.rawStatus} />
                       </div>
+                      <VMMTVMapping vm={vm} />
                     </div>
                   ))}
                 </div>

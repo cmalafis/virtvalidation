@@ -1,0 +1,6 @@
+hostname,ip_address,ssh_username,ssh_port,current_platform,role,environment,owner,vsphere_networks,vsphere_datastores,target_namespace,target_storage_class,target_network_attachment,notes
+db-prod-01.corp.local,10.20.30.10,virtvalidate,22,vmware,database,prod,platform-data,VM Network;DB Backend,nfs-prod-fast;nfs-prod-bulk,finance-prod,ocs-storagecluster-cephfs,db-backend-nad,Primary OLTP postgres — depends on shared NFS for WAL archive
+api-prod-01.corp.local,10.20.30.20,virtvalidate,22,vmware,app,prod,platform-api,VM Network;API Frontend,nfs-prod-fast,finance-prod,ocs-storagecluster-cephfs,api-frontend-nad,Stateless API tier; consumes db-prod-01
+api-prod-02.corp.local,10.20.30.21,virtvalidate,22,vmware,app,prod,platform-api,VM Network;API Frontend,nfs-prod-fast,finance-prod,ocs-storagecluster-cephfs,api-frontend-nad,Stateless API tier; consumes db-prod-01
+edge-prod-01.corp.local,10.20.30.30,virtvalidate,22,vmware,loadbalancer,prod,platform-edge,VM Network;DMZ,nfs-prod-fast,finance-prod,ocs-storagecluster-cephfs,dmz-nad,nginx reverse proxy in front of api-prod-*
+batch-dev-01.corp.local,10.40.50.5,migrate,2222,vmware,batch,dev,data-science,Lab Network,nfs-lab-bulk,sandbox-dev,thin-csi,lab-nad,Nightly ETL; safe to migrate independently

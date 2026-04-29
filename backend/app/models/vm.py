@@ -31,6 +31,20 @@ class VM(Base):
     )
     notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
+    # MTV migration mapping fields. Source side describes what the VM is wired
+    # to in vSphere; target side describes what it should land on in OCP-Virt.
+    # Lists are stored as JSON arrays so a VM with multiple NICs/disks can map
+    # cleanly through Forklift NetworkMap/StorageMap.
+    vsphere_networks: Mapped[list[str]] = mapped_column(
+        JSONType, nullable=False, default=list
+    )
+    vsphere_datastores: Mapped[list[str]] = mapped_column(
+        JSONType, nullable=False, default=list
+    )
+    target_namespace: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    target_storage_class: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    target_network_attachment: Mapped[str | None] = mapped_column(String(253), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -142,3 +142,99 @@ def test_create_vm_accepts_ssh_user(client):
     )
     assert r.status_code == 201
     assert r.json()["ssh_user"] == "rocky"
+
+
+def test_create_vm_persists_mtv_mapping_fields(client):
+    r = client.post(
+        "/api/vms",
+        json={
+            "name": "db-mtv",
+            "source_hostname": "db-mtv.local",
+            "vsphere_networks": ["VM Network", "DB Backend"],
+            "vsphere_datastores": ["nfs-prod-fast"],
+            "target_namespace": "finance-prod",
+            "target_storage_class": "ocs-storagecluster-cephfs",
+            "target_network_attachment": "db-backend-nad",
+        },
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["vsphere_networks"] == ["VM Network", "DB Backend"]
+    assert body["vsphere_datastores"] == ["nfs-prod-fast"]
+    assert body["target_namespace"] == "finance-prod"
+    assert body["target_storage_class"] == "ocs-storagecluster-cephfs"
+    assert body["target_network_attachment"] == "db-backend-nad"
+
+
+def test_create_vm_defaults_mtv_lists_to_empty(client, mock_vm_payload):
+    r = client.post("/api/vms", json=mock_vm_payload)
+    assert r.status_code == 201
+    body = r.json()
+    assert body["vsphere_networks"] == []
+    assert body["vsphere_datastores"] == []
+    assert body["target_namespace"] is None
+
+
+def test_wave_mtv_yaml_endpoint_renders_three_documents(client, db_session):
+    """End-to-end: enroll two VMs, hand-build a plan row, hit the YAML route."""
+    from app.models.plan import MigrationPlan
+
+    db_session.add_all(
+        [
+            _vm(
+                "db-prod-01",
+                vsphere_networks=["DB Backend"],
+                vsphere_datastores=["nfs-prod-fast"],
+                target_namespace="finance-prod",
+                target_storage_class="ocs-storagecluster-cephfs",
+                target_network_attachment="db-backend-nad",
+            ),
+            _vm(
+                "db-prod-02",
+                vsphere_networks=["DB Backend"],
+                vsphere_datastores=["nfs-prod-fast"],
+                target_namespace="finance-prod",
+                target_storage_class="ocs-storagecluster-cephfs",
+                target_network_attachment="db-backend-nad",
+            ),
+        ]
+    )
+    db_session.commit()
+    from app.models.vm import VM
+
+    ids = [vm.id for vm in db_session.query(VM).order_by(VM.id).all()]
+
+    plan = MigrationPlan(
+        vm_ids=ids,
+        waves=[
+            {
+                "wave_number": 1,
+                "vm_ids": ids,
+                "rationale": "Both DB VMs share DB Backend portgroup and nfs-prod-fast",
+                "estimated_risk": "high",
+            }
+        ],
+        summary="DB tier",
+        model="test-model",
+    )
+    db_session.add(plan)
+    db_session.commit()
+
+    r = client.get(f"/api/plans/{plan.id}/waves/1/mtv-yaml")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/yaml")
+    body = r.text
+    assert body.count("apiVersion: forklift.konveyor.io/v1beta1") == 3
+    assert "kind: NetworkMap" in body
+    assert "kind: StorageMap" in body
+    assert "kind: Plan" in body
+    assert "warm: true" in body
+    assert "DB Backend" in body
+    assert "nfs-prod-fast" in body
+
+
+def _vm(name: str, **kwargs):
+    """Helper that mirrors the VM model defaults so tests stay terse."""
+    from app.models.vm import VM
+
+    return VM(name=name, source_hostname=f"{name}.local", **kwargs)

@@ -175,3 +175,54 @@ def test_plan_prompt_includes_all_profiles(monkeypatch, mock_ollama_plan):
     assert "app-01" in captured["user"]
     assert "app-02" in captured["user"]
     assert '"vm_id": 1' in captured["user"]
+
+
+def test_plan_prompt_propagates_network_and_datastore_hints(monkeypatch, mock_ollama_plan):
+    """Network/datastore signals must reach the LLM so it can group on them."""
+    captured = {}
+
+    def fake_chat(system, user):
+        captured["system"] = system
+        captured["user"] = user
+        return json.dumps(mock_ollama_plan)
+
+    profiles = [
+        {
+            "vm_id": 1,
+            "name": "db-01",
+            "role": "database",
+            "os_family": "rhel",
+            "vsphere_networks": ["DB Backend"],
+            "vsphere_datastores": ["nfs-prod-fast"],
+            "baseline": {},
+        },
+        {
+            "vm_id": 2,
+            "name": "app-01",
+            "role": "app",
+            "os_family": "rhel",
+            "vsphere_networks": ["API Frontend"],
+            "vsphere_datastores": ["nfs-prod-fast"],
+            "baseline": {},
+        },
+        {
+            "vm_id": 3,
+            "name": "app-02",
+            "role": "app",
+            "os_family": "rhel",
+            "vsphere_networks": ["API Frontend"],
+            "vsphere_datastores": ["nfs-prod-fast"],
+            "baseline": {},
+        },
+    ]
+    planner = MigrationPlanner()
+    monkeypatch.setattr(planner, "_chat", fake_chat)
+    planner.plan(profiles)
+
+    # The grouping rules are part of the system prompt the LLM receives.
+    assert "Shared vSphere networks" in captured["system"]
+    assert "Shared vSphere datastores" in captured["system"]
+    # The per-VM mapping signals are in the user prompt body.
+    assert "DB Backend" in captured["user"]
+    assert "API Frontend" in captured["user"]
+    assert "nfs-prod-fast" in captured["user"]
