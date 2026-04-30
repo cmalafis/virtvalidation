@@ -155,9 +155,7 @@ def _build_plan(
     netmap_name: str,
     storagemap_name: str,
 ) -> dict[str, Any]:
-    target_namespaces = [
-        vm.get("target_namespace") for vm in vms if vm.get("target_namespace")
-    ]
+    target_namespaces = [vm.get("target_namespace") for vm in vms if vm.get("target_namespace")]
     plan_target_ns = target_namespaces[0] if target_namespaces else ctx.default_target_namespace
 
     plan_vms: list[dict[str, Any]] = []

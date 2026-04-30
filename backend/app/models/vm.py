@@ -35,12 +35,8 @@ class VM(Base):
     # to in vSphere; target side describes what it should land on in OCP-Virt.
     # Lists are stored as JSON arrays so a VM with multiple NICs/disks can map
     # cleanly through Forklift NetworkMap/StorageMap.
-    vsphere_networks: Mapped[list[str]] = mapped_column(
-        JSONType, nullable=False, default=list
-    )
-    vsphere_datastores: Mapped[list[str]] = mapped_column(
-        JSONType, nullable=False, default=list
-    )
+    vsphere_networks: Mapped[list[str]] = mapped_column(JSONType, nullable=False, default=list)
+    vsphere_datastores: Mapped[list[str]] = mapped_column(JSONType, nullable=False, default=list)
     target_namespace: Mapped[str | None] = mapped_column(String(253), nullable=True)
     target_storage_class: Mapped[str | None] = mapped_column(String(253), nullable=True)
     target_network_attachment: Mapped[str | None] = mapped_column(String(253), nullable=True)

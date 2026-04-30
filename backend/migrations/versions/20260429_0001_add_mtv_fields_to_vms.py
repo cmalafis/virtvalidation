@@ -9,6 +9,7 @@ Revises:
 Create Date: 2026-04-29
 
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -47,9 +48,7 @@ def upgrade() -> None:
             )
         )
         batch.add_column(sa.Column("target_namespace", sa.String(length=253), nullable=True))
-        batch.add_column(
-            sa.Column("target_storage_class", sa.String(length=253), nullable=True)
-        )
+        batch.add_column(sa.Column("target_storage_class", sa.String(length=253), nullable=True))
         batch.add_column(
             sa.Column("target_network_attachment", sa.String(length=253), nullable=True)
         )

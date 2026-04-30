@@ -34,9 +34,7 @@ def ollama_health() -> dict:
         return {"status": "offline", "error": str(e)}
 
     available = [
-        m["name"]
-        for m in (data.get("models") or [])
-        if isinstance(m, dict) and m.get("name")
+        m["name"] for m in (data.get("models") or []) if isinstance(m, dict) and m.get("name")
     ]
     return {
         "status": "online",

@@ -21,7 +21,9 @@ def test_get_settings_creates_default_row(client):
 
 def test_put_settings_persists_and_returns_updated_row(client):
     client.get("/api/settings")  # ensure row exists
-    r = client.put("/api/settings", json={"schedule_preset": "hourly", "ollama_model": "llama3:70b"})
+    r = client.put(
+        "/api/settings", json={"schedule_preset": "hourly", "ollama_model": "llama3:70b"}
+    )
     assert r.status_code == 200
     body = r.json()
     assert body["schedule_preset"] == "hourly"
