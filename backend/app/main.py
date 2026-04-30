@@ -7,6 +7,7 @@ from app.api.audit import router as audit_router
 from app.api.health import router as health_router
 from app.api.plans import router as plans_router
 from app.api.settings import settings_router, system_router
+from app.api.templates import router as templates_router
 from app.api.vms import router as vms_router
 from app.core.db import Base, engine
 from app.core.scheduler import shutdown_scheduler, start_scheduler
@@ -50,3 +51,4 @@ app.include_router(health_router, prefix="/api/health")
 app.include_router(system_router, prefix="/api/system")
 app.include_router(settings_router, prefix="/api/settings")
 app.include_router(audit_router, prefix="/api/audit")
+app.include_router(templates_router, prefix="/api/templates")

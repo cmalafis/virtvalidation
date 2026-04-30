@@ -10,9 +10,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         shared-mime-info \
         fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
-COPY requirements.txt .
+
+# Build context is the repo root (see podman-compose.yml). Everything below
+# is namespaced under backend/ except the CSV template which lives in docs/.
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app/ ./app/
+COPY backend/app/ ./app/
+COPY backend/migrations/ ./migrations/
+COPY backend/alembic.ini ./alembic.ini
+
+# Static assets the API serves directly (CSV inventory template, etc.).
+# CSV_TEMPLATE_PATH defaults to /app/templates/vm-inventory-template.csv.
+COPY docs/vm-inventory-template.csv /app/templates/vm-inventory-template.csv
+
 RUN mkdir -p /app/keys && chmod 700 /app/keys
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

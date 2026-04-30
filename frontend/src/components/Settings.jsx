@@ -5,11 +5,12 @@ import { Link } from "react-router-dom";
 const TOAST_OPTS = {
   style: {
     background: "#0a0a18",
-    border: "1px solid #1a1a2e",
-    color: "#ccccdd",
-    fontFamily: "'Share Tech Mono', monospace",
-    fontSize: 12,
-    letterSpacing: "0.05em",
+    border: "1px solid #2a2a44",
+    color: "#eeeeff",
+    fontFamily: "'Barlow', sans-serif",
+    fontSize: 14,
+    letterSpacing: "0",
+    lineHeight: 1.5,
   },
   success: { iconTheme: { primary: "#00ff88", secondary: "#0a0a18" } },
   error:   { iconTheme: { primary: "#ff3355", secondary: "#0a0a18" } },
@@ -64,13 +65,20 @@ const Shimmer = ({ width = "100%", height = 12 }) => (
 const Section = ({ title, subtitle, children, action }) => (
   <div style={{
     border: "1px solid #1a1a2e", background: "#0a0a18",
-    padding: 20, marginBottom: 16,
+    padding: 24, marginBottom: 20,
   }}>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
       <div>
-        <div style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 700, color: "#eeeeff", letterSpacing: "0.06em" }}>{title}</div>
+        <div style={{
+          fontSize: 16, fontFamily: "'Barlow', sans-serif",
+          fontWeight: 700, color: "#eeeeff", letterSpacing: "0.04em",
+        }}>{title}</div>
         {subtitle && (
-          <div style={{ fontSize: 10, color: "#9999bb", marginTop: 3, fontFamily: "'Barlow', sans-serif" }}>{subtitle}</div>
+          <div style={{
+            fontSize: 14, color: "#aaaacc", marginTop: 6,
+            fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
+            maxWidth: 720,
+          }}>{subtitle}</div>
         )}
       </div>
       {action}
@@ -80,22 +88,27 @@ const Section = ({ title, subtitle, children, action }) => (
 );
 
 const StatusDot = ({ status, latencyMs }) => {
-  const color = status === "online" ? "#00ff88" : status === "offline" ? "#ff3355" : "#8888aa";
-  const label = status === "online" ? "ONLINE" : status === "offline" ? "OFFLINE" : "CHECKING…";
+  const color = status === "online" ? "#00ff88" : status === "offline" ? "#ff3355" : "#aaaacc";
+  const label = status === "online" ? "Online" : status === "offline" ? "Offline" : "Checking…";
   return (
     <span style={{
-      display: "inline-flex", alignItems: "center", gap: 8,
-      fontSize: 10, fontFamily: "'Share Tech Mono', monospace",
-      color, letterSpacing: "0.12em", fontWeight: 700,
+      display: "inline-flex", alignItems: "center", gap: 10,
+      fontSize: 13, fontFamily: "'Barlow', sans-serif",
+      color, letterSpacing: "0.06em", fontWeight: 700,
+      textTransform: "uppercase",
     }}>
       <span style={{
-        width: 7, height: 7, borderRadius: "50%",
+        width: 8, height: 8, borderRadius: "50%",
         background: color, boxShadow: `0 0 8px ${color}`,
         animation: status === undefined ? "pulse 1.2s infinite" : "none",
       }}/>
       {label}
       {status === "online" && typeof latencyMs === "number" && (
-        <span style={{ color: "#8888aa", marginLeft: 4 }}>· {latencyMs}ms</span>
+        <span style={{
+          color: "#aaaacc", marginLeft: 4,
+          fontFamily: "'Share Tech Mono', monospace", letterSpacing: 0,
+          textTransform: "none", fontWeight: 400,
+        }}>· {latencyMs}ms</span>
       )}
     </span>
   );
@@ -105,11 +118,11 @@ const SecondaryButton = ({ children, onClick, disabled, type = "button" }) => (
   <button type={type} onClick={onClick} disabled={disabled}
     style={{
       background: "transparent",
-      border: `1px solid ${disabled ? "#222244" : "#2a2a44"}`,
-      color: disabled ? "#6666aa" : "#8888aa",
-      padding: "8px 14px", fontSize: 9,
-      fontFamily: "'Share Tech Mono', monospace",
-      letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 700,
+      border: `1px solid ${disabled ? "#2a2a44" : "#3a3a55"}`,
+      color: disabled ? "#888899" : "#aaaacc",
+      padding: "10px 16px", fontSize: 12,
+      fontFamily: "'Barlow', sans-serif",
+      letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
       cursor: disabled ? "not-allowed" : "pointer",
     }}>
     {children}
@@ -120,12 +133,12 @@ const PrimaryButton = ({ children, onClick, disabled, type = "button" }) => (
   <button type={type} onClick={onClick} disabled={disabled}
     style={{
       display: "inline-flex", alignItems: "center", gap: 8,
-      background: disabled ? "#1a1a2e" : "#1d3a8a",
-      border: `1px solid ${disabled ? "#222244" : "#4488ff"}`,
-      color: disabled ? "#6666aa" : "#dde4ff",
-      padding: "9px 18px", fontSize: 10,
-      fontFamily: "'Share Tech Mono', monospace",
-      letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 700,
+      background: disabled ? "#14142a" : "#1d3a8a",
+      border: `1px solid ${disabled ? "#2a2a44" : "#4488ff"}`,
+      color: disabled ? "#888899" : "#eef2ff",
+      padding: "10px 20px", fontSize: 12,
+      fontFamily: "'Barlow', sans-serif",
+      letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
       cursor: disabled ? "not-allowed" : "pointer",
     }}>
     {children}
@@ -167,17 +180,19 @@ function SSHKeyViewer() {
 
   return (
     <Section
-      title="SSH PUBLIC KEY"
+      title="SSH Public Key"
       subtitle="Add this to ~/.ssh/authorized_keys on every VM you enroll. The private key never leaves the appliance."
       action={data && (
         <SecondaryButton onClick={onCopy}>📋 Copy</SecondaryButton>
       )}
     >
       {loading ? (
-        <Shimmer width="100%" height={42}/>
+        <Shimmer width="100%" height={56}/>
       ) : error ? (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <div style={{ fontSize: 11, color: "#aa8888", fontFamily: "'Barlow', sans-serif", lineHeight: 1.5 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+          <div style={{
+            fontSize: 14, color: "#ccaaaa", fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
+          }}>
             {error}
           </div>
           <SecondaryButton onClick={load}>↻ Retry</SecondaryButton>
@@ -185,18 +200,26 @@ function SSHKeyViewer() {
       ) : data && (
         <>
           <div style={{
-            background: "#07070f", border: "1px solid #111122", padding: "12px 14px",
-            fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
-            color: "#aaaacc", lineHeight: 1.6,
+            background: "#07070f", border: "1px solid #1a1a2e", padding: "14px 16px",
+            fontSize: 13, fontFamily: "'Share Tech Mono', monospace",
+            color: "#eeeeff", lineHeight: 1.6,
             wordBreak: "break-all", whiteSpace: "pre-wrap",
-            maxHeight: 120, overflowY: "auto",
+            maxHeight: 140, overflowY: "auto",
           }}>
             {data.public_key}
           </div>
           {data.fingerprint && (
-            <div style={{ marginTop: 10, fontSize: 10, color: "#8888aa", fontFamily: "'Share Tech Mono', monospace" }}>
-              <span style={{ color: "#6666aa", marginRight: 6 }}>FINGERPRINT</span>
-              {data.fingerprint.slice(0, 23)}…
+            <div style={{
+              marginTop: 14, display: "flex", alignItems: "baseline", gap: 10,
+            }}>
+              <span style={{
+                fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
+                fontFamily: "'Barlow', sans-serif", textTransform: "uppercase", fontWeight: 700,
+              }}>Fingerprint</span>
+              <span style={{
+                fontSize: 13, color: "#ccccee",
+                fontFamily: "'Share Tech Mono', monospace",
+              }}>{data.fingerprint.slice(0, 23)}…</span>
             </div>
           )}
         </>
@@ -228,13 +251,19 @@ function ConnectionStatus() {
   const Row = ({ label, hostLine, info }) => (
     <div style={{
       display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "12px 14px", border: "1px solid #111122", background: "#07070f",
-      marginBottom: 10,
+      padding: "16px 18px", border: "1px solid #1a1a2e", background: "#07070f",
+      marginBottom: 12,
     }}>
       <div>
-        <div style={{ fontSize: 11, fontFamily: "'Barlow', sans-serif", fontWeight: 600, color: "#ccccee", letterSpacing: "0.05em" }}>{label}</div>
+        <div style={{
+          fontSize: 14, fontFamily: "'Barlow', sans-serif",
+          fontWeight: 700, color: "#eeeeff", letterSpacing: "0.04em",
+        }}>{label}</div>
         {hostLine && (
-          <div style={{ fontSize: 10, color: "#8888aa", fontFamily: "'Share Tech Mono', monospace", marginTop: 3 }}>{hostLine}</div>
+          <div style={{
+            fontSize: 13, color: "#aaaacc", marginTop: 4,
+            fontFamily: "'Share Tech Mono', monospace",
+          }}>{hostLine}</div>
         )}
       </div>
       {info}
@@ -243,23 +272,29 @@ function ConnectionStatus() {
 
   return (
     <Section
-      title="CONNECTION STATUS"
+      title="Connection Status"
       subtitle="Live status of the local Ollama LLM and PostgreSQL backends."
-      action={<SecondaryButton onClick={probe} disabled={refreshing}>{refreshing ? <Spinner size={11}/> : "↻"} Refresh</SecondaryButton>}
+      action={<SecondaryButton onClick={probe} disabled={refreshing}>{refreshing ? <Spinner size={12}/> : "↻"} Refresh</SecondaryButton>}
     >
       <Row
-        label="OLLAMA"
+        label="Ollama"
         hostLine={ollama?.host || "—"}
         info={
           <div style={{ textAlign: "right" }}>
             <StatusDot status={ollama?.status} latencyMs={ollama?.latency_ms}/>
             {ollama?.version && (
-              <div style={{ fontSize: 10, color: "#8888aa", marginTop: 4, fontFamily: "'Share Tech Mono', monospace" }}>
+              <div style={{
+                fontSize: 13, color: "#ccccee", marginTop: 6,
+                fontFamily: "'Share Tech Mono', monospace",
+              }}>
                 v{ollama.version}
               </div>
             )}
             {ollama?.status === "offline" && ollama?.error && (
-              <div style={{ fontSize: 10, color: "#aa6666", marginTop: 4, maxWidth: 280, fontFamily: "'Barlow', sans-serif" }}>
+              <div style={{
+                fontSize: 13, color: "#ccaaaa", marginTop: 6, maxWidth: 320,
+                fontFamily: "'Barlow', sans-serif", lineHeight: 1.5,
+              }}>
                 {ollama.error}
               </div>
             )}
@@ -267,13 +302,16 @@ function ConnectionStatus() {
         }
       />
       <Row
-        label="POSTGRESQL"
+        label="PostgreSQL"
         hostLine={pg?.status === "online" ? "select 1 ✓" : pg?.error ? "" : "—"}
         info={
           <div style={{ textAlign: "right" }}>
             <StatusDot status={pg?.status} latencyMs={pg?.latency_ms}/>
             {pg?.status === "offline" && pg?.error && (
-              <div style={{ fontSize: 10, color: "#aa6666", marginTop: 4, maxWidth: 280, fontFamily: "'Barlow', sans-serif" }}>
+              <div style={{
+                fontSize: 13, color: "#ccaaaa", marginTop: 6, maxWidth: 320,
+                fontFamily: "'Barlow', sans-serif", lineHeight: 1.5,
+              }}>
                 {pg.error}
               </div>
             )}
@@ -361,35 +399,37 @@ function ConfigurationForm({ onSavedModelChange }) {
 
   return (
     <Section
-      title="LLM MODEL"
+      title="LLM Model"
       subtitle="The local Ollama model used for validation, planning, and report generation."
       action={modelsError ? null : (
         <SecondaryButton onClick={loadModels}>↻ Refresh</SecondaryButton>
       )}
     >
       {loading ? (
-        <Shimmer width="100%" height={36}/>
+        <Shimmer width="100%" height={48}/>
       ) : error ? (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <div style={{ fontSize: 11, color: "#aa8888", fontFamily: "'Barlow', sans-serif" }}>{error}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+          <div style={{
+            fontSize: 14, color: "#ccaaaa", fontFamily: "'Barlow', sans-serif", lineHeight: 1.5,
+          }}>{error}</div>
           <SecondaryButton onClick={loadSettings}>↻ Retry</SecondaryButton>
         </div>
       ) : draft && (
         <>
-          <label style={{ display: "block", marginBottom: 14 }}>
+          <label style={{ display: "block", marginBottom: 18 }}>
             <span style={{
-              display: "block", fontSize: 9, color: "#8888aa",
-              letterSpacing: "0.15em", marginBottom: 6,
-              fontFamily: "'Share Tech Mono', monospace",
-            }}>OLLAMA MODEL</span>
+              display: "block", fontSize: 11, color: "#aaaacc",
+              letterSpacing: "0.08em", marginBottom: 8,
+              fontFamily: "'Barlow', sans-serif", textTransform: "uppercase", fontWeight: 700,
+            }}>Ollama Model</span>
             <select
               value={draft.ollama_model}
               onChange={(e) => setDraft({ ...draft, ollama_model: e.target.value })}
               disabled={saving}
               style={{
-                background: "#07070f", border: "1px solid #1a1a2e",
-                color: "#ccccdd", padding: "9px 11px",
-                fontFamily: "'Share Tech Mono', monospace", fontSize: 12,
+                background: "#07070f", border: "1px solid #2a2a44",
+                color: "#eeeeff", padding: "11px 13px",
+                fontFamily: "'Share Tech Mono', monospace", fontSize: 14,
                 width: "100%", outline: "none",
               }}
             >
@@ -409,7 +449,10 @@ function ConfigurationForm({ onSavedModelChange }) {
               )}
             </select>
             {modelsError && (
-              <span style={{ display: "block", marginTop: 6, fontSize: 10, color: "#aa8888", fontFamily: "'Barlow', sans-serif" }}>
+              <span style={{
+                display: "block", marginTop: 8, fontSize: 13, color: "#ccaaaa",
+                fontFamily: "'Barlow', sans-serif", lineHeight: 1.5,
+              }}>
                 Couldn't list models from Ollama: {modelsError}. The currently-saved model still appears above.
               </span>
             )}
@@ -417,15 +460,18 @@ function ConfigurationForm({ onSavedModelChange }) {
 
           <div style={{
             display: "flex", justifyContent: "space-between", alignItems: "center",
-            paddingTop: 14, borderTop: "1px solid #111122", marginTop: 8,
+            paddingTop: 18, borderTop: "1px solid #1a1a2e", marginTop: 10,
           }}>
-            <span style={{ fontSize: 10, color: "#8888aa", fontFamily: "'Share Tech Mono', monospace", letterSpacing: "0.12em" }}>
-              {dirty ? "UNSAVED CHANGES" : "SAVED"}
+            <span style={{
+              fontSize: 12, color: "#aaaacc", fontFamily: "'Barlow', sans-serif",
+              letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+            }}>
+              {dirty ? "Unsaved changes" : "Saved"}
             </span>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 10 }}>
               <SecondaryButton onClick={() => setDraft(original)} disabled={!dirty || saving}>Discard</SecondaryButton>
               <PrimaryButton onClick={onSave} disabled={!dirty || saving}>
-                {saving && <Spinner size={11}/>}
+                {saving && <Spinner size={12}/>}
                 {saving ? "Saving…" : "Save"}
               </PrimaryButton>
             </div>
@@ -436,22 +482,28 @@ function ConfigurationForm({ onSavedModelChange }) {
       {/* Schedule preset is part of the same settings document — render as a
           second sub-section sharing the same dirty/save flow. */}
       {draft && (
-        <div style={{ marginTop: 20, paddingTop: 18, borderTop: "1px solid #111122" }}>
-          <div style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 700, color: "#eeeeff", letterSpacing: "0.06em", marginBottom: 4 }}>
-            BASELINE COLLECTION SCHEDULE
+        <div style={{ marginTop: 28, paddingTop: 22, borderTop: "1px solid #1a1a2e" }}>
+          <div style={{
+            fontSize: 16, fontFamily: "'Barlow', sans-serif",
+            fontWeight: 700, color: "#eeeeff", letterSpacing: "0.04em", marginBottom: 6,
+          }}>
+            Baseline Collection Schedule
           </div>
-          <div style={{ fontSize: 10, color: "#9999bb", marginBottom: 14, fontFamily: "'Barlow', sans-serif" }}>
+          <div style={{
+            fontSize: 14, color: "#aaaacc", marginBottom: 18,
+            fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
+          }}>
             How often the appliance SSHes into every enrolled VM and stores a fresh baseline snapshot. All times are UTC.
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {SCHEDULE_PRESETS.map((p) => {
               const checked = draft.schedule_preset === p.value;
               return (
                 <label key={p.value} style={{
-                  display: "flex", alignItems: "flex-start", gap: 12,
-                  padding: "12px 14px",
+                  display: "flex", alignItems: "flex-start", gap: 14,
+                  padding: "16px 18px",
                   border: `1px solid ${checked ? "#4488ff" : "#1a1a2e"}`,
-                  background: checked ? "rgba(68,136,255,0.06)" : "#07070f",
+                  background: checked ? "rgba(68,136,255,0.08)" : "#07070f",
                   cursor: "pointer",
                 }}>
                   <input
@@ -459,11 +511,17 @@ function ConfigurationForm({ onSavedModelChange }) {
                     value={p.value} checked={checked}
                     onChange={() => setDraft({ ...draft, schedule_preset: p.value })}
                     disabled={saving}
-                    style={{ marginTop: 4, accentColor: "#4488ff" }}
+                    style={{ marginTop: 5, accentColor: "#4488ff", width: 16, height: 16 }}
                   />
                   <div>
-                    <div style={{ fontSize: 12, fontFamily: "'Barlow', sans-serif", fontWeight: 600, color: "#ccccee" }}>{p.label}</div>
-                    <div style={{ fontSize: 10, color: "#8888aa", marginTop: 3, fontFamily: "'Barlow', sans-serif" }}>{p.hint}</div>
+                    <div style={{
+                      fontSize: 15, fontFamily: "'Barlow', sans-serif",
+                      fontWeight: 600, color: "#eeeeff",
+                    }}>{p.label}</div>
+                    <div style={{
+                      fontSize: 13, color: "#aaaacc", marginTop: 4,
+                      fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
+                    }}>{p.hint}</div>
                   </div>
                 </label>
               );
@@ -481,8 +539,8 @@ export default function Settings() {
   return (
     <div style={{
       minHeight: "100vh", background: "#07070f",
-      fontFamily: "'Share Tech Mono', monospace",
-      color: "#ccccdd",
+      fontFamily: "'Barlow', sans-serif",
+      color: "#eeeeff",
     }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap');
@@ -511,38 +569,44 @@ export default function Settings() {
         padding: "0 32px",
         background: "linear-gradient(180deg, #0a0a18 0%, #07070f 100%)",
       }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 64 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
             <div style={{
-              width: 28, height: 28, border: "1px solid #4488ff44",
+              width: 32, height: 32, border: "1px solid #4488ff44",
               display: "flex", alignItems: "center", justifyContent: "center",
               position: "relative",
             }}>
-              <div style={{ width: 10, height: 10, background: "#4488ff", clipPath: "polygon(50% 0%, 100% 100%, 0% 100%)" }} />
+              <div style={{ width: 11, height: 11, background: "#4488ff", clipPath: "polygon(50% 0%, 100% 100%, 0% 100%)" }} />
               <div style={{ position: "absolute", inset: -3, border: "1px solid #4488ff22" }} />
             </div>
             <div>
-              <div style={{ fontSize: 15, fontFamily: "'Barlow', sans-serif", fontWeight: 700, color: "#eeeeff", letterSpacing: "0.08em" }}>
-                VIRTVALIDATE / SETTINGS
+              <div style={{
+                fontSize: 18, fontFamily: "'Barlow', sans-serif",
+                fontWeight: 700, color: "#eeeeff", letterSpacing: "0.04em",
+              }}>
+                VirtValidate / Settings
               </div>
-              <div style={{ fontSize: 9, color: "#6666aa", letterSpacing: "0.2em" }}>SYSTEM CONFIGURATION</div>
+              <div style={{
+                fontSize: 11, color: "#aaaacc", letterSpacing: "0.1em",
+                fontFamily: "'Barlow', sans-serif", marginTop: 2,
+              }}>System Configuration</div>
             </div>
           </div>
 
           <Link to="/" style={{
             display: "inline-flex", alignItems: "center", gap: 8,
-            background: "transparent", border: "1px solid #2a2a44",
-            color: "#8888aa", textDecoration: "none",
-            padding: "8px 16px", fontSize: 10,
-            fontFamily: "'Share Tech Mono', monospace",
-            letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 700,
+            background: "transparent", border: "1px solid #3a3a55",
+            color: "#aaaacc", textDecoration: "none",
+            padding: "10px 18px", fontSize: 12,
+            fontFamily: "'Barlow', sans-serif",
+            letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
           }}>
             ← Back to Dashboard
           </Link>
         </div>
       </div>
 
-      <div style={{ maxWidth: 880, margin: "0 auto", padding: 24 }} className="fade-in">
+      <div style={{ maxWidth: 960, margin: "0 auto", padding: 32 }} className="fade-in">
         <SSHKeyViewer />
         <ConnectionStatus />
         <ConfigurationForm />

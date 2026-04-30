@@ -19,8 +19,10 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Containerfile
+      # Repo root so the Containerfile can reach docs/vm-inventory-template.csv
+      # alongside backend/.
+      context: .
+      dockerfile: backend/Containerfile
     ports:
       - "8000:8000"
     environment:

@@ -238,3 +238,28 @@ def _vm(name: str, **kwargs):
     from app.models.vm import VM
 
     return VM(name=name, source_hostname=f"{name}.local", **kwargs)
+
+
+# ---------- /api/templates ----------
+
+
+def test_csv_template_endpoint_returns_csv_attachment(client):
+    r = client.get("/api/templates/csv")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    assert 'filename="vm-inventory-template.csv"' in r.headers["content-disposition"]
+    body = r.text
+    # Header row must contain the canonical columns the frontend expects.
+    first_line = body.splitlines()[0]
+    for col in ("hostname", "vsphere_networks", "vsphere_datastores", "target_namespace"):
+        assert col in first_line
+
+
+def test_csv_template_endpoint_returns_500_when_missing(client, monkeypatch):
+    """If the file is missing, the endpoint should fail loudly, not 200 empty."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "csv_template_path", "/nonexistent/template.csv")
+    r = client.get("/api/templates/csv")
+    assert r.status_code == 500
+    assert "not found" in r.json()["detail"].lower()

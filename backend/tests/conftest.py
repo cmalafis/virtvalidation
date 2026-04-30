@@ -9,10 +9,17 @@ DATABASE_URL and OLLAMA_HOST are set BEFORE importing the app so that
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("OLLAMA_HOST", "http://localhost:0")
 os.environ.setdefault("OLLAMA_MODEL", "test-model")
+# Resolve CSV template against the repo root so tests work regardless of
+# whether pytest is invoked from backend/ or the repo root.
+os.environ.setdefault(
+    "CSV_TEMPLATE_PATH",
+    str(Path(__file__).resolve().parents[2] / "docs" / "vm-inventory-template.csv"),
+)
 
 import pytest
 from fastapi.testclient import TestClient

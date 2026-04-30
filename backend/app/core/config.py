@@ -18,5 +18,11 @@ class Settings(BaseSettings):
     mtv_destination_provider: str = "host"
     mtv_default_target_namespace: str = "openshift-mtv"
 
+    # Path to the VM inventory CSV template served by /api/templates/csv.
+    # Defaults to the in-container location populated by the Containerfile.
+    # Dev workflows running uvicorn from backend/ should override this in
+    # .env to point at the source-of-truth at docs/vm-inventory-template.csv.
+    csv_template_path: str = "/app/templates/vm-inventory-template.csv"
+
 
 settings = Settings()
