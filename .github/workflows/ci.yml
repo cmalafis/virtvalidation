@@ -1,5 +1,16 @@
 name: CI
 
+# Quality + security gates for every push to main and every PR.
+#
+# Job layout:
+#   test            — pytest + ruff + mypy + coverage upload to codecov
+#   security-py     — bandit (Python SAST) + pip-audit + safety
+#   security-fe     — npm audit on the frontend
+#   trivy           — repo-level vuln + misconfig scan + SBOM artifact
+#   gitleaks        — secret scanning, fails the build on any finding
+#
+# CodeQL and Lighthouse run in their own workflow files for cleaner isolation.
+
 on:
   push:
     branches: [main]
@@ -8,11 +19,16 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  security-events: write
 
 jobs:
+  # -----------------------------------------------------------------------
+  # Tests, lint, type-check, coverage gate (existing flow — preserved)
+  # -----------------------------------------------------------------------
   test:
     name: lint / type-check / test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -99,6 +115,18 @@ jobs:
               body,
             });
 
+      - name: Upload coverage to Codecov
+        # Free tier — no token needed for public repos. Set CODECOV_TOKEN
+        # secret if/when this repo flips private. The action auto-detects
+        # coverage.xml in the working directory.
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: backend/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -116,3 +144,166 @@ jobs:
         run: |
           echo "::error::Tests failed or coverage is below the 70% threshold."
           exit 1
+
+  # -----------------------------------------------------------------------
+  # Python security: bandit (SAST), pip-audit (CVEs), safety (backup CVEs)
+  # -----------------------------------------------------------------------
+  security-py:
+    name: python security scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install scanners
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit==1.7.9 pip-audit==2.7.3 safety==3.2.7
+
+      # Bandit — Python SAST. Surface medium+ as warnings, fail only on
+      # high severity findings to match the team's stated risk gate.
+      - name: Bandit (warn on medium+)
+        continue-on-error: true
+        run: bandit -r app --severity-level medium --format txt
+
+      - name: Bandit (fail on high)
+        run: bandit -r app --severity-level high --confidence-level high
+
+      # pip-audit — checks installed deps against the PyPA Advisory DB.
+      # Includes the dev/test/scanner pins as well, which is what we want
+      # since they ship in the same image during local dev.
+      - name: pip-audit
+        run: pip-audit -r requirements.txt --strict --progress-spinner=off
+
+      # safety — secondary CVE source. Free tier may rate-limit / require
+      # auth; treat as informational so the build doesn't go red on their
+      # service hiccups.
+      - name: Safety (informational)
+        continue-on-error: true
+        run: safety check --file requirements.txt --output text || true
+
+  # -----------------------------------------------------------------------
+  # Frontend: npm audit on production deps, gated at high severity
+  # -----------------------------------------------------------------------
+  security-fe:
+    name: frontend security scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint (incl. eslint-plugin-security)
+        run: npm run lint
+
+      - name: npm audit (production, fail on high+)
+        run: npm audit --audit-level=high --omit=dev
+
+  # -----------------------------------------------------------------------
+  # Container / repo image scanning + SBOM generation
+  # -----------------------------------------------------------------------
+  trivy:
+    name: trivy + SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Vuln scan over the whole repo — picks up both the language deps
+      # (pip / npm lockfiles) and the Containerfile FROM lines. Fails on
+      # CRITICAL, lets HIGH through with a warning.
+      - name: Trivy filesystem scan (CRITICAL gate)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+
+      - name: Trivy filesystem scan (HIGH — informational)
+        uses: aquasecurity/trivy-action@0.24.0
+        continue-on-error: true
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH
+          ignore-unfixed: true
+          format: table
+
+      # Trivy config scan — Dockerfile/Containerfile misconfig (root user,
+      # `latest` tags, missing healthcheck, etc).
+      - name: Trivy config scan
+        uses: aquasecurity/trivy-action@0.24.0
+        continue-on-error: true
+        with:
+          scan-type: config
+          scan-ref: .
+          format: table
+
+      # SBOM in CycloneDX format — uploaded as a build artifact and kept
+      # for 90 days for audit/compliance trails.
+      - name: Generate SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: cyclonedx
+          output: sbom.cdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cdx.json
+          retention-days: 90
+
+  # -----------------------------------------------------------------------
+  # Secret scanning — gitleaks
+  # -----------------------------------------------------------------------
+  gitleaks:
+    name: gitleaks secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so PR-level scans see the diverged commits.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # GITLEAKS_LICENSE only required for org-level features; left
+          # unset for public-repo / individual use.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

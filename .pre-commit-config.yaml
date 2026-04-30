@@ -8,6 +8,14 @@ repos:
       - id: ruff-format
         files: ^backend/
 
+  # Catches accidentally-committed secrets (AWS keys, GitHub tokens, private
+  # keys, etc.) before they leave the dev's machine. CI re-runs the same
+  # scan on every push as a safety net.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
   - repo: local
     hooks:
       - id: mypy

@@ -138,10 +138,75 @@ Conventions:
 
 ### Commits
 
-- Follow [Conventional Commits](https://www.conventionalcommits.org/) where
-  practical: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`.
-- Keep the subject under 72 characters; use the body for the *why*.
-- One logical change per commit; rebase noisy WIP commits before pushing.
+This repo releases via [release-please](https://github.com/googleapis/release-please),
+which reads commit messages on `main` to decide the next semver bump and to
+generate `CHANGELOG.md`. **Conventional Commits are required**, not optional.
+
+Format:
+
+```
+<type>(<scope>): <short imperative summary>
+
+<optional body — what and why; reviewers can read the diff for "what">
+
+<optional footer(s)>
+```
+
+Allowed types and how they affect the next release:
+
+| Type        | Meaning                                  | Bump  |
+|-------------|------------------------------------------|-------|
+| `feat`      | New user-facing capability               | minor |
+| `fix`       | Bug fix                                  | patch |
+| `perf`      | Performance improvement                  | patch |
+| `refactor`  | No behavior change                       | patch |
+| `docs`      | Documentation only                       | none  |
+| `test`      | Adding/fixing tests                      | none  |
+| `chore`     | Build, deps, internal tooling            | none  |
+| `ci`        | CI configuration only                    | none  |
+| `style`     | Formatting only                          | none  |
+| `revert`    | Revert a previous commit                 | patch |
+
+Scope is optional but encouraged — examples in this repo: `planner`, `mtv`,
+`api`, `ui`, `ssh`, `audit`, `infra`. Use lowercase.
+
+#### Breaking changes (major version bump)
+
+Any of the following triggers a major bump in the next release:
+
+1. A `!` after the type/scope: `feat(api)!: drop /api/legacy/* routes`
+2. A `BREAKING CHANGE:` footer (note the space, not a hyphen):
+   ```
+   feat(planner): accept multi-cluster destinations
+
+   BREAKING CHANGE: PlanCreate now requires `destination_cluster`.
+   Existing callers passing only `vm_ids` will receive HTTP 422.
+   ```
+
+Both forms are recognized by release-please. Prefer the footer form when
+the breaking change deserves a paragraph of explanation; prefer the `!`
+form for short, obvious removals.
+
+#### Subject line rules
+
+- Imperative mood — "add feature", not "added feature" / "adds feature".
+- Lowercase first word, no trailing period.
+- Subject under 72 characters; wrap the body at 100.
+- One logical change per commit. Rebase noisy WIP commits before pushing.
+
+#### Examples
+
+```
+feat(mtv): emit per-VM namespace overrides when wave is mixed-tenant
+fix(audit): skip audit middleware on /api/audit reads to avoid recursion
+docs: clarify air-gap requirement in README architecture section
+chore(deps): bump fastapi from 0.111.0 to 0.111.1
+ci(security): add bandit + pip-audit gates
+refactor(planner)!: drop legacy single-pass plan API
+
+BREAKING CHANGE: MigrationPlanner.plan_legacy() removed; callers must
+switch to plan() which now requires the full vm_profiles structure.
+```
 
 ## Pull request process
 
@@ -175,6 +240,36 @@ Conventions:
   word that the fix works.
 - No unrelated formatting churn. Run the formatter on your changes
   only, not the whole tree.
+
+## Branch protection on `main`
+
+`main` is the only long-lived branch. The configured GitHub branch
+protection rules — which match what reviewers should expect — are:
+
+- **PRs are required.** No direct pushes to `main`, including from
+  maintainers. Use a feature branch even for one-line fixes.
+- **CI must pass.** Required status checks before merge:
+  - `lint / type-check / test` (ruff + mypy + pytest @ ≥ 70% coverage)
+  - `python security scan` (bandit + pip-audit; safety is informational)
+  - `frontend security scan` (ESLint with `eslint-plugin-security` +
+    `npm audit --audit-level=high`)
+  - `trivy + SBOM` (filesystem scan; fails on CRITICAL)
+  - `gitleaks secret scan`
+  - `Analyze (python)` and `Analyze (javascript-typescript)` from CodeQL
+  - `Accessibility audit` (Lighthouse, ≥ 0.9 a11y score)
+- **One approving review** from a code owner ([CODEOWNERS](.github/CODEOWNERS))
+  is required. The owner cannot self-approve.
+- **Linear history.** Squash-merge only — no merge commits, no rebase
+  merges. The squashed commit message must follow the conventions in
+  the [Commits](#commits) section above.
+- **Conversations resolved.** Open review threads block merge.
+- **Up-to-date branch.** PRs must be rebased onto current `main` before
+  merge so CI runs against the as-merged state.
+
+Operators with `Admin` access can bypass these rules in genuine break-glass
+scenarios (security incident, CI provider outage). When that happens,
+follow up the same day with a tracking issue describing what was bypassed
+and why.
 
 ## Developer Certificate of Origin (DCO)
 

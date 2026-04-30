@@ -1,0 +1,49 @@
+name: CodeQL
+
+# SAST via GitHub CodeQL. Runs on push to main, every PR, and weekly so
+# new query packs find latent issues even when the code hasn't changed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Sunday 06:00 UTC — outside business hours, before Monday triage.
+    - cron: "0 6 * * 0"
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # CodeQL v3 unifies JS+TS under javascript-typescript.
+        language: [python, javascript-typescript]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-and-quality picks up correctness issues in addition to
+          # plain security findings — useful in a small codebase.
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

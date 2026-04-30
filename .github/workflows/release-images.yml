@@ -1,0 +1,195 @@
+name: release images + artifacts
+
+# Triggered when release-please publishes a new tag (or a maintainer pushes
+# one manually). Builds the backend + frontend container images, signs them
+# with cosign keyless OIDC, attaches a CycloneDX SBOM, and uploads a deploy
+# tarball to the GitHub Release for one-click downloads.
+
+on:
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+
+permissions:
+  contents: write       # upload tarball + SBOM to the Release
+  packages: write       # push to ghcr.io
+  id-token: write       # cosign keyless signing via OIDC
+  attestations: write   # cosign attest
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Backend + frontend container images — built in parallel
+  # -----------------------------------------------------------------------
+  images:
+    name: build / push / sign (${{ matrix.component }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: backend
+            # Backend Containerfile expects repo root as build context so
+            # it can reach docs/vm-inventory-template.csv.
+            context: .
+            file: backend/Containerfile
+          - component: frontend
+            context: ./frontend
+            file: frontend/Containerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version from ref
+        id: ver
+        run: |
+          # github.ref_name is "v1.2.3" on tag pushes; strip the leading v
+          # so docker tags follow the convention without it.
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/virtvalidation-${{ matrix.component }}
+          tags: |
+            type=raw,value=${{ steps.ver.outputs.version }}
+            type=raw,value=${{ steps.ver.outputs.tag }}
+            type=raw,value=latest,enable=${{ !contains(steps.ver.outputs.version, '-') }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+
+      # ---- Cosign keyless signature (OIDC, no key files) ----
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.0
+
+      - name: Sign image (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          IMAGES: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # Sign every tag we just pushed. cosign records each signature
+          # in the public Rekor transparency log.
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            cosign sign --yes "${tag}@${DIGEST}"
+          done <<< "${IMAGES}"
+
+      # ---- SBOM (CycloneDX) attached to the image as an attestation ----
+      - name: Generate SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/virtvalidation-${{ matrix.component }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx
+          output: sbom-${{ matrix.component }}.cdx.json
+
+      - name: Attach SBOM attestation
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/virtvalidation-${{ matrix.component }}@${{ steps.build.outputs.digest }}
+        run: |
+          cosign attest \
+            --yes \
+            --predicate sbom-${{ matrix.component }}.cdx.json \
+            --type cyclonedx \
+            "${IMAGE}"
+
+      - name: Upload SBOM as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.component }}-${{ steps.ver.outputs.tag }}
+          path: sbom-${{ matrix.component }}.cdx.json
+          retention-days: 365
+
+  # -----------------------------------------------------------------------
+  # Deploy tarball — one-click download for offline / air-gapped installs
+  # -----------------------------------------------------------------------
+  deploy-bundle:
+    name: deploy tarball
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: images
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version from ref
+        id: ver
+        run: echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble deploy bundle
+        run: |
+          set -euo pipefail
+          BUNDLE="virtvalidation-${{ steps.ver.outputs.tag }}-deploy"
+          mkdir -p "$BUNDLE"
+          cp podman-compose.yml      "$BUNDLE/"
+          cp .env.example            "$BUNDLE/"
+          cp -r infra/quadlet        "$BUNDLE/quadlet"
+          # Operators downloading the tarball don't have the docs/ tree, so
+          # ship the install guide as INSTALL.md at the bundle root.
+          cp docs/INSTALLATION.md    "$BUNDLE/INSTALL.md"
+          # Pinned image refs the tarball assumes — operators can edit
+          # before `oc apply` / `podman-compose up`.
+          cat > "$BUNDLE/IMAGES.txt" <<EOF
+          # Container images for this release
+          ghcr.io/${{ github.repository_owner }}/virtvalidation-backend:${{ steps.ver.outputs.tag }}
+          ghcr.io/${{ github.repository_owner }}/virtvalidation-frontend:${{ steps.ver.outputs.tag }}
+
+          Both images are cosign-signed and ship with a CycloneDX SBOM
+          attestation. Verify with:
+
+            cosign verify \\
+              --certificate-identity-regexp 'https://github.com/${{ github.repository }}' \\
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \\
+              <image>
+
+          EOF
+          tar -czf "$BUNDLE.tar.gz" "$BUNDLE"
+          sha256sum "$BUNDLE.tar.gz" > "$BUNDLE.tar.gz.sha256"
+
+      - name: Upload tarball to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BUNDLE="virtvalidation-${{ steps.ver.outputs.tag }}-deploy"
+          gh release upload "${{ steps.ver.outputs.tag }}" \
+            "$BUNDLE.tar.gz" "$BUNDLE.tar.gz.sha256" \
+            --clobber
+
+      - name: Upload tarball as workflow artifact (90d retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtvalidation-deploy-${{ steps.ver.outputs.tag }}
+          path: |
+            virtvalidation-${{ steps.ver.outputs.tag }}-deploy.tar.gz
+            virtvalidation-${{ steps.ver.outputs.tag }}-deploy.tar.gz.sha256
+          retention-days: 90

@@ -3,6 +3,10 @@
 > AI-powered VM migration validation for VMware → OpenShift Virtualization
 
 [![CI](https://github.com/cmalafis/virtvalidation/actions/workflows/ci.yml/badge.svg)](https://github.com/cmalafis/virtvalidation/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/cmalafis/virtvalidation/actions/workflows/codeql.yml/badge.svg)](https://github.com/cmalafis/virtvalidation/actions/workflows/codeql.yml)
+[![Lighthouse a11y](https://github.com/cmalafis/virtvalidation/actions/workflows/lighthouse.yml/badge.svg)](https://github.com/cmalafis/virtvalidation/actions/workflows/lighthouse.yml)
+[![Coverage](https://codecov.io/gh/cmalafis/virtvalidation/branch/main/graph/badge.svg)](https://codecov.io/gh/cmalafis/virtvalidation)
+[![Latest release](https://img.shields.io/github/v/release/cmalafis/virtvalidation?include_prereleases&sort=semver)](https://github.com/cmalafis/virtvalidation/releases)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 [![React 18](https://img.shields.io/badge/react-18-61dafb.svg)](https://react.dev/)

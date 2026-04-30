@@ -1,0 +1,19 @@
+# VirtValidate code owners.
+#
+# Every PR requires review from @cmalafis. Add scoped entries below as the
+# project grows so component-specific changes route to the right reviewer.
+# GitHub honors the LAST matching pattern, so most-specific rules go last.
+
+* @cmalafis
+
+# ---------- Security-sensitive surfaces ----------
+# Any change to auth/SSH/MTV-output/CI pipeline is double-flagged so it
+# always shows up explicitly in the review queue.
+/backend/app/core/ssh.py        @cmalafis
+/backend/app/core/mtv.py        @cmalafis
+/backend/app/middleware/        @cmalafis
+/backend/app/keys/              @cmalafis
+/.github/                       @cmalafis
+/infra/                         @cmalafis
+SECURITY.md                     @cmalafis
+LICENSE                         @cmalafis
