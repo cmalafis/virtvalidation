@@ -25,6 +25,18 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
 - Volume mounts use :Z SELinux label for RHEL/Fedora compatibility
 - Images always reference docker.io/ or registry.access.redhat.com/ explicitly
 
+## Architecture documentation
+- `docs/ARCHITECTURE.md` and `docs/architecture-diagram.html` are
+  **generated** from source by `scripts/generate_architecture_docs.py`.
+- When you add a new function, class, API endpoint, SQLAlchemy model,
+  Pydantic schema, or React component, regenerate before committing:
+  `python3 scripts/generate_architecture_docs.py`
+- CI (`.github/workflows/architecture-docs.yml`) regenerates on every
+  PR and fails the build if the committed docs differ — drift is caught
+  at review time, not in production.
+- `docs/product-map.html` is hand-maintained — describes *what* the
+  product does. The architecture diagram describes *how* it's built.
+
 ## Repo structure
 virtvalidate/
 ├── frontend/          # React app

@@ -15,7 +15,7 @@ Capture pre-migration baselines, generate intelligent migration waves with MTV-r
 [![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![Podman](https://img.shields.io/badge/podman-rootless-892CA0?logo=podman&logoColor=white)](https://podman.io)
 
-[Quick Start](#quick-start) · [Product Map](docs/product-map.html) · [Roadmap](https://github.com/cmalafis/virtvalidation/projects) · [Contributing](CONTRIBUTING.md)
+[Quick Start](#quick-start) · [Product Map](docs/product-map.html) · [Architecture](docs/architecture-diagram.html) · [Roadmap](https://github.com/cmalafis/virtvalidation/projects) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -97,9 +97,12 @@ That's it. Everything runs locally. No data leaves your machine.
 
 ## Documentation
 
-- [**Product Map**](docs/product-map.html) — full architecture, feature catalog, roadmap
+- [**Product Map**](docs/product-map.html) — what the product does (feature catalog, roadmap)
+- [**Architecture Diagram**](docs/architecture-diagram.html) — how it's built (interactive module + component map, regenerated from source)
+- [**Architecture Reference**](docs/ARCHITECTURE.md) — markdown view of the same data
 - [**Installation Guide**](docs/INSTALLATION.md) — detailed setup including production Quadlet deployment
 - [**SSH Setup**](docs/SSH_SETUP.md) — distributing keys, sudoers configuration, security model
+- [**OS Compatibility Matrix**](docs/COMPATIBILITY.md) — RHEL 7/8/9/10, Rocky, Alma, CentOS, Ubuntu/Debian status
 - [**Configuration Reference**](docs/CONFIGURATION.md) — all environment variables explained
 - [**API Reference**](docs/API.md) — REST endpoint documentation
 - [**Security Model**](SECURITY.md) — threat model and reporting vulnerabilities

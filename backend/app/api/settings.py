@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings as app_config
 from app.core.db import get_db
-from app.core.scheduler import reschedule_baseline_job
+from app.core.scheduler import next_run_time, reschedule_baseline_job
 from app.models.settings import AppSettings
 from app.schemas.settings import (
     AppSettingsRead,
@@ -38,13 +38,22 @@ def _get_or_create_settings(db: Session) -> AppSettings:
     return row
 
 
+def _settings_payload(row: AppSettings) -> dict:
+    """Compose the response body — model fields + live scheduler state."""
+    body = AppSettingsRead.model_validate(row).model_dump(mode="json")
+    nxt = next_run_time()
+    body["next_run_at"] = nxt.isoformat() if nxt is not None else None
+    return body
+
+
 @settings_router.get("", response_model=AppSettingsRead)
-def get_settings(db: Session = Depends(get_db)) -> AppSettings:
-    return _get_or_create_settings(db)
+def get_settings(db: Session = Depends(get_db)) -> dict:
+    row = _get_or_create_settings(db)
+    return _settings_payload(row)
 
 
 @settings_router.put("", response_model=AppSettingsRead)
-def update_settings(payload: AppSettingsUpdate, db: Session = Depends(get_db)) -> AppSettings:
+def update_settings(payload: AppSettingsUpdate, db: Session = Depends(get_db)) -> dict:
     row = _get_or_create_settings(db)
     fields = payload.model_dump(exclude_unset=True)
     for k, v in fields.items():
@@ -55,7 +64,7 @@ def update_settings(payload: AppSettingsUpdate, db: Session = Depends(get_db)) -
     # in tests where the scheduler was never started.
     if "schedule_preset" in fields:
         reschedule_baseline_job(row.schedule_preset)
-    return row
+    return _settings_payload(row)
 
 
 @system_router.get("/ssh-public-key", response_model=SSHPublicKey)

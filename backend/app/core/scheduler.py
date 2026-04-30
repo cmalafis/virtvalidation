@@ -1,29 +1,31 @@
 """
 Scheduled baseline collection.
 
-Runs SSH collection against every enrolled VM twice daily (06:00 and 18:00
-local time) and persists each result as a BaselineSnapshot.
+Runs SSH collection against every enrolled VM on the configured cadence
+(twice/once daily or hourly) and persists each result via the shared
+``collect_and_store`` helper so the scheduled and manual paths stay in
+lockstep.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import func, select
+from sqlalchemy import select
 
-from app.core.audit import record_audit
+from app.core import db as _db_module  # late-binding for test rebind compat
+from app.core.capture import CaptureError, collect_and_store
 from app.core.config import settings
-from app.core.db import SessionLocal
-from app.core.ssh import SSHCollectionError, SSHCollector
+from app.core.ssh import SSHCollector
 from app.models.settings import AppSettings, SchedulePreset
-from app.models.vm import VM, BaselineSnapshot, VMStatus
+from app.models.vm import VM
 
 logger = logging.getLogger(__name__)
 
-_SCHEDULED_SSH_USER = "virtvalidate"
 _JOB_ID = "baseline-collection"
 
 _scheduler: Optional[BackgroundScheduler] = None
@@ -39,7 +41,7 @@ def _trigger_for(preset: SchedulePreset) -> CronTrigger:
 
 
 def _load_preset() -> SchedulePreset:
-    db = SessionLocal()
+    db = _db_module.SessionLocal()
     try:
         existing = db.get(AppSettings, 1)
         return existing.schedule_preset if existing else SchedulePreset.twice_daily
@@ -48,58 +50,30 @@ def _load_preset() -> SchedulePreset:
 
 
 def collect_baselines_for_all_vms() -> None:
-    """Iterate every enrolled VM and store a fresh baseline snapshot."""
-    collector = SSHCollector(key_path=settings.ssh_key_path)
-    db = SessionLocal()
+    """Iterate every enrolled VM and capture a fresh baseline."""
+    db = _db_module.SessionLocal()
     try:
+        # Re-read the host-key policy each scheduled run so flipping the
+        # Settings toggle takes effect on the next pass without a restart.
+        from app.core.capture import _resolve_host_key_policy  # avoid cycle
+
+        collector = SSHCollector(
+            key_path=settings.ssh_key_path,
+            host_key_policy=_resolve_host_key_policy(db),
+        )
         vms = list(db.scalars(select(VM)).all())
         logger.info("scheduled baseline collection starting for %d VMs", len(vms))
         for vm in vms:
-            host = vm.ip_address or vm.source_hostname
-            if not host:
-                logger.warning("skipping VM %s: no host/ip", vm.name)
-                continue
-            ssh_user = vm.ssh_user or _SCHEDULED_SSH_USER
             try:
-                state = collector.collect(host=host, username=ssh_user)
-            except SSHCollectionError as e:
+                snapshot = collect_and_store(db, vm, actor="scheduler", collector=collector)
+            except CaptureError as e:
                 logger.error("baseline collection failed for %s: %s", vm.name, e)
                 continue
-
-            next_number = (
-                db.scalar(
-                    select(func.coalesce(func.max(BaselineSnapshot.snapshot_number), 0)).where(
-                        BaselineSnapshot.vm_id == vm.id
-                    )
-                )
-                or 0
-            ) + 1
-            snapshot = BaselineSnapshot(
-                vm_id=vm.id,
-                snapshot_number=next_number,
-                ssh_user=ssh_user,
-                raw_data=state,
+            logger.info(
+                "baseline #%d stored for VM %s",
+                snapshot.snapshot_number,
+                vm.name,
             )
-            db.add(snapshot)
-            if vm.status == VMStatus.discovered:
-                vm.status = VMStatus.baseline_captured
-            db.commit()
-            db.refresh(snapshot)
-            record_audit(
-                db,
-                action="baseline.collected",
-                actor="scheduler",
-                resource_type="baseline",
-                resource_id=snapshot.id,
-                details={
-                    "vm_id": vm.id,
-                    "vm_name": vm.name,
-                    "snapshot_number": next_number,
-                    "ssh_user": ssh_user,
-                },
-            )
-            db.commit()
-            logger.info("baseline #%d stored for VM %s", next_number, vm.name)
     finally:
         db.close()
 
@@ -132,6 +106,21 @@ def reschedule_baseline_job(preset: SchedulePreset) -> None:
         return
     _scheduler.reschedule_job(_JOB_ID, trigger=_trigger_for(preset))
     logger.info("baseline scheduler rescheduled to preset=%s", preset.value)
+
+
+def next_run_time() -> Optional[datetime]:
+    """Return the scheduler's next planned run, or None if not running.
+
+    The Settings page surfaces this as "Next collection: in 3h 42m" — the
+    UI does the relative-time formatting; we just hand back the absolute
+    UTC datetime so the answer doesn't drift across the request lifecycle.
+    """
+    if _scheduler is None:
+        return None
+    job = _scheduler.get_job(_JOB_ID)
+    if job is None:
+        return None
+    return job.next_run_time
 
 
 def shutdown_scheduler() -> None:

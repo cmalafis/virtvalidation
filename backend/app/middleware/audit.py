@@ -32,6 +32,11 @@ class AuditMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if path.startswith("/api/audit"):
             return response
+        # Endpoints that emit their own rich audit row (with field-level
+        # diffs, hostnames, etc.) set this flag so the middleware doesn't
+        # double-log a generic entry on top of it.
+        if getattr(request.state, "skip_audit_log", False):
+            return response
 
         try:
             action, rtype, rid = infer_action(request.method, path)

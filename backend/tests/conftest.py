@@ -115,6 +115,17 @@ def mock_ssh_state():
             "hostname": "db-01.corp",
             "os": {"id": "rhel", "version_id": "9.2", "pretty_name": "RHEL 9.2"},
             "kernel": "5.14.0-362",
+            "os_profile": {
+                "distro": "rhel",
+                "distro_family": "rhel-like",
+                "major_version": 9,
+                "minor_version": 2,
+                "kernel_version": "5.14.0-362",
+                "architecture": "x86_64",
+                "is_systemd": True,
+                "pretty_name": "RHEL 9.2",
+                "detection_confidence": "high",
+            },
             "collected_at": "2026-04-23T12:00:00+00:00",
         },
         "services": [

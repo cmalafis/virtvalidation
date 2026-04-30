@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.settings import SchedulePreset
+from app.models.settings import SchedulePreset, SSHHostKeyPolicy
 
 
 class AppSettingsRead(BaseModel):
@@ -11,12 +11,18 @@ class AppSettingsRead(BaseModel):
     id: int
     ollama_model: str
     schedule_preset: SchedulePreset
+    ssh_host_key_policy: SSHHostKeyPolicy
     updated_at: datetime
+    # Populated from the running APScheduler instance — None when the
+    # scheduler isn't running (tests, freshly booted process, etc.).
+    # The dashboard formats this as "Next collection: in 3h 42m".
+    next_run_at: datetime | None = None
 
 
 class AppSettingsUpdate(BaseModel):
     ollama_model: str | None = Field(default=None, min_length=1, max_length=128)
     schedule_preset: SchedulePreset | None = None
+    ssh_host_key_policy: SSHHostKeyPolicy | None = None
 
 
 class HealthStatus(BaseModel):

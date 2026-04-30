@@ -29,6 +29,6 @@ class ValidationResult(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    vm = relationship("VM")
+    vm = relationship("VM", back_populates="validations")
 
     __table_args__ = (Index("ix_validation_vm_validated_at", "vm_id", "validated_at"),)

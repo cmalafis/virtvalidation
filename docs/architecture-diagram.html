@@ -1,0 +1,2386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VirtValidate · Architecture Diagram</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #07070f; color: #eeeeff; font-family: 'Barlow', sans-serif; line-height: 1.5; }
+  a { color: #88aaff; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #0d0d1a; }
+  ::-webkit-scrollbar-thumb { background: #2a2a44; border-radius: 2px; }
+
+  .nav { position: sticky; top: 0; background: rgba(7,7,15,0.95); backdrop-filter: blur(8px);
+         border-bottom: 1px solid #1a1a2e; z-index: 100; padding: 14px 32px;
+         display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+  .nav-left { display: flex; align-items: center; gap: 16px; }
+  .nav-tri { width: 12px; height: 12px; background: #4488ff; clip-path: polygon(50% 0%, 100% 100%, 0% 100%); }
+  .nav-title { font-size: 18px; font-weight: 700; letter-spacing: 0.04em; }
+  .nav-subtitle { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #aaaacc; letter-spacing: 0.08em; margin-top: 2px; }
+  .nav-link { font-family: 'Barlow', sans-serif; font-size: 12px; color: #aaaacc; text-decoration: none;
+              padding: 8px 14px; border: 1px solid #3a3a55; letter-spacing: 0.06em;
+              text-transform: uppercase; font-weight: 700; }
+  .nav-link:hover { color: #88aaff; border-color: #4488ff; }
+
+  .hero { padding: 36px 32px 24px; max-width: 1280px; margin: 0 auto; }
+  .hero-eyebrow { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: #aaaacc; letter-spacing: 0.18em; margin-bottom: 14px; text-transform: uppercase; }
+  .hero h1 { font-size: 32px; font-weight: 700; letter-spacing: 0.02em; margin-bottom: 12px; }
+  .hero p { font-size: 15px; color: #aaaacc; max-width: 720px; line-height: 1.6; }
+
+  .controls { padding: 16px 32px; max-width: 1280px; margin: 0 auto;
+              display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+              border-top: 1px solid #1a1a2e; border-bottom: 1px solid #1a1a2e; background: #0a0a18; }
+  .search { flex: 1; min-width: 240px; background: #07070f; border: 1px solid #2a2a44;
+            color: #eeeeff; padding: 11px 14px; font-size: 14px;
+            font-family: 'Share Tech Mono', monospace; outline: none; }
+  .search:focus { border-color: #4488ff; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; }
+  .legend-item { display: inline-flex; align-items: center; gap: 8px; font-size: 12px;
+                 color: #aaaacc; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 2px; }
+
+  .areas { padding: 32px; max-width: 1280px; margin: 0 auto; }
+  .area { margin-bottom: 48px; }
+  .area-title { font-size: 22px; font-weight: 700; letter-spacing: 0.02em; margin-bottom: 4px; }
+  .area-summary { font-size: 14px; color: #aaaacc; margin-bottom: 18px; line-height: 1.6; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
+  .card { border: 1px solid #1a1a2e; background: #0a0a18; padding: 18px; transition: all 0.15s; }
+  .card.hidden { display: none; }
+  .card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  .card-id { font-family: 'Share Tech Mono', monospace; font-size: 14px; color: #eeeeff;
+             font-weight: 700; word-break: break-word; }
+  .card-sub { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #aaaacc;
+              margin-top: 4px; word-break: break-word; }
+  .card-tag { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700;
+              padding: 4px 10px; border-radius: 2px; flex-shrink: 0; white-space: nowrap; }
+  .card-summary { font-size: 13px; color: #ccccee; margin: 8px 0 12px; line-height: 1.6; }
+
+  .card-section { font-size: 11px; letter-spacing: 0.08em; color: #aaaacc;
+                  text-transform: uppercase; font-weight: 700; margin-top: 14px; margin-bottom: 8px; }
+  .row { display: flex; gap: 8px; align-items: baseline; padding: 4px 0;
+         border-bottom: 1px solid #14142a; font-family: 'Share Tech Mono', monospace; font-size: 12px; }
+  .row:last-child { border-bottom: none; }
+  .method { display: inline-block; min-width: 50px; padding: 2px 6px; font-weight: 700;
+            font-size: 10px; letter-spacing: 0.06em; border-radius: 2px; text-align: center; }
+  .method-GET { background: #003366; color: #aaccff; }
+  .method-POST { background: #1a3d2e; color: #88ddaa; }
+  .method-PATCH { background: #4a3500; color: #ffcc66; }
+  .method-PUT { background: #4a3500; color: #ffcc66; }
+  .method-DELETE { background: #4a1a1a; color: #ff99aa; }
+  .path { color: #eeeeff; word-break: break-all; }
+  .meta { color: #aaaacc; font-family: 'Barlow', sans-serif; font-size: 12px; line-height: 1.5; }
+
+  details summary { cursor: pointer; user-select: none; list-style: none;
+                    color: #88aaff; font-size: 12px; letter-spacing: 0.06em;
+                    text-transform: uppercase; font-weight: 700; margin-top: 12px; }
+  details summary::-webkit-details-marker { display: none; }
+  details[open] summary::after { content: " ▼"; }
+  details:not([open]) summary::after { content: " ▶"; }
+
+  .empty { padding: 60px 24px; text-align: center; color: #aaaacc; font-size: 14px; }
+  .footer { padding: 24px 32px 48px; max-width: 1280px; margin: 0 auto;
+            border-top: 1px solid #1a1a2e; color: #aaaacc; font-size: 12px;
+            font-family: 'Share Tech Mono', monospace; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-left">
+    <div class="nav-tri"></div>
+    <div>
+      <div class="nav-title">VirtValidate · Architecture</div>
+      <div class="nav-subtitle">code map · regenerate via scripts/generate_architecture_docs.py</div>
+    </div>
+  </div>
+  <div style="display:flex; gap:10px;">
+    <a class="nav-link" href="product-map.html">Product Map</a>
+    <a class="nav-link" href="ARCHITECTURE.md">Markdown View</a>
+    <a class="nav-link" href="../README.md">Readme</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-eyebrow">how it's built</div>
+  <h1>Module &amp; component architecture</h1>
+  <p>Every Python module, class, function, API route, and React component the
+     codebase exposes — grouped by functional area. Search the box below or
+     click any card to expand its members. Categories color-code the cross-
+     cutting role each module plays.</p>
+</header>
+
+<section class="controls">
+  <input id="search" class="search" type="text" autocomplete="off"
+         placeholder="filter by module, class, function, route…" />
+  <div class="legend" id="legend"></div>
+</section>
+
+<main class="areas" id="areas"></main>
+
+<footer class="footer">
+  <div>Generated from source — do not hand-edit. Run <code>python3 scripts/generate_architecture_docs.py</code> to regenerate.</div>
+</footer>
+
+<script>
+const DATA = {
+  "areas": [
+    {
+      "key": "vm",
+      "title": "VM Inventory Management",
+      "summary": "Enrolling, listing, editing, and deleting VMs.",
+      "match": [
+        "backend/app/api/vms.py",
+        "backend/app/schemas/vm.py",
+        "backend/app/models/vm.py"
+      ],
+      "extensions": [
+        "Windows VM enrollment via WinRM (currently Linux SSH only)",
+        "Bulk update endpoint for tagging/labeling VMs at scale",
+        "vCenter discovery integration to auto-populate inventory"
+      ]
+    },
+    {
+      "key": "baseline",
+      "title": "Baseline Collection",
+      "summary": "SSH state capture, on-demand triggers, scheduled cadence.",
+      "match": [
+        "backend/app/core/ssh.py",
+        "backend/app/core/capture.py",
+        "backend/app/core/scheduler.py",
+        "backend/app/core/baseline.py",
+        "backend/app/api/snapshots.py"
+      ],
+      "extensions": [
+        "WinRMCollector class parallel to SSHCollector",
+        "OS-aware command dispatch (RHEL 7/8/9/10 deltas in systemctl, ss, etc.)",
+        "Differential baselines (only collect what changed since last snapshot)"
+      ]
+    },
+    {
+      "key": "planning",
+      "title": "Migration Planning",
+      "summary": "LLM-driven wave planning + MTV/Forklift YAML generation.",
+      "match": [
+        "backend/app/core/planner.py",
+        "backend/app/core/mtv.py",
+        "backend/app/api/plans.py",
+        "backend/app/schemas/plan.py",
+        "backend/app/models/plan.py"
+      ],
+      "extensions": [
+        "Per-wave Ansible playbook generation alongside MTV YAML",
+        "Cold migration mode toggle (currently warm-only)",
+        "Multi-cluster destination support in MTV Plan output"
+      ]
+    },
+    {
+      "key": "validation",
+      "title": "Validation Engine",
+      "summary": "Pre/post diffing, LLM verdict reasoning, finding triage.",
+      "match": [
+        "backend/app/core/llm.py",
+        "backend/app/models/validation.py",
+        "backend/app/schemas/validation.py"
+      ],
+      "extensions": [
+        "Per-finding remediation playbook output",
+        "Pluggable LLM backend (vLLM, llama.cpp) alongside Ollama",
+        "Confidence scoring on verdicts"
+      ]
+    },
+    {
+      "key": "reports",
+      "title": "Reporting",
+      "summary": "Wave reports, PDF rendering, exportable templates.",
+      "match": [
+        "backend/app/core/reporter.py",
+        "backend/app/api/templates.py",
+        "backend/app/schemas/report.py"
+      ],
+      "extensions": [
+        "Email PDF reports to stakeholder lists on wave completion",
+        "Slack/webhook notification integrations on verdict change",
+        "Customer-supplied Jinja templates for branded PDFs"
+      ]
+    },
+    {
+      "key": "audit",
+      "title": "Auth & Audit",
+      "summary": "Append-only audit trail; future home for RBAC + OIDC.",
+      "match": [
+        "backend/app/core/audit.py",
+        "backend/app/middleware/audit.py",
+        "backend/app/models/audit.py",
+        "backend/app/api/audit.py",
+        "backend/app/schemas/audit.py"
+      ],
+      "extensions": [
+        "OIDC sign-in (currently anonymous behind reverse proxy)",
+        "Role-based access control (RBAC) gating mutating routes",
+        "Git artifact sync \u2014 every generated YAML/PDF committed to a customer-owned repo"
+      ]
+    },
+    {
+      "key": "system",
+      "title": "System Operations",
+      "summary": "Settings, scheduler config, health probes, app bootstrap.",
+      "match": [
+        "backend/app/main.py",
+        "backend/app/core/config.py",
+        "backend/app/core/db.py",
+        "backend/app/api/settings.py",
+        "backend/app/api/health.py",
+        "backend/app/schemas/settings.py",
+        "backend/app/models/settings.py"
+      ],
+      "extensions": [
+        "Encrypted SSH key vault (currently filesystem-backed Ed25519)",
+        "Per-tenant settings (multi-tenant via OCP namespaces)",
+        "Helm chart + ArgoCD manifests for OpenShift-native deployment"
+      ]
+    },
+    {
+      "key": "frontend",
+      "title": "Frontend Components",
+      "summary": "React dashboard \u2014 inventory, validation, planning, audit.",
+      "match": [
+        "frontend/src/"
+      ],
+      "extensions": [
+        "Visual pipeline view (discover \u2192 baseline \u2192 plan \u2192 migrate \u2192 validate \u2192 report)",
+        "Multi-day baseline trend charts",
+        "Live SSE feed of validation runs replacing the current polling"
+      ]
+    }
+  ],
+  "cards": {
+    "vm": [
+      {
+        "kind": "module",
+        "id": "app.api.vms",
+        "title": "app.api.vms",
+        "subtitle": "backend/app/api/vms.py",
+        "summary": "",
+        "category": "api",
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/api/vms",
+            "handler": "create_vm",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/vms/bulk",
+            "handler": "create_vms_bulk",
+            "summary": "Best-effort batch enrollment."
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms",
+            "handler": "list_vms",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms/{vm_id}",
+            "handler": "get_vm",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/vms/{vm_id}",
+            "handler": "update_vm",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/vms/{vm_id}",
+            "handler": "delete_vm",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/vms",
+            "handler": "delete_vms_bulk",
+            "summary": "Delete multiple VMs in one round-trip."
+          },
+          {
+            "method": "POST",
+            "path": "/api/vms/{vm_id}/capture",
+            "handler": "trigger_capture",
+            "summary": "Spawn an immediate baseline collection in the background."
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms/{vm_id}/capture/{task_id}",
+            "handler": "get_capture_status",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/vms/{vm_id}/snapshots",
+            "handler": "create_snapshot",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms/{vm_id}/snapshots",
+            "handler": "list_snapshots",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms/{vm_id}/snapshots/{snapshot_id}",
+            "handler": "get_snapshot",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms/{vm_id}/validation/latest",
+            "handler": "latest_validation",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms/{vm_id}/baseline/history",
+            "handler": "baseline_history",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms/{vm_id}/baseline/profile",
+            "handler": "baseline_profile",
+            "summary": ""
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.baseline",
+          "app.core.capture",
+          "app.core.db",
+          "app.models.validation",
+          "app.models.vm",
+          "app.schemas.validation",
+          "app.schemas.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.vm",
+        "title": "app.models.vm",
+        "subtitle": "backend/app/models/vm.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "VMStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VM",
+            "kind": "model",
+            "table": "vms",
+            "fields": [
+              "id",
+              "name",
+              "source_hostname",
+              "target_hostname",
+              "ip_address",
+              "os_family",
+              "role",
+              "ssh_user",
+              "ssh_port",
+              "current_platform",
+              "environment",
+              "owner",
+              "status",
+              "notes",
+              "vsphere_networks",
+              "vsphere_datastores",
+              "target_namespace",
+              "target_storage_class",
+              "target_network_attachment",
+              "created_at",
+              "updated_at",
+              "snapshots",
+              "validations"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BaselineSnapshot",
+            "kind": "model",
+            "table": "baseline_snapshots",
+            "fields": [
+              "id",
+              "vm_id",
+              "snapshot_number",
+              "ssh_user",
+              "raw_data",
+              "checksum",
+              "collected_at",
+              "vm"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.vm",
+        "title": "app.schemas.vm",
+        "subtitle": "backend/app/schemas/vm.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "VMBase",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "source_hostname",
+              "target_hostname",
+              "ip_address",
+              "os_family",
+              "role",
+              "ssh_user",
+              "ssh_port",
+              "current_platform",
+              "environment",
+              "owner",
+              "notes",
+              "vsphere_networks",
+              "vsphere_datastores",
+              "target_namespace",
+              "target_storage_class",
+              "target_network_attachment"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VMCreate",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VMUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "source_hostname",
+              "target_hostname",
+              "ip_address",
+              "os_family",
+              "role",
+              "ssh_user",
+              "ssh_port",
+              "current_platform",
+              "environment",
+              "owner",
+              "status",
+              "notes",
+              "vsphere_networks",
+              "vsphere_datastores",
+              "target_namespace",
+              "target_storage_class",
+              "target_network_attachment"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VMRead",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "id",
+              "status",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkVMCreate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vms"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkVMSkipped",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "reason"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkVMResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "total",
+              "created",
+              "skipped"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkVMDelete",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkVMDeleteResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "requested",
+              "deleted",
+              "not_found"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "CaptureTaskRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "task_id",
+              "vm_id",
+              "status",
+              "started_at",
+              "completed_at",
+              "snapshot_id",
+              "error"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkCaptureSpawn",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "task_id"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkCaptureResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "spawned",
+              "skipped"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SnapshotCreate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "ssh_user",
+              "raw_data",
+              "checksum"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SnapshotRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "vm_id",
+              "snapshot_number",
+              "ssh_user",
+              "raw_data",
+              "checksum",
+              "collected_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BaselineProfile",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "snapshot_count",
+              "first_collected_at",
+              "last_collected_at",
+              "latest_meta",
+              "services",
+              "open_ports",
+              "stable_mounts",
+              "dns_servers",
+              "interfaces"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.models.vm"
+        ]
+      }
+    ],
+    "baseline": [
+      {
+        "kind": "module",
+        "id": "app.api.snapshots",
+        "title": "app.api.snapshots",
+        "subtitle": "backend/app/api/snapshots.py",
+        "summary": "Cross-VM snapshot operations \u2014 currently just bulk on-demand capture.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/api/snapshots/capture-all",
+            "handler": "capture_all",
+            "summary": "Spawn an immediate capture against every enrolled VM."
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.capture",
+          "app.core.db",
+          "app.models.vm",
+          "app.schemas.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.baseline",
+        "title": "app.core.baseline",
+        "subtitle": "backend/app/core/baseline.py",
+        "summary": "Baseline profile synthesis.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "synthesize_profile",
+            "summary": ""
+          }
+        ],
+        "depends_on": [
+          "app.models.vm",
+          "app.schemas.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.capture",
+        "title": "app.core.capture",
+        "subtitle": "backend/app/core/capture.py",
+        "summary": "On-demand baseline capture.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "CaptureTask",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "task_id",
+              "vm_id",
+              "status",
+              "started_at",
+              "completed_at",
+              "snapshot_id",
+              "error"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "CaptureTaskStore",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "create",
+                "summary": ""
+              },
+              {
+                "name": "get",
+                "summary": ""
+              },
+              {
+                "name": "mark_completed",
+                "summary": ""
+              },
+              {
+                "name": "mark_failed",
+                "summary": ""
+              }
+            ],
+            "summary": "Thread-safe singleton-ish task registry."
+          },
+          {
+            "name": "CaptureError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised by collect_and_store when SSH or persistence fails."
+          }
+        ],
+        "functions": [
+          {
+            "name": "collect_and_store",
+            "summary": "SSH into ``vm``, store a fresh BaselineSnapshot, audit, return it."
+          },
+          {
+            "name": "run_capture_task",
+            "summary": "Body of the FastAPI BackgroundTask spawned by manual-capture endpoints."
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.core.config",
+          "app.core.ssh",
+          "app.models.settings",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.scheduler",
+        "title": "app.core.scheduler",
+        "subtitle": "backend/app/core/scheduler.py",
+        "summary": "Scheduled baseline collection.",
+        "category": "integration",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "collect_baselines_for_all_vms",
+            "summary": "Iterate every enrolled VM and capture a fresh baseline."
+          },
+          {
+            "name": "start_scheduler",
+            "summary": "Start the background scheduler with the configured baseline cadence."
+          },
+          {
+            "name": "reschedule_baseline_job",
+            "summary": "Apply a new schedule preset to the running baseline job."
+          },
+          {
+            "name": "next_run_time",
+            "summary": "Return the scheduler's next planned run, or None if not running."
+          },
+          {
+            "name": "shutdown_scheduler",
+            "summary": ""
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.capture",
+          "app.core.config",
+          "app.core.ssh",
+          "app.models.settings",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.ssh",
+        "title": "app.core.ssh",
+        "subtitle": "backend/app/core/ssh.py",
+        "summary": "SSH Collection Engine.",
+        "category": "integration",
+        "routes": [],
+        "classes": [
+          {
+            "name": "SSHCollectionError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the SSH session cannot be established."
+          },
+          {
+            "name": "_RecordingAutoAddPolicy",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "missing_host_key",
+                "summary": ""
+              }
+            ],
+            "summary": "AutoAddPolicy that captures *which* host key was added."
+          },
+          {
+            "name": "SSHCollector",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "collect",
+                "summary": "SSH into a VM and collect full system state as structured JSON."
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.commands",
+          "app.core.os_profile"
+        ]
+      }
+    ],
+    "planning": [
+      {
+        "kind": "module",
+        "id": "app.api.plans",
+        "title": "app.api.plans",
+        "subtitle": "backend/app/api/plans.py",
+        "summary": "",
+        "category": "api",
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/api/plans",
+            "handler": "create_plan",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/plans",
+            "handler": "list_plans",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/plans/{plan_id}",
+            "handler": "get_plan",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/plans/{plan_id}/waves/{wave_number}/report",
+            "handler": "wave_report",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/plans/{plan_id}/waves/{wave_number}/report/pdf",
+            "handler": "wave_report_pdf",
+            "summary": "Dedicated PDF endpoint \u2014 always returns Content-Type: application/pdf."
+          },
+          {
+            "method": "GET",
+            "path": "/api/plans/{plan_id}/waves/{wave_number}/mtv-yaml",
+            "handler": "wave_mtv_yaml",
+            "summary": "Render the wave as a multi-doc MTV/Forklift YAML for ``oc apply -f``."
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.baseline",
+          "app.core.db",
+          "app.core.mtv",
+          "app.core.planner",
+          "app.core.reporter",
+          "app.models.plan",
+          "app.models.validation",
+          "app.models.vm",
+          "app.schemas.plan",
+          "app.schemas.report"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.mtv",
+        "title": "app.core.mtv",
+        "subtitle": "backend/app/core/mtv.py",
+        "summary": "MTV / Forklift migration plan YAML generator.",
+        "category": "integration",
+        "routes": [],
+        "classes": [
+          {
+            "name": "MTVGenerationError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the wave is missing data required to produce a valid plan."
+          },
+          {
+            "name": "WaveContext",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "plan_id",
+              "wave_number",
+              "rationale",
+              "namespace",
+              "source_provider",
+              "destination_provider",
+              "default_target_namespace"
+            ],
+            "methods": [
+              {
+                "name": "from_settings",
+                "summary": ""
+              }
+            ],
+            "summary": "Inputs the YAML generator needs in addition to the per-VM rows."
+          }
+        ],
+        "functions": [
+          {
+            "name": "generate_wave_yaml",
+            "summary": "Render the wave's NetworkMap + StorageMap + Plan as a multi-doc YAML."
+          }
+        ],
+        "depends_on": [
+          "app.core.config"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.planner",
+        "title": "app.core.planner",
+        "subtitle": "backend/app/core/planner.py",
+        "summary": "Migration wave planner.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "PlannerError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the planner LLM call fails or returns unusable output."
+          },
+          {
+            "name": "MigrationPlanner",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "plan",
+                "summary": "Generate a wave plan for the given VMs."
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.config"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.plan",
+        "title": "app.models.plan",
+        "subtitle": "backend/app/models/plan.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "MigrationPlan",
+            "kind": "model",
+            "table": "migration_plans",
+            "fields": [
+              "id",
+              "vm_ids",
+              "waves",
+              "summary",
+              "model",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.plan",
+        "title": "app.schemas.plan",
+        "subtitle": "backend/app/schemas/plan.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "WaveRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "wave_number",
+              "vm_ids",
+              "rationale",
+              "estimated_risk"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanCreate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "vm_ids",
+              "waves",
+              "summary",
+              "model",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      }
+    ],
+    "validation": [
+      {
+        "kind": "module",
+        "id": "app.core.llm",
+        "title": "app.core.llm",
+        "subtitle": "backend/app/core/llm.py",
+        "summary": "LLM Client \u2014 Ollama (local, air-gapped)",
+        "category": "integration",
+        "routes": [],
+        "classes": [
+          {
+            "name": "LLMError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the Ollama call fails or returns unparseable output."
+          },
+          {
+            "name": "LLMClient",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "validate",
+                "summary": "Reason over pre/post migration diff and return a structured verdict."
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.config"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.validation",
+        "title": "app.models.validation",
+        "subtitle": "backend/app/models/validation.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ValidationStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ValidationResult",
+            "kind": "model",
+            "table": "validation_results",
+            "fields": [
+              "id",
+              "vm_id",
+              "status",
+              "summary",
+              "findings",
+              "remediation",
+              "diff",
+              "validated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.validation",
+        "title": "app.schemas.validation",
+        "subtitle": "backend/app/schemas/validation.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ValidationResultRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "vm_id",
+              "status",
+              "summary",
+              "findings",
+              "remediation",
+              "diff",
+              "validated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      }
+    ],
+    "reports": [
+      {
+        "kind": "module",
+        "id": "app.api.templates",
+        "title": "app.api.templates",
+        "subtitle": "backend/app/api/templates.py",
+        "summary": "Static template downloads \u2014 currently just the bulk inventory CSV.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/templates/csv",
+            "handler": "download_csv_template",
+            "summary": "Serve the canonical VM inventory CSV template as a download."
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.config"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.reporter",
+        "title": "app.core.reporter",
+        "subtitle": "backend/app/core/reporter.py",
+        "summary": "Wave report generator.",
+        "category": "integration",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ReporterError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the report LLM call fails or returns unusable output."
+          },
+          {
+            "name": "WaveReporter",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "generate",
+                "summary": "Build a structured WaveReport for a single wave."
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "render_pdf",
+            "summary": "Render a WaveReport dict as a CISO-ready PDF using weasyprint."
+          }
+        ],
+        "depends_on": [
+          "app.core.config"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.report",
+        "title": "app.schemas.report",
+        "subtitle": "backend/app/schemas/report.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "VMFinding",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "vm_name",
+              "status",
+              "summary",
+              "findings",
+              "remediation"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "WaveReport",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "wave_number",
+              "total_vms",
+              "healthy_count",
+              "degraded_count",
+              "failed_count",
+              "executive_summary",
+              "per_vm_findings",
+              "recommendation"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      }
+    ],
+    "audit": [
+      {
+        "kind": "module",
+        "id": "app.api.audit",
+        "title": "app.api.audit",
+        "subtitle": "backend/app/api/audit.py",
+        "summary": "Read-only audit log endpoint.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/audit",
+            "handler": "list_audit",
+            "summary": ""
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.db",
+          "app.models.audit",
+          "app.schemas.audit"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.audit",
+        "title": "app.core.audit",
+        "subtitle": "backend/app/core/audit.py",
+        "summary": "Audit-trail recording helpers.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "infer_action",
+            "summary": "Map (method, path) \u2192 (action, resource_type, resource_id)."
+          },
+          {
+            "name": "record_audit",
+            "summary": "Stage an audit log row. The caller is responsible for ``db.commit()``."
+          }
+        ],
+        "depends_on": [
+          "app.models.audit"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.middleware.audit",
+        "title": "app.middleware.audit",
+        "subtitle": "backend/app/middleware/audit.py",
+        "summary": "Starlette middleware that records every mutating API call into audit_logs.",
+        "category": "api",
+        "routes": [],
+        "classes": [
+          {
+            "name": "AuditMiddleware",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "dispatch",
+                "summary": ""
+              }
+            ],
+            "summary": "Log POST/PUT/PATCH/DELETE responses to the audit_logs table."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core",
+          "app.core.audit"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.audit",
+        "title": "app.models.audit",
+        "subtitle": "backend/app/models/audit.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "AuditLog",
+            "kind": "model",
+            "table": "audit_logs",
+            "fields": [
+              "id",
+              "timestamp",
+              "action",
+              "actor",
+              "resource_type",
+              "resource_id",
+              "details"
+            ],
+            "methods": [],
+            "summary": "Append-only audit trail row."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.audit",
+        "title": "app.schemas.audit",
+        "subtitle": "backend/app/schemas/audit.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "AuditLogRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "timestamp",
+              "action",
+              "actor",
+              "resource_type",
+              "resource_id",
+              "details"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      }
+    ],
+    "system": [
+      {
+        "kind": "module",
+        "id": "app.api.health",
+        "title": "app.api.health",
+        "subtitle": "backend/app/api/health.py",
+        "summary": "Health-check endpoints for the system tab on the settings page.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/health/ollama",
+            "handler": "ollama_health",
+            "summary": "Probe the local Ollama server via /api/tags."
+          },
+          {
+            "method": "GET",
+            "path": "/api/health/postgres",
+            "handler": "postgres_health",
+            "summary": "Run a SELECT 1 against the configured database."
+          },
+          {
+            "method": "GET",
+            "path": "/api/health/full",
+            "handler": "full_health",
+            "summary": "Combined status across the API and every backing dependency."
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.config",
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.api.settings",
+        "title": "app.api.settings",
+        "subtitle": "backend/app/api/settings.py",
+        "summary": "Settings + system-info endpoints powering the /settings page.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/settings",
+            "handler": "get_settings",
+            "summary": ""
+          },
+          {
+            "method": "PUT",
+            "path": "/api/settings",
+            "handler": "update_settings",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/system/ssh-public-key",
+            "handler": "ssh_public_key",
+            "summary": "Return the OpenSSH public key VirtValidate uses. Never the private key."
+          },
+          {
+            "method": "GET",
+            "path": "/api/system/ollama-models",
+            "handler": "ollama_models",
+            "summary": "List models currently pulled in the local Ollama instance."
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.config",
+          "app.core.db",
+          "app.core.scheduler",
+          "app.models.settings",
+          "app.schemas.settings"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.commands",
+        "title": "app.core.commands",
+        "subtitle": "backend/app/core/commands.py",
+        "summary": "Per-OS command dispatch for the SSH collector.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "CommandSet",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "services_running",
+              "network_addr_v4",
+              "network_addr_v6",
+              "network_routes",
+              "resolv_conf",
+              "listening_ports",
+              "mounts",
+              "cron_users",
+              "cron_user_template",
+              "cron_system_paths",
+              "os_release",
+              "uname_kernel",
+              "uname_arch",
+              "hostname_fqdn",
+              "firewall_inspect",
+              "time_sync_status",
+              "package_list"
+            ],
+            "methods": [],
+            "summary": "The shell commands to run on a given OS."
+          }
+        ],
+        "functions": [
+          {
+            "name": "command_set_for",
+            "summary": "Pick the right ``CommandSet`` for an ``OSProfile``."
+          }
+        ],
+        "depends_on": [
+          "app.core.os_profile"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.config",
+        "title": "app.core.config",
+        "subtitle": "backend/app/core/config.py",
+        "summary": "",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "Settings",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "database_url",
+              "ollama_host",
+              "ollama_model",
+              "ssh_key_path",
+              "cluster_name",
+              "mtv_namespace",
+              "mtv_source_provider",
+              "mtv_destination_provider",
+              "mtv_default_target_namespace",
+              "csv_template_path"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.core.db",
+        "title": "app.core.db",
+        "subtitle": "backend/app/core/db.py",
+        "summary": "",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "Base",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "get_db",
+            "summary": ""
+          }
+        ],
+        "depends_on": [
+          "app.core.config"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.os_profile",
+        "title": "app.core.os_profile",
+        "subtitle": "backend/app/core/os_profile.py",
+        "summary": "OS detection for the SSH collector.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "OSProfile",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "distro",
+              "distro_family",
+              "major_version",
+              "minor_version",
+              "kernel_version",
+              "architecture",
+              "is_systemd",
+              "pretty_name",
+              "detection_confidence"
+            ],
+            "methods": [
+              {
+                "name": "version_label",
+                "summary": ""
+              },
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": "Structured snapshot of the target VM's OS \u2014 produced once per collection."
+          }
+        ],
+        "functions": [
+          {
+            "name": "detect",
+            "summary": "Build an ``OSProfile`` from the three commands the collector runs."
+          }
+        ],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.main",
+        "title": "app.main",
+        "subtitle": "backend/app/main.py",
+        "summary": "",
+        "category": "api",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "lifespan",
+            "summary": ""
+          }
+        ],
+        "depends_on": [
+          "app.api.audit",
+          "app.api.health",
+          "app.api.plans",
+          "app.api.settings",
+          "app.api.snapshots",
+          "app.api.templates",
+          "app.api.vms",
+          "app.core.db",
+          "app.core.scheduler",
+          "app.middleware.audit",
+          "app.models"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.__init__",
+        "title": "app.models.__init__",
+        "subtitle": "backend/app/models/__init__.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.models.audit",
+          "app.models.plan",
+          "app.models.settings",
+          "app.models.validation",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.settings",
+        "title": "app.models.settings",
+        "subtitle": "backend/app/models/settings.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "SchedulePreset",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SSHHostKeyPolicy",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "How the SSH collector handles unknown host keys."
+          },
+          {
+            "name": "AppSettings",
+            "kind": "model",
+            "table": "app_settings",
+            "fields": [
+              "id",
+              "ollama_model",
+              "schedule_preset",
+              "ssh_host_key_policy",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": "Singleton settings row \u2014 always id=1."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.settings",
+        "title": "app.schemas.settings",
+        "subtitle": "backend/app/schemas/settings.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "AppSettingsRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "ollama_model",
+              "schedule_preset",
+              "ssh_host_key_policy",
+              "updated_at",
+              "next_run_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "AppSettingsUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "ollama_model",
+              "schedule_preset",
+              "ssh_host_key_policy"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "HealthStatus",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "status",
+              "host",
+              "version",
+              "latency_ms",
+              "error"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OllamaModel",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "size",
+              "modified_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OllamaModelsResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "models"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SSHPublicKey",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "public_key",
+              "fingerprint",
+              "type"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.models.settings"
+        ]
+      }
+    ],
+    "frontend": [
+      {
+        "kind": "frontend",
+        "id": "frontend/src/App.jsx",
+        "title": "App.jsx",
+        "subtitle": "frontend/src/App.jsx",
+        "summary": "",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "App",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/Settings.jsx",
+        "title": "Settings.jsx",
+        "subtitle": "frontend/src/components/Settings.jsx",
+        "summary": "",
+        "category": "frontend",
+        "api_calls": [
+          "/api/health/ollama",
+          "/api/health/postgres",
+          "/api/settings",
+          "/api/system/ollama-models",
+          "/api/system/ssh-public-key"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "NextRunIndicator",
+            "kind": "component"
+          },
+          {
+            "name": "SSHKeyViewer",
+            "kind": "component"
+          },
+          {
+            "name": "ConnectionStatus",
+            "kind": "component"
+          },
+          {
+            "name": "ConfigurationForm",
+            "kind": "component"
+          },
+          {
+            "name": "Settings",
+            "kind": "component"
+          },
+          {
+            "name": "Spinner",
+            "kind": "component"
+          },
+          {
+            "name": "Shimmer",
+            "kind": "component"
+          },
+          {
+            "name": "Section",
+            "kind": "component"
+          },
+          {
+            "name": "StatusDot",
+            "kind": "component"
+          },
+          {
+            "name": "SecondaryButton",
+            "kind": "component"
+          },
+          {
+            "name": "PrimaryButton",
+            "kind": "component"
+          },
+          {
+            "name": "Row",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/VirtValidate.jsx",
+        "title": "VirtValidate.jsx",
+        "subtitle": "frontend/src/components/VirtValidate.jsx",
+        "summary": "",
+        "category": "frontend",
+        "api_calls": [
+          "/api/audit?{id}",
+          "/api/plans",
+          "/api/plans/{id}/waves/{id}/mtv-yaml",
+          "/api/plans?limit=1",
+          "/api/snapshots/capture-all",
+          "/api/templates/csv",
+          "/api/vms",
+          "/api/vms/bulk",
+          "/api/vms/{id}",
+          "/api/vms/{id}/baseline/profile",
+          "/api/vms/{id}/capture",
+          "/api/vms/{id}/capture/{id}",
+          "/api/vms/{id}/validation/latest"
+        ],
+        "members": [
+          {
+            "name": "mapVM",
+            "kind": "helper"
+          },
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "OSBadge",
+            "kind": "component"
+          },
+          {
+            "name": "WaveMTVDownload",
+            "kind": "component"
+          },
+          {
+            "name": "Modal",
+            "kind": "component"
+          },
+          {
+            "name": "_shortenOSFamily",
+            "kind": "helper"
+          },
+          {
+            "name": "rowToPayload",
+            "kind": "helper"
+          },
+          {
+            "name": "parseCSV",
+            "kind": "helper"
+          },
+          {
+            "name": "parseXLSX",
+            "kind": "helper"
+          },
+          {
+            "name": "CSVTemplateDownload",
+            "kind": "component"
+          },
+          {
+            "name": "CSVColumnDocs",
+            "kind": "component"
+          },
+          {
+            "name": "AccordionSection",
+            "kind": "component"
+          },
+          {
+            "name": "ManualTab",
+            "kind": "component"
+          },
+          {
+            "name": "BulkTab",
+            "kind": "component"
+          },
+          {
+            "name": "EnrollVMsModal",
+            "kind": "component"
+          },
+          {
+            "name": "DeleteVMModal",
+            "kind": "component"
+          },
+          {
+            "name": "BulkDeleteVMsModal",
+            "kind": "component"
+          },
+          {
+            "name": "GeneratePlanModal",
+            "kind": "component"
+          },
+          {
+            "name": "VirtValidate",
+            "kind": "component"
+          },
+          {
+            "name": "StatusBadge",
+            "kind": "component"
+          },
+          {
+            "name": "SeverityTag",
+            "kind": "component"
+          },
+          {
+            "name": "Metric",
+            "kind": "component"
+          },
+          {
+            "name": "VMMTVMapping",
+            "kind": "component"
+          },
+          {
+            "name": "Shimmer",
+            "kind": "component"
+          },
+          {
+            "name": "SkeletonRow",
+            "kind": "component"
+          },
+          {
+            "name": "TableSkeleton",
+            "kind": "component"
+          },
+          {
+            "name": "Spinner",
+            "kind": "component"
+          },
+          {
+            "name": "PrimaryButton",
+            "kind": "component"
+          },
+          {
+            "name": "SecondaryButton",
+            "kind": "component"
+          },
+          {
+            "name": "EmptyState",
+            "kind": "component"
+          },
+          {
+            "name": "ErrorState",
+            "kind": "component"
+          },
+          {
+            "name": "Notice",
+            "kind": "component"
+          },
+          {
+            "name": "FormField",
+            "kind": "component"
+          },
+          {
+            "name": "PreviewTable",
+            "kind": "component"
+          },
+          {
+            "name": "TabButton",
+            "kind": "component"
+          }
+        ]
+      }
+    ]
+  },
+  "categories": [
+    {
+      "key": "api",
+      "label": "API endpoints",
+      "color": "#4488ff"
+    },
+    {
+      "key": "logic",
+      "label": "Business logic",
+      "color": "#00cc88"
+    },
+    {
+      "key": "data",
+      "label": "Data models / schemas",
+      "color": "#ffaa55"
+    },
+    {
+      "key": "integration",
+      "label": "External integration",
+      "color": "#bb88ff"
+    },
+    {
+      "key": "frontend",
+      "label": "Frontend component",
+      "color": "#22ddcc"
+    }
+  ]
+};
+const COLOR = Object.fromEntries(DATA.categories.map(c => [c.key, c.color]));
+const LABEL = Object.fromEntries(DATA.categories.map(c => [c.key, c.label]));
+
+// Legend
+const legend = document.getElementById("legend");
+DATA.categories.forEach(c => {
+  const el = document.createElement("span");
+  el.className = "legend-item";
+  el.innerHTML = `<span class="legend-swatch" style="background:${c.color}"></span>${c.label}`;
+  legend.appendChild(el);
+});
+
+function renderCard(card) {
+  const color = COLOR[card.category] || "#888899";
+  const div = document.createElement("article");
+  div.className = "card";
+  div.style.borderLeft = `3px solid ${color}`;
+  div.dataset.search = JSON.stringify(card).toLowerCase();
+
+  const header = document.createElement("div");
+  header.className = "card-header";
+  header.innerHTML = `
+    <div>
+      <div class="card-id">${escapeHtml(card.title)}</div>
+      <div class="card-sub">${escapeHtml(card.subtitle)}</div>
+    </div>
+    <span class="card-tag" style="background:${color}22; color:${color}; border:1px solid ${color}55">
+      ${escapeHtml(LABEL[card.category] || card.category)}
+    </span>
+  `;
+  div.appendChild(header);
+
+  if (card.summary) {
+    const s = document.createElement("div");
+    s.className = "card-summary";
+    s.textContent = card.summary;
+    div.appendChild(s);
+  }
+
+  if (card.kind === "module") {
+    if ((card.routes || []).length > 0) {
+      div.appendChild(makeSection("Routes"));
+      card.routes.forEach(r => {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML = `<span class="method method-${r.method}">${r.method}</span>` +
+                        `<span class="path">${escapeHtml(r.path)}</span>` +
+                        `<span class="meta" style="margin-left:auto">${escapeHtml(r.handler)}</span>`;
+        div.appendChild(row);
+        if (r.summary) {
+          const m = document.createElement("div");
+          m.className = "meta";
+          m.style.padding = "0 0 6px 60px";
+          m.textContent = r.summary;
+          div.appendChild(m);
+        }
+      });
+    }
+
+    if ((card.classes || []).length > 0) {
+      div.appendChild(makeSection("Classes"));
+      card.classes.forEach(c => {
+        const det = document.createElement("details");
+        const sum = document.createElement("summary");
+        const kind = c.kind === "model" ? `model · ${c.table}` :
+                     c.kind === "schema" ? "schema" : "class";
+        sum.innerHTML = `<code style="font-family:'Share Tech Mono',monospace;color:#eeeeff">${escapeHtml(c.name)}</code> <span style="color:#aaaacc">(${kind})</span>`;
+        det.appendChild(sum);
+        if (c.summary) det.appendChild(metaLine(c.summary));
+        if ((c.fields || []).length > 0) {
+          det.appendChild(metaLine("Fields: " + c.fields.join(", ")));
+        }
+        (c.methods || []).forEach(m => {
+          const r = document.createElement("div");
+          r.className = "row";
+          r.innerHTML = `<span class="path">${escapeHtml(m.name)}()</span>` +
+                        (m.summary ? `<span class="meta" style="margin-left:auto">${escapeHtml(m.summary)}</span>` : "");
+          det.appendChild(r);
+        });
+        div.appendChild(det);
+      });
+    }
+
+    if ((card.functions || []).length > 0) {
+      div.appendChild(makeSection("Functions"));
+      const det = document.createElement("details");
+      det.appendChild(Object.assign(document.createElement("summary"),
+        { textContent: `${card.functions.length} function${card.functions.length === 1 ? "" : "s"}` }));
+      card.functions.forEach(f => {
+        const r = document.createElement("div");
+        r.className = "row";
+        r.innerHTML = `<span class="path">${escapeHtml(f.name)}()</span>` +
+                      (f.summary ? `<span class="meta" style="margin-left:auto">${escapeHtml(f.summary)}</span>` : "");
+        det.appendChild(r);
+      });
+      div.appendChild(det);
+    }
+
+    if ((card.depends_on || []).length > 0) {
+      div.appendChild(makeSection("Depends on"));
+      const wrap = document.createElement("div");
+      wrap.style.fontFamily = "'Share Tech Mono', monospace";
+      wrap.style.fontSize = "11px";
+      wrap.style.color = "#aaaacc";
+      wrap.style.lineHeight = "1.7";
+      wrap.textContent = card.depends_on.join("  ·  ");
+      div.appendChild(wrap);
+    }
+  }
+
+  if (card.kind === "frontend") {
+    if ((card.api_calls || []).length > 0) {
+      div.appendChild(makeSection("API calls"));
+      card.api_calls.forEach(c => {
+        const r = document.createElement("div");
+        r.className = "row";
+        r.innerHTML = `<span class="path">${escapeHtml(c)}</span>`;
+        div.appendChild(r);
+      });
+    }
+    if ((card.members || []).length > 0) {
+      div.appendChild(makeSection("Exports / inner components"));
+      card.members.forEach(m => {
+        const r = document.createElement("div");
+        r.className = "row";
+        r.innerHTML = `<span class="path">${escapeHtml(m.name)}</span>` +
+                      `<span class="meta" style="margin-left:auto">${escapeHtml(m.kind)}</span>`;
+        div.appendChild(r);
+      });
+    }
+  }
+
+  return div;
+}
+
+function makeSection(label) {
+  const el = document.createElement("div");
+  el.className = "card-section";
+  el.textContent = label;
+  return el;
+}
+function metaLine(t) {
+  const el = document.createElement("div");
+  el.className = "meta";
+  el.style.padding = "4px 0";
+  el.textContent = t;
+  return el;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+const areasEl = document.getElementById("areas");
+DATA.areas.forEach(area => {
+  const cards = DATA.cards[area.key] || [];
+  if (cards.length === 0) return;
+  const sec = document.createElement("section");
+  sec.className = "area";
+  sec.dataset.areaKey = area.key;
+  sec.innerHTML = `
+    <h2 class="area-title">${escapeHtml(area.title)}</h2>
+    <p class="area-summary">${escapeHtml(area.summary)}</p>
+  `;
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  cards.forEach(c => grid.appendChild(renderCard(c)));
+  sec.appendChild(grid);
+
+  // Planned extensions strip — gives the doc a forward-looking voice.
+  if ((area.extensions || []).length > 0) {
+    const ext = document.createElement("details");
+    ext.style.marginTop = "16px";
+    ext.style.padding = "12px 16px";
+    ext.style.border = "1px dashed #2a2a44";
+    ext.style.background = "#0a0a18";
+    const sum = document.createElement("summary");
+    sum.textContent = "Planned extensions";
+    ext.appendChild(sum);
+    const ul = document.createElement("ul");
+    ul.style.paddingLeft = "20px";
+    ul.style.marginTop = "10px";
+    ul.style.color = "#aaaacc";
+    ul.style.fontSize = "13px";
+    ul.style.lineHeight = "1.6";
+    area.extensions.forEach(e => {
+      const li = document.createElement("li");
+      li.textContent = e;
+      ul.appendChild(li);
+    });
+    ext.appendChild(ul);
+    sec.appendChild(ext);
+  }
+
+  areasEl.appendChild(sec);
+});
+
+// Live filter — match against the JSON-stringified card content (lowercased).
+const search = document.getElementById("search");
+search.addEventListener("input", () => {
+  const q = search.value.trim().toLowerCase();
+  document.querySelectorAll(".area").forEach(area => {
+    let visible = 0;
+    area.querySelectorAll(".card").forEach(card => {
+      const hit = !q || card.dataset.search.includes(q);
+      card.classList.toggle("hidden", !hit);
+      if (hit) visible += 1;
+    });
+    area.style.display = visible === 0 && q ? "none" : "";
+  });
+});
+</script>
+
+</body>
+</html>

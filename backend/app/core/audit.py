@@ -18,9 +18,15 @@ from app.models.audit import AuditLog
 _ACTIONS: list[tuple[str, re.Pattern[str], str, str | None, int | None]] = [
     ("POST", re.compile(r"^/api/vms/?$"), "vm.create", "vm", None),
     ("POST", re.compile(r"^/api/vms/bulk/?$"), "vm.bulk_create", "vm", None),
+    ("DELETE", re.compile(r"^/api/vms/?$"), "vm.bulk_delete", "vm", None),
     ("PATCH", re.compile(r"^/api/vms/(\d+)/?$"), "vm.update", "vm", 1),
     ("DELETE", re.compile(r"^/api/vms/(\d+)/?$"), "vm.delete", "vm", 1),
     ("POST", re.compile(r"^/api/vms/(\d+)/snapshots/?$"), "baseline.create", "baseline", 1),
+    ("POST", re.compile(r"^/api/vms/(\d+)/capture/?$"), "capture.triggered", "vm", 1),
+    ("POST", re.compile(r"^/api/snapshots/capture-all/?$"), "capture.bulk_triggered", "vm", None),
+    # ssh.host_key_* rows are emitted directly by the capture wrapper —
+    # no middleware-side inference needed; they're listed below for the
+    # frontend filter dropdown.
     ("POST", re.compile(r"^/api/plans/?$"), "plan.create", "plan", None),
     ("PUT", re.compile(r"^/api/settings/?$"), "settings.update", "settings", None),
 ]

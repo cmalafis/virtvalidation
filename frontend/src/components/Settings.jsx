@@ -22,6 +22,25 @@ const SCHEDULE_PRESETS = [
   { value: "hourly",      label: "Hourly",       hint: "Every hour at :00 — best for active migration windows." },
 ];
 
+const HOST_KEY_POLICIES = [
+  {
+    value: "auto_accept",
+    label: "Auto-accept new hosts (TOFU)",
+    hint:
+      "Trust on first use — VirtValidate auto-accepts a VM's host key the " +
+      "first time it connects, persists it to /app/keys/known_hosts, and " +
+      "verifies it on every subsequent connection. Recommended for most use cases.",
+  },
+  {
+    value: "strict",
+    label: "Strict — reject unknown hosts",
+    hint:
+      "Federal classified mode. Refuses to connect to any host whose key " +
+      "isn't already in /app/keys/known_hosts. Requires distributing host " +
+      "keys out-of-band (ssh-keyscan) before enrollment.",
+  },
+];
+
 async function fetchJSON(url, { signal, method = "GET", body } = {}) {
   const opts = { signal, method };
   if (body !== undefined) {
@@ -61,6 +80,59 @@ const Shimmer = ({ width = "100%", height = 12 }) => (
     borderRadius: 2,
   }}/>
 );
+
+// Live "Next collection: in 3h 42m (06:00 UTC)" indicator. Pulled from the
+// settings response (which queries the running APScheduler for next_run_at).
+// Re-renders every 30s so the relative time stays accurate without a poll
+// against the backend.
+function NextRunIndicator({ nextRunAt }) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => force((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  if (!nextRunAt) {
+    return (
+      <div style={{
+        padding: "10px 14px", border: "1px solid #1a1a2e", background: "#07070f",
+        fontSize: 13, color: "#aaaacc", fontFamily: "'Barlow', sans-serif",
+      }}>
+        Scheduler is not running yet — next collection time will appear once the appliance backend boots.
+      </div>
+    );
+  }
+
+  const target = new Date(nextRunAt);
+  const now = new Date();
+  let deltaMs = target.getTime() - now.getTime();
+  let prefix = "in";
+  if (deltaMs < 0) { prefix = "due"; deltaMs = -deltaMs; }
+  const totalMinutes = Math.round(deltaMs / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
+  const rel = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+  const utc = target.toLocaleTimeString("en-GB", {
+    hour: "2-digit", minute: "2-digit", timeZone: "UTC",
+  });
+
+  return (
+    <div style={{
+      padding: "12px 16px", border: "1px solid #4488ff66", background: "rgba(68,136,255,0.06)",
+      display: "flex", alignItems: "center", gap: 10,
+    }}>
+      <span style={{ fontSize: 14, color: "#88aaff" }}>⟳</span>
+      <span style={{
+        fontSize: 14, color: "#eeeeff", fontFamily: "'Barlow', sans-serif",
+      }}>
+        Next collection {prefix === "due" ? "is due now" : `in ${rel}`} ·{" "}
+        <span style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>
+          {utc} UTC
+        </span>
+      </span>
+    </div>
+  );
+}
 
 const Section = ({ title, subtitle, children, action }) => (
   <div style={{
@@ -364,7 +436,8 @@ function ConfigurationForm({ onSavedModelChange }) {
   const dirty = useMemo(() => {
     if (!draft || !original) return false;
     return draft.ollama_model !== original.ollama_model
-      || draft.schedule_preset !== original.schedule_preset;
+      || draft.schedule_preset !== original.schedule_preset
+      || draft.ssh_host_key_policy !== original.ssh_host_key_policy;
   }, [draft, original]);
 
   const onSave = async () => {
@@ -375,6 +448,7 @@ function ConfigurationForm({ onSavedModelChange }) {
       body: {
         ollama_model: draft.ollama_model,
         schedule_preset: draft.schedule_preset,
+        ssh_host_key_policy: draft.ssh_host_key_policy,
       },
     });
     try {
@@ -490,11 +564,13 @@ function ConfigurationForm({ onSavedModelChange }) {
             Baseline Collection Schedule
           </div>
           <div style={{
-            fontSize: 14, color: "#aaaacc", marginBottom: 18,
+            fontSize: 14, color: "#aaaacc", marginBottom: 14,
             fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
           }}>
             How often the appliance SSHes into every enrolled VM and stores a fresh baseline snapshot. All times are UTC.
           </div>
+          <NextRunIndicator nextRunAt={original?.next_run_at} />
+          <div style={{ height: 14 }} />
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {SCHEDULE_PRESETS.map((p) => {
               const checked = draft.schedule_preset === p.value;
@@ -526,6 +602,59 @@ function ConfigurationForm({ onSavedModelChange }) {
                 </label>
               );
             })}
+          </div>
+
+          {/* ----- SSH host key verification ----- */}
+          <div style={{ marginTop: 28, paddingTop: 22, borderTop: "1px solid #1a1a2e" }}>
+            <div style={{
+              fontSize: 16, fontFamily: "'Barlow', sans-serif",
+              fontWeight: 700, color: "#eeeeff", letterSpacing: "0.04em", marginBottom: 6,
+            }}>
+              SSH Host Key Verification
+            </div>
+            <div style={{
+              fontSize: 14, color: "#aaaacc", marginBottom: 18,
+              fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
+            }}>
+              Controls how the SSH collector handles unknown host keys when it
+              connects to a VM. Keys are persisted to{" "}
+              <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>
+                /app/keys/known_hosts
+              </code>
+              {" "}so verification works across appliance restarts.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {HOST_KEY_POLICIES.map((p) => {
+                const checked = draft.ssh_host_key_policy === p.value;
+                return (
+                  <label key={p.value} style={{
+                    display: "flex", alignItems: "flex-start", gap: 14,
+                    padding: "16px 18px",
+                    border: `1px solid ${checked ? "#4488ff" : "#1a1a2e"}`,
+                    background: checked ? "rgba(68,136,255,0.08)" : "#07070f",
+                    cursor: "pointer",
+                  }}>
+                    <input
+                      type="radio" name="ssh_host_key_policy"
+                      value={p.value} checked={checked}
+                      onChange={() => setDraft({ ...draft, ssh_host_key_policy: p.value })}
+                      disabled={saving}
+                      style={{ marginTop: 5, accentColor: "#4488ff", width: 16, height: 16 }}
+                    />
+                    <div>
+                      <div style={{
+                        fontSize: 15, fontFamily: "'Barlow', sans-serif",
+                        fontWeight: 600, color: "#eeeeff",
+                      }}>{p.label}</div>
+                      <div style={{
+                        fontSize: 13, color: "#aaaacc", marginTop: 4,
+                        fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
+                      }}>{p.hint}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

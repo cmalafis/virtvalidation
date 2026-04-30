@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint src --max-warnings=0",
-    "audit": "npm audit --audit-level=high"
+    "audit": "npm audit --audit-level=high",
+    "docs:architecture": "cd .. && python3 scripts/generate_architecture_docs.py"
   },
   "dependencies": {
     "react": "^18.3.0",

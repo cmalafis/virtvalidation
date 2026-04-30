@@ -126,6 +126,83 @@ const Metric = ({ label, value }) => (
   </div>
 );
 
+// OS badge for the VM detail panel — pulls from the most recent
+// BaselineSnapshot's `meta.os_profile` block. Confidence color signals
+// whether operators should trust the dispatch decisions made downstream.
+const CONFIDENCE_COLOR = {
+  high:   { color: "#00ff88", label: "HIGH CONFIDENCE" },
+  medium: { color: "#ffaa00", label: "MEDIUM CONFIDENCE" },
+  low:    { color: "#ff5577", label: "LOW CONFIDENCE" },
+};
+
+const DISTRO_LABEL = {
+  rhel: "Red Hat Enterprise Linux",
+  rocky: "Rocky Linux",
+  alma: "AlmaLinux",
+  centos: "CentOS",
+  fedora: "Fedora",
+  ubuntu: "Ubuntu",
+  debian: "Debian",
+  unknown: "Unknown Linux",
+};
+
+function OSBadge({ profile }) {
+  if (!profile) return null;
+  const conf = CONFIDENCE_COLOR[profile.detection_confidence] || CONFIDENCE_COLOR.low;
+  const label = DISTRO_LABEL[profile.distro] || profile.distro || "Unknown Linux";
+  const versionLabel = profile.major_version
+    ? (profile.minor_version
+        ? `${profile.major_version}.${profile.minor_version}`
+        : String(profile.major_version))
+    : "?";
+  return (
+    <div style={{
+      display: "inline-flex", alignItems: "center", gap: 14,
+      padding: "10px 14px", border: `1px solid ${conf.color}55`,
+      background: `${conf.color}0d`,
+    }}>
+      <div>
+        <div style={{
+          fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
+          fontFamily: "'Barlow', sans-serif", fontWeight: 700,
+          textTransform: "uppercase", marginBottom: 2,
+        }}>
+          Detected OS
+        </div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={{
+            fontSize: 14, color: "#eeeeff", fontFamily: "'Barlow', sans-serif", fontWeight: 600,
+          }}>
+            {label}
+          </span>
+          <span style={{
+            fontSize: 14, color: "#ccccee", fontFamily: "'Share Tech Mono', monospace",
+          }}>
+            {versionLabel}
+          </span>
+        </div>
+        {profile.kernel_version && (
+          <div style={{
+            fontSize: 12, color: "#aaaacc", marginTop: 3,
+            fontFamily: "'Share Tech Mono', monospace",
+          }} title={`Architecture: ${profile.architecture || "?"}`}>
+            kernel {profile.kernel_version}
+            {profile.architecture ? ` · ${profile.architecture}` : ""}
+          </div>
+        )}
+      </div>
+      <div style={{
+        fontSize: 10, letterSpacing: "0.08em", color: conf.color,
+        fontFamily: "'Barlow', sans-serif", fontWeight: 700,
+        padding: "4px 10px", border: `1px solid ${conf.color}66`, borderRadius: 2,
+        textTransform: "uppercase",
+      }}>
+        {conf.label}
+      </div>
+    </div>
+  );
+}
+
 // Per-wave Download MTV YAML button + applied-with popover. The download is
 // streamed straight from the API endpoint (which sets Content-Disposition),
 // and the popover surfaces the kubectl/oc one-liner so operators don't have
@@ -863,47 +940,205 @@ const TabButton = ({ active, onClick, children }) => (
   </button>
 );
 
-// --- Manual single-VM tab ---
+// --- Manual single-VM tab — also reused for Edit ---
 
-function ManualTab({ onSubmit, submitting }) {
-  const [hostname, setHostname] = useState("");
-  const [ip, setIp] = useState("");
-  const [user, setUser] = useState("");
-  const [role, setRole] = useState("");
+const PLATFORM_OPTIONS = [
+  { value: "vmware", label: "VMware vSphere" },
+  { value: "ocp-virt", label: "OpenShift Virtualization" },
+  { value: "other", label: "Other" },
+];
 
-  const canSubmit = hostname.trim().length > 0;
+function AccordionSection({ title, subtitle, defaultOpen = false, locked = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const expanded = locked || open;
+  return (
+    <div style={{ border: "1px solid #1a1a2e", marginBottom: 12, background: "#07070f" }}>
+      <button
+        type="button"
+        onClick={() => !locked && setOpen((v) => !v)}
+        disabled={locked}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          width: "100%", padding: "12px 16px", background: "transparent",
+          border: "none", color: "#eeeeff",
+          cursor: locked ? "default" : "pointer", textAlign: "left",
+        }}>
+        <div>
+          <div style={{ fontSize: 14, fontFamily: "'Barlow', sans-serif", fontWeight: 700 }}>
+            {title}
+          </div>
+          {subtitle && (
+            <div style={{
+              fontSize: 12, color: "#aaaacc", fontFamily: "'Barlow', sans-serif",
+              marginTop: 3, lineHeight: 1.5,
+            }}>
+              {subtitle}
+            </div>
+          )}
+        </div>
+        <span style={{
+          fontSize: 14, color: locked ? "#888899" : "#aaaacc",
+          fontFamily: "'Share Tech Mono', monospace",
+          transition: "transform 0.15s",
+          transform: expanded ? "rotate(90deg)" : "none",
+        }}>
+          ▶
+        </span>
+      </button>
+      {expanded && (
+        <div style={{ padding: "4px 16px 16px", borderTop: "1px solid #1a1a2e" }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const _splitListToString = (arr) => (Array.isArray(arr) ? arr.join("; ") : "");
+const _stringToList = (s) =>
+  String(s || "").split(/[;,]/).map((x) => x.trim()).filter((x) => x.length > 0);
+
+function ManualTab({ onSubmit, submitting, initial }) {
+  const editing = Boolean(initial);
+  const [hostname, setHostname] = useState(initial?.source_hostname ?? "");
+  const [ip, setIp] = useState(initial?.ip_address ?? "");
+  const [sshUser, setSshUser] = useState(initial?.ssh_user ?? "");
+  const [sshPort, setSshPort] = useState(String(initial?.ssh_port ?? "22"));
+  const [platform, setPlatform] = useState(initial?.current_platform ?? "vmware");
+  const [role, setRole] = useState(initial?.role ?? "");
+  const [environment, setEnvironment] = useState(initial?.environment ?? "");
+  const [owner, setOwner] = useState(initial?.owner ?? "");
+  const [networks, setNetworks] = useState(_splitListToString(initial?.vsphere_networks));
+  const [datastores, setDatastores] = useState(_splitListToString(initial?.vsphere_datastores));
+  const [targetNs, setTargetNs] = useState(initial?.target_namespace ?? "");
+  const [targetSC, setTargetSC] = useState(initial?.target_storage_class ?? "");
+  const [targetNAD, setTargetNAD] = useState(initial?.target_network_attachment ?? "");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
+
+  const portInt = parseInt(sshPort, 10);
+  const portValid = Number.isFinite(portInt) && portInt >= 1 && portInt <= 65535;
+  const canSubmit = hostname.trim().length > 0 && portValid;
 
   const submit = (e) => {
     e?.preventDefault();
     if (!canSubmit) return;
     const host = hostname.trim();
-    onSubmit({
-      name: host.split(".")[0] || host,
+    const payload = {
       source_hostname: host,
       ip_address: ip.trim() || null,
-      ssh_user: user.trim() || null,
+      ssh_user: sshUser.trim() || null,
+      ssh_port: portInt,
+      current_platform: platform || null,
       role: role.trim() || null,
-    });
+      environment: environment.trim() || null,
+      owner: owner.trim() || null,
+      vsphere_networks: _stringToList(networks),
+      vsphere_datastores: _stringToList(datastores),
+      target_namespace: targetNs.trim() || null,
+      target_storage_class: targetSC.trim() || null,
+      target_network_attachment: targetNAD.trim() || null,
+      notes: notes.trim() || null,
+    };
+    if (!editing) {
+      payload.name = host.split(".")[0] || host;
+    }
+    onSubmit(payload);
   };
 
   return (
     <form id="enroll-manual-form" onSubmit={submit}>
-      <FormField label="Hostname" required hint="Used as both the VM name and the SSH target. e.g. db-01.vmware.local">
-        <input style={inputStyle} value={hostname} onChange={(e) => setHostname(e.target.value)} autoFocus required maxLength={255}/>
-      </FormField>
-      <FormField label="IP Address" hint="Optional — IPv4 or IPv6">
-        <input style={inputStyle} value={ip} onChange={(e) => setIp(e.target.value)} maxLength={45}/>
-      </FormField>
-      <FormField label="SSH Username" hint="Defaults to virtvalidate when blank">
-        <input style={inputStyle} value={user} onChange={(e) => setUser(e.target.value)} maxLength={64}/>
-      </FormField>
-      <FormField label="Role" hint="database, app, lb, cache, …">
-        <input style={inputStyle} value={role} onChange={(e) => setRole(e.target.value)} maxLength={64}/>
-      </FormField>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+      <AccordionSection
+        title="Connection"
+        subtitle="Required — how VirtValidate reaches the VM over SSH"
+        locked
+        defaultOpen
+      >
+        <FormField label="Hostname" required hint="Used as both the VM name and the SSH target. e.g. db-01.vmware.local">
+          <input style={inputStyle} value={hostname} onChange={(e) => setHostname(e.target.value)} autoFocus required maxLength={255}/>
+        </FormField>
+        <FormField label="IP Address" hint="IPv4 or IPv6 — optional but speeds up first connection">
+          <input style={inputStyle} value={ip} onChange={(e) => setIp(e.target.value)} maxLength={45}/>
+        </FormField>
+        <FormField label="SSH Username" hint="Defaults to virtvalidate when blank">
+          <input style={inputStyle} value={sshUser} onChange={(e) => setSshUser(e.target.value)} maxLength={64}/>
+        </FormField>
+        <FormField label="SSH Port" hint="Defaults to 22">
+          <input
+            style={{ ...inputStyle, borderColor: portValid ? inputStyle.border : "#ff5577" }}
+            value={sshPort}
+            onChange={(e) => setSshPort(e.target.value.replace(/[^0-9]/g, ""))}
+            inputMode="numeric"
+            maxLength={5}
+          />
+        </FormField>
+      </AccordionSection>
+
+      <AccordionSection
+        title="Identity"
+        subtitle="Inventory metadata for CMDB reconciliation"
+        defaultOpen={editing}
+      >
+        <FormField label="Current Platform" hint="Where this VM lives today">
+          <select
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value)}
+            style={inputStyle}
+          >
+            {PLATFORM_OPTIONS.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Role" hint="database, app, lb, cache, …">
+          <input style={inputStyle} value={role} onChange={(e) => setRole(e.target.value)} maxLength={64}/>
+        </FormField>
+        <FormField label="Environment" hint="prod / staging / dev / sandbox …">
+          <input style={inputStyle} value={environment} onChange={(e) => setEnvironment(e.target.value)} maxLength={64}/>
+        </FormField>
+        <FormField label="Owner" hint="Team or contact responsible for this VM">
+          <input style={inputStyle} value={owner} onChange={(e) => setOwner(e.target.value)} maxLength={128}/>
+        </FormField>
+      </AccordionSection>
+
+      <AccordionSection
+        title="Migration Mapping"
+        subtitle="Source vSphere context + destination OCP-Virt targets — required for MTV plan generation"
+        defaultOpen={editing}
+      >
+        <FormField label="vSphere Networks" hint="Source portgroups, semicolon-separated. e.g. VM Network; DB Backend">
+          <input style={inputStyle} value={networks} onChange={(e) => setNetworks(e.target.value)} maxLength={1024}/>
+        </FormField>
+        <FormField label="vSphere Datastores" hint="Source datastores, semicolon-separated">
+          <input style={inputStyle} value={datastores} onChange={(e) => setDatastores(e.target.value)} maxLength={1024}/>
+        </FormField>
+        <FormField label="Target Namespace" hint="Destination OCP namespace">
+          <input style={inputStyle} value={targetNs} onChange={(e) => setTargetNs(e.target.value)} maxLength={253}/>
+        </FormField>
+        <FormField label="Target Storage Class" hint="Destination StorageClass">
+          <input style={inputStyle} value={targetSC} onChange={(e) => setTargetSC(e.target.value)} maxLength={253}/>
+        </FormField>
+        <FormField label="Target Network Attachment" hint="Destination NetworkAttachmentDefinition (NAD)">
+          <input style={inputStyle} value={targetNAD} onChange={(e) => setTargetNAD(e.target.value)} maxLength={253}/>
+        </FormField>
+      </AccordionSection>
+
+      <AccordionSection title="Notes" subtitle="Free-form, surfaced in the inventory UI">
+        <FormField label="Notes">
+          <textarea
+            style={{ ...inputStyle, minHeight: 84, resize: "vertical" }}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            maxLength={1024}
+          />
+        </FormField>
+      </AccordionSection>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
         <PrimaryButton type="submit" disabled={submitting || !canSubmit}>
-          {submitting && <Spinner size={11}/>}
-          {submitting ? "Enrolling…" : "Enroll VM"}
+          {submitting && <Spinner size={12}/>}
+          {submitting
+            ? (editing ? "Saving…" : "Enrolling…")
+            : (editing ? "Save changes" : "Enroll VM")}
         </PrimaryButton>
       </div>
     </form>
@@ -1057,7 +1292,8 @@ function BulkTab({
   );
 }
 
-function EnrollVMsModal({ open, onClose, onCreated }) {
+function EnrollVMsModal({ open, onClose, onCreated, editingVM = null }) {
+  const isEditing = Boolean(editingVM);
   const [tab, setTab] = useState("manual");
   const [submitting, setSubmitting] = useState(false);
 
@@ -1073,6 +1309,21 @@ function EnrollVMsModal({ open, onClose, onCreated }) {
         loading: "Enrolling VM…",
         success: (r) => `VM "${r.data.name}" enrolled`,
         error: (e) => e.message || "Failed to enroll VM",
+      }, TOAST_OPTS);
+      onCreated();
+      onClose();
+    } catch { /* toast surfaced */ }
+    finally { setSubmitting(false); }
+  };
+
+  const submitEdit = async (payload) => {
+    setSubmitting(true);
+    const promise = fetchJSON(`/api/vms/${editingVM.id}`, { method: "PATCH", body: payload });
+    try {
+      await toast.promise(promise, {
+        loading: "Saving changes…",
+        success: (r) => `Updated "${r.data.name}"`,
+        error: (e) => e.message || "Failed to save VM",
       }, TOAST_OPTS);
       onCreated();
       onClose();
@@ -1103,21 +1354,177 @@ function EnrollVMsModal({ open, onClose, onCreated }) {
     <Modal
       open={open}
       onClose={submitting ? () => {} : onClose}
-      title="Add VMs"
+      title={isEditing ? `Edit ${editingVM.name}` : "Add VMs"}
       width={760}
       footer={
-        <SecondaryButton onClick={onClose} disabled={submitting}>Close</SecondaryButton>
+        <SecondaryButton onClick={onClose} disabled={submitting}>
+          {isEditing ? "Cancel" : "Close"}
+        </SecondaryButton>
       }
     >
-      <div style={{ display: "flex", borderBottom: "1px solid #1a1a2e", marginBottom: 20 }}>
-        <TabButton active={tab === "manual"} onClick={() => setTab("manual")}>Manual</TabButton>
-        <TabButton active={tab === "csv"}    onClick={() => setTab("csv")}>CSV upload</TabButton>
-        <TabButton active={tab === "xlsx"}   onClick={() => setTab("xlsx")}>RVTools XLSX</TabButton>
-      </div>
+      {!isEditing && (
+        <div style={{ display: "flex", borderBottom: "1px solid #1a1a2e", marginBottom: 20 }}>
+          <TabButton active={tab === "manual"} onClick={() => setTab("manual")}>Manual</TabButton>
+          <TabButton active={tab === "csv"}    onClick={() => setTab("csv")}>CSV upload</TabButton>
+          <TabButton active={tab === "xlsx"}   onClick={() => setTab("xlsx")}>RVTools XLSX</TabButton>
+        </div>
+      )}
 
-      {tab === "manual" && <ManualTab onSubmit={submitSingle} submitting={submitting}/>}
-      {tab === "csv"    && <BulkTab kind="csv"  onSubmit={submitBulk} submitting={submitting}/>}
-      {tab === "xlsx"   && <BulkTab kind="xlsx" onSubmit={submitBulk} submitting={submitting}/>}
+      {isEditing ? (
+        <ManualTab onSubmit={submitEdit} submitting={submitting} initial={editingVM} />
+      ) : (
+        <>
+          {tab === "manual" && <ManualTab onSubmit={submitSingle} submitting={submitting}/>}
+          {tab === "csv"    && <BulkTab kind="csv"  onSubmit={submitBulk} submitting={submitting}/>}
+          {tab === "xlsx"   && <BulkTab kind="xlsx" onSubmit={submitBulk} submitting={submitting}/>}
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// ---------- Delete confirmation modal ----------
+//
+// Single-VM deletion requires the operator to type the hostname back as
+// a guard against accidental clicks. Bulk deletion uses a count-based
+// confirmation since typing N hostnames doesn't scale.
+
+function DeleteVMModal({ open, vm, onClose, onConfirmed }) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) { setTyped(""); setBusy(false); }
+  }, [open, vm?.id]);
+
+  if (!vm) return null;
+  const hostname = vm.source_hostname || vm.name;
+  const confirmed = typed.trim() === hostname;
+
+  const onConfirm = async () => {
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      await onConfirmed(vm);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={busy ? () => {} : onClose}
+      title="Delete VM"
+      width={520}
+      footer={
+        <>
+          <SecondaryButton onClick={onClose} disabled={busy}>Cancel</SecondaryButton>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!confirmed || busy}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              background: confirmed ? "#5a1d1d" : "#14142a",
+              border: `1px solid ${confirmed ? "#ff5577" : "#2a2a44"}`,
+              color: confirmed ? "#ffeef2" : "#888899",
+              padding: "10px 20px", fontSize: 12,
+              fontFamily: "'Barlow', sans-serif",
+              letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+              cursor: confirmed && !busy ? "pointer" : "not-allowed",
+            }}>
+            {busy && <Spinner size={12} color="#ff5577"/>}
+            {busy ? "Deleting…" : "Delete VM"}
+          </button>
+        </>
+      }
+    >
+      <Notice tone="warn">
+        Delete <strong style={{ fontFamily: "'Share Tech Mono', monospace", color: "#eeeeff" }}>{hostname}</strong>?
+        This permanently removes all baselines, validation history, and migration plan associations
+        for this VM. This action cannot be undone.
+      </Notice>
+      <FormField
+        label={`Type the hostname to confirm`}
+        hint={`Expected: ${hostname}`}
+      >
+        <input
+          style={inputStyle}
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          autoFocus
+          autoComplete="off"
+        />
+      </FormField>
+    </Modal>
+  );
+}
+
+function BulkDeleteVMsModal({ open, vms, onClose, onConfirmed }) {
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) setBusy(false); }, [open]);
+  if (!vms || vms.length === 0) return null;
+
+  const onConfirm = async () => {
+    setBusy(true);
+    try {
+      await onConfirmed(vms);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={busy ? () => {} : onClose}
+      title={`Delete ${vms.length} VM${vms.length === 1 ? "" : "s"}`}
+      width={560}
+      footer={
+        <>
+          <SecondaryButton onClick={onClose} disabled={busy}>Cancel</SecondaryButton>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              background: "#5a1d1d", border: "1px solid #ff5577",
+              color: "#ffeef2",
+              padding: "10px 20px", fontSize: 12,
+              fontFamily: "'Barlow', sans-serif",
+              letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+              cursor: busy ? "not-allowed" : "pointer",
+            }}>
+            {busy && <Spinner size={12} color="#ff5577"/>}
+            {busy ? "Deleting…" : `Delete ${vms.length} VM${vms.length === 1 ? "" : "s"}`}
+          </button>
+        </>
+      }
+    >
+      <Notice tone="warn">
+        Delete {vms.length} VMs? This permanently removes all baselines, validation history,
+        and migration plan associations for each. This action cannot be undone.
+      </Notice>
+      <div style={{
+        marginTop: 14, maxHeight: 220, overflowY: "auto",
+        border: "1px solid #1a1a2e", background: "#07070f",
+      }}>
+        {vms.map((vm) => (
+          <div key={vm.id} style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            padding: "10px 14px", borderBottom: "1px solid #0f0f1e",
+          }}>
+            <span style={{
+              fontSize: 14, color: "#eeeeff", fontFamily: "'Barlow', sans-serif", fontWeight: 600,
+            }}>{vm.name}</span>
+            <span style={{
+              fontSize: 12, color: "#aaaacc", fontFamily: "'Share Tech Mono', monospace",
+            }}>id {vm.id}</span>
+          </div>
+        ))}
+      </div>
     </Modal>
   );
 }
@@ -1233,9 +1640,23 @@ export default function VirtValidate() {
   const [selectedVMId, setSelectedVMId] = useState(null);
   const [addVMOpen, setAddVMOpen] = useState(false);
   const [planModalOpen, setPlanModalOpen] = useState(false);
+  const [editingVM, setEditingVM] = useState(null);
+  const [vmToDelete, setVMToDelete] = useState(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  // Inventory multi-select. The Set is keyed by VM id.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+
+  // Active capture tasks keyed by vm_id → { task_id, status }. Used to
+  // render per-row spinners and drive the polling loop. Tasks evaporate
+  // from this map once they complete or fail (after the toast fires).
+  const [activeCaptures, setActiveCaptures] = useState(() => new Map());
 
   // Inventory
   const [vms, setVms] = useState([]);
+  // Unmapped VM payloads keyed by id — needed when launching the edit
+  // modal so it gets the full backend record, not the dashboard-mapped view.
+  const [vmsRaw, setVmsRaw] = useState(() => new Map());
   const [vmsLoading, setVmsLoading] = useState(true);
   const [vmsError, setVmsError] = useState(null);
   const [vmsRetrying, setVmsRetrying] = useState(false);
@@ -1244,6 +1665,10 @@ export default function VirtValidate() {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(null);
+  // os_profile from the most recent BaselineSnapshot, surfaced as the
+  // "Detected OS" badge so operators can verify the collector classified
+  // the VM correctly.
+  const [osProfile, setOsProfile] = useState(null);
 
   // Validation
   const [validation, setValidation] = useState(null);
@@ -1270,7 +1695,9 @@ export default function VirtValidate() {
     if (retry) setVmsRetrying(true); else setVmsLoading(true);
     try {
       const { data } = await fetchJSON("/api/vms");
-      setVms((data || []).map(mapVM));
+      const list = data || [];
+      setVms(list.map(mapVM));
+      setVmsRaw(new Map(list.map((vm) => [vm.id, vm])));
       setVmsError(null);
     } catch (e) {
       setVmsError(e.message || "Failed to load VMs");
@@ -1321,9 +1748,13 @@ export default function VirtValidate() {
     setValidationError(null);
     setValidationMissing(false);
     try {
-      const [detailRes, valRes] = await Promise.all([
+      const [detailRes, valRes, profileRes] = await Promise.all([
         fetchJSON(`/api/vms/${id}`, { signal: ctrl?.signal }).catch((e) => ({ error: e })),
         fetchJSON(`/api/vms/${id}/validation/latest`, { signal: ctrl?.signal }).catch((e) => ({ error: e })),
+        // Baseline profile gives us the latest snapshot's meta block,
+        // including the OS profile the SSH collector recorded. 404 is
+        // fine (no baseline yet) — surface as null.
+        fetchJSON(`/api/vms/${id}/baseline/profile`, { signal: ctrl?.signal }).catch((e) => ({ error: e })),
       ]);
 
       if (detailRes.error) {
@@ -1344,6 +1775,15 @@ export default function VirtValidate() {
       } else {
         setValidation(valRes.data);
         setValidationMissing(false);
+      }
+
+      // os_profile is only useful once a baseline exists — silently fall
+      // through on 404 so the detail panel just hides the badge.
+      if (profileRes && !profileRes.error && profileRes.status !== 404) {
+        const meta = profileRes.data?.latest_meta || {};
+        setOsProfile(meta.os_profile || null);
+      } else {
+        setOsProfile(null);
       }
     } finally {
       setDetailLoading(false);
@@ -1402,9 +1842,165 @@ export default function VirtValidate() {
     }
   };
 
-  const onCaptureBaseline = () => {
-    toast("Baselines are captured by the scheduler at 06:00 / 18:00 UTC", { ...TOAST_OPTS, icon: "ℹ️", duration: 5000 });
-  };
+  // Poll a list of (vm_id, task_id) handles every 2s, updating
+  // activeCaptures + the inventory list as each task resolves. Returns
+  // a tally of {ok, failed} once the last task has reached a terminal
+  // state. Caller is responsible for the bookend toasts.
+  const pollCaptureTasks = useCallback(async (handles) => {
+    const pending = new Map(handles.map((h) => [h.vm_id, h.task_id]));
+    let ok = 0;
+    let failed = 0;
+
+    setActiveCaptures((prev) => {
+      const next = new Map(prev);
+      for (const [vmId, taskId] of pending) next.set(vmId, { task_id: taskId, status: "running" });
+      return next;
+    });
+
+    while (pending.size > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      const checks = await Promise.all(
+        Array.from(pending.entries()).map(async ([vmId, taskId]) => {
+          try {
+            const { data } = await fetchJSON(`/api/vms/${vmId}/capture/${taskId}`);
+            return { vmId, data };
+          } catch (e) {
+            // Task evaporated (process restart) — treat as completed-unknown
+            // to avoid infinite polling, but record it as failed.
+            return { vmId, data: null, error: e.message };
+          }
+        })
+      );
+
+      let anyResolved = false;
+      for (const { vmId, data, error } of checks) {
+        const status = data?.status ?? "failed";
+        if (status === "running") continue;
+        anyResolved = true;
+        pending.delete(vmId);
+        if (status === "completed") ok += 1;
+        else failed += 1;
+        setActiveCaptures((prev) => {
+          const next = new Map(prev);
+          next.delete(vmId);
+          return next;
+        });
+        if (status === "failed" && (data?.error || error)) {
+          // Capture failure surfaces in the bookend toast; keep silent here.
+        }
+      }
+
+      if (anyResolved) {
+        // Refresh the inventory so the row's status badge picks up the
+        // new baseline_captured state without waiting for full reload.
+        loadVMs();
+      }
+    }
+
+    return { ok, failed };
+  }, [loadVMs]);
+
+  const onCaptureSingle = useCallback(async (vm) => {
+    if (activeCaptures.has(vm.id)) return;
+    let spawn;
+    try {
+      const res = await fetchJSON(`/api/vms/${vm.id}/capture`, { method: "POST" });
+      spawn = res.data;
+    } catch (e) {
+      toast.error(e.message || `Failed to start capture for ${vm.name}`, TOAST_OPTS);
+      return;
+    }
+    toast(`Capturing baseline for ${vm.name}…`, { ...TOAST_OPTS, icon: "📡" });
+    const { ok, failed } = await pollCaptureTasks([{ vm_id: vm.id, task_id: spawn.task_id }]);
+    if (ok > 0) {
+      toast.success(`Captured baseline for ${vm.name}`, TOAST_OPTS);
+    } else if (failed > 0) {
+      toast.error(`Capture failed for ${vm.name} — check audit log`, TOAST_OPTS);
+    }
+  }, [activeCaptures, pollCaptureTasks]);
+
+  const onCaptureBaseline = useCallback(async () => {
+    if (vms.length === 0) {
+      toast("Enroll at least one VM before capturing baselines", { ...TOAST_OPTS, icon: "ℹ️" });
+      return;
+    }
+    let result;
+    try {
+      const { data } = await fetchJSON("/api/snapshots/capture-all", { method: "POST" });
+      result = data;
+    } catch (e) {
+      toast.error(e.message || "Failed to start bulk capture", TOAST_OPTS);
+      return;
+    }
+    const spawnCount = result.spawned.length;
+    const skipCount = result.skipped.length;
+    if (spawnCount === 0) {
+      toast.error(
+        skipCount > 0
+          ? `Skipped all ${skipCount} VMs (missing host/IP) — fix inventory first`
+          : "No VMs to capture",
+        TOAST_OPTS,
+      );
+      return;
+    }
+    toast(`Capturing baselines for ${spawnCount} VM${spawnCount === 1 ? "" : "s"}…`, {
+      ...TOAST_OPTS, icon: "📡",
+    });
+    const { ok, failed } = await pollCaptureTasks(result.spawned);
+    const parts = [`Captured ${ok} of ${spawnCount}`];
+    if (failed > 0) parts.push(`${failed} failed`);
+    if (skipCount > 0) parts.push(`${skipCount} skipped`);
+    if (failed === 0 && skipCount === 0) toast.success(parts.join(" · "), TOAST_OPTS);
+    else toast(parts.join(" · "), { ...TOAST_OPTS, icon: failed > 0 ? "⚠️" : "ℹ️" });
+  }, [vms.length, pollCaptureTasks]);
+
+  const onDeleteVMConfirmed = useCallback(async (vm) => {
+    try {
+      await fetchJSON(`/api/vms/${vm.id}`, { method: "DELETE" });
+      toast.success(`Deleted ${vm.name}`, TOAST_OPTS);
+      setSelectedIds((prev) => {
+        if (!prev.has(vm.id)) return prev;
+        const next = new Set(prev);
+        next.delete(vm.id);
+        return next;
+      });
+      setVMToDelete(null);
+      if (selectedVMId === vm.id) setSelectedVMId(null);
+      loadVMs();
+    } catch (e) {
+      toast.error(e.message || `Failed to delete ${vm.name}`, TOAST_OPTS);
+    }
+  }, [loadVMs, selectedVMId]);
+
+  const onBulkDeleteConfirmed = useCallback(async (targets) => {
+    const ids = targets.map((t) => t.id);
+    try {
+      const { data } = await fetchJSON("/api/vms", {
+        method: "DELETE",
+        body: { vm_ids: ids },
+      });
+      const deleted = data?.deleted?.length ?? 0;
+      const notFound = data?.not_found?.length ?? 0;
+      const msg = notFound > 0
+        ? `Deleted ${deleted} VMs (${notFound} not found)`
+        : `Deleted ${deleted} VMs`;
+      toast.success(msg, TOAST_OPTS);
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+      loadVMs();
+    } catch (e) {
+      toast.error(e.message || "Bulk delete failed", TOAST_OPTS);
+    }
+  }, [loadVMs]);
+
+  const toggleSelected = useCallback((id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
 
   const selectedVM = useMemo(() => vms.find((v) => v.id === selectedVMId) || null, [vms, selectedVMId]);
   const vmNameById = useMemo(() => {
@@ -1714,6 +2310,12 @@ export default function VirtValidate() {
                       <Shimmer width="50%" height={11}/>
                     </div>
                   ) : (
+                    <>
+                    {osProfile && (
+                      <div style={{ marginBottom: 20 }}>
+                        <OSBadge profile={osProfile} />
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 36, marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #111122", flexWrap: "wrap" }}>
                       <Metric label="Pre-Migration" value={<StatusBadge status={selectedVM.preStatus} />} />
                       <Metric label="Post-Migration" value={<StatusBadge status={detailPostStatus} />} />
@@ -1724,6 +2326,7 @@ export default function VirtValidate() {
                         value={validation?.validated_at ? new Date(validation.validated_at).toLocaleString() : "—"}
                       />
                     </div>
+                    </>
                   )}
 
                   {validationLoading || validationRunning ? (
@@ -1998,34 +2601,135 @@ export default function VirtValidate() {
                   onCta={() => setAddVMOpen(true)}
                 />
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-                  {vms.map(vm => (
-                    <div key={vm.id} style={{ border: "1px solid #1a1a2e", background: "#0a0a18", padding: 24 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
-                        <div>
-                          <div style={{
-                            fontSize: 16, fontFamily: "'Barlow', sans-serif",
-                            fontWeight: 700, color: "#eeeeff",
-                          }}>{vm.name}</div>
-                          <div style={{
-                            fontSize: 13, color: "#aaaacc", marginTop: 4,
-                            fontFamily: "'Barlow', sans-serif",
-                          }}>{vm.role}</div>
-                        </div>
-                        <StatusBadge status={vm.postStatus} />
+                <>
+                  {/* Bulk-action bar appears once any VM is selected. */}
+                  {selectedIds.size > 0 && (
+                    <div style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      marginBottom: 14, padding: "12px 18px",
+                      border: "1px solid #4488ff66", background: "rgba(68,136,255,0.06)",
+                    }}>
+                      <span style={{
+                        fontSize: 13, color: "#eeeeff", fontFamily: "'Barlow', sans-serif", fontWeight: 600,
+                      }}>
+                        {selectedIds.size} selected
+                      </span>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <SecondaryButton onClick={() => setSelectedIds(new Set())}>
+                          Clear
+                        </SecondaryButton>
+                        <button
+                          type="button"
+                          onClick={() => setBulkDeleteOpen(true)}
+                          style={{
+                            background: "transparent", border: "1px solid #ff5577",
+                            color: "#ff99aa", padding: "10px 16px", fontSize: 12,
+                            fontFamily: "'Barlow', sans-serif", letterSpacing: "0.06em",
+                            textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
+                          }}>
+                          Delete Selected
+                        </button>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                        <Metric label="OS" value={vm.os} />
-                        <Metric label="IP" value={vm.ip} />
-                        <Metric label="vCPU" value={fmt(vm.cpu)} />
-                        <Metric label="Memory" value={vm.mem == null ? "—" : `${vm.mem}GB`} />
-                        <Metric label="Disk" value={fmt(vm.disk)} />
-                        <Metric label="Status" value={vm.rawStatus} />
-                      </div>
-                      <VMMTVMapping vm={vm} />
                     </div>
-                  ))}
-                </div>
+                  )}
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+                    {vms.map(vm => {
+                      const checked = selectedIds.has(vm.id);
+                      const capturing = activeCaptures.has(vm.id);
+                      const original = vmsRaw.get(vm.id);
+                      return (
+                        <div key={vm.id} style={{
+                          border: `1px solid ${checked ? "#4488ff" : "#1a1a2e"}`,
+                          background: checked ? "rgba(68,136,255,0.04)" : "#0a0a18",
+                          padding: 24,
+                          transition: "all 0.15s",
+                        }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, gap: 12 }}>
+                            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleSelected(vm.id)}
+                                aria-label={`Select ${vm.name}`}
+                                style={{ accentColor: "#4488ff", width: 16, height: 16, marginTop: 4 }}
+                              />
+                              <div>
+                                <div style={{
+                                  fontSize: 16, fontFamily: "'Barlow', sans-serif",
+                                  fontWeight: 700, color: "#eeeeff",
+                                }}>{vm.name}</div>
+                                <div style={{
+                                  fontSize: 13, color: "#aaaacc", marginTop: 4,
+                                  fontFamily: "'Barlow', sans-serif",
+                                }}>{vm.role}</div>
+                              </div>
+                            </div>
+                            <StatusBadge status={vm.postStatus} />
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                            <Metric label="OS" value={vm.os} />
+                            <Metric label="IP" value={vm.ip} />
+                            <Metric label="vCPU" value={fmt(vm.cpu)} />
+                            <Metric label="Memory" value={vm.mem == null ? "—" : `${vm.mem}GB`} />
+                            <Metric label="Disk" value={fmt(vm.disk)} />
+                            <Metric label="Status" value={vm.rawStatus} />
+                          </div>
+                          <VMMTVMapping vm={vm} />
+
+                          {/* Per-VM action footer */}
+                          <div style={{
+                            display: "flex", gap: 8, marginTop: 18, paddingTop: 14,
+                            borderTop: "1px solid #14142a",
+                          }}>
+                            <button
+                              type="button"
+                              onClick={() => onCaptureSingle(vm)}
+                              disabled={capturing}
+                              style={{
+                                flex: 1, display: "inline-flex", alignItems: "center",
+                                justifyContent: "center", gap: 6,
+                                background: "transparent", border: "1px solid #4488ff",
+                                color: capturing ? "#7788aa" : "#aaccff",
+                                padding: "8px 12px", fontSize: 11,
+                                fontFamily: "'Barlow', sans-serif",
+                                letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+                                cursor: capturing ? "wait" : "pointer",
+                              }}>
+                              {capturing ? <Spinner size={11}/> : "📡"} {capturing ? "Capturing…" : "Capture Now"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingVM(original ?? vm)}
+                              title="Edit VM details"
+                              aria-label={`Edit ${vm.name}`}
+                              style={{
+                                background: "transparent", border: "1px solid #3a3a55",
+                                color: "#aaaacc",
+                                padding: "8px 12px", fontSize: 13,
+                                fontFamily: "'Barlow', sans-serif", cursor: "pointer",
+                              }}>
+                              ✎
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setVMToDelete(original ?? vm)}
+                              title="Delete VM"
+                              aria-label={`Delete ${vm.name}`}
+                              style={{
+                                background: "transparent", border: "1px solid #ff557755",
+                                color: "#ff99aa",
+                                padding: "8px 12px", fontSize: 13,
+                                fontFamily: "'Barlow', sans-serif", cursor: "pointer",
+                              }}>
+                              🗑
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -2267,14 +2971,21 @@ export default function VirtValidate() {
 
             <button className="quick-action"
               onClick={onCaptureBaseline}
+              disabled={activeCaptures.size > 0 || vmsLoading}
+              title="Trigger immediate baseline collection. Scheduled collections also run at configured intervals."
               style={{
-                display: "block", width: "100%", marginBottom: 10,
-                background: "none", border: "1px solid #2a2a44", color: "#ccccee",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                width: "100%", marginBottom: 10,
+                background: "none", border: "1px solid #2a2a44",
+                color: (activeCaptures.size > 0 || vmsLoading) ? "#888899" : "#ccccee",
                 padding: "11px 14px", fontSize: 12, fontFamily: "'Barlow', sans-serif",
                 letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
-                cursor: "pointer", textAlign: "left",
+                cursor: (activeCaptures.size > 0 || vmsLoading) ? "wait" : "pointer", textAlign: "left",
                 transition: "all 0.15s",
-              }}>Capture Baseline</button>
+              }}>
+              <span>Capture Baseline</span>
+              {activeCaptures.size > 0 && <Spinner size={12}/>}
+            </button>
 
             <button className="quick-action"
               onClick={() => setPlanModalOpen(true)}
@@ -2323,11 +3034,29 @@ export default function VirtValidate() {
         onClose={() => setAddVMOpen(false)}
         onCreated={() => loadVMs()}
       />
+      <EnrollVMsModal
+        open={Boolean(editingVM)}
+        editingVM={editingVM}
+        onClose={() => setEditingVM(null)}
+        onCreated={() => loadVMs()}
+      />
       <GeneratePlanModal
         open={planModalOpen}
         onClose={() => setPlanModalOpen(false)}
         vms={vms}
         onCreated={() => loadPlan()}
+      />
+      <DeleteVMModal
+        open={Boolean(vmToDelete)}
+        vm={vmToDelete}
+        onClose={() => setVMToDelete(null)}
+        onConfirmed={onDeleteVMConfirmed}
+      />
+      <BulkDeleteVMsModal
+        open={bulkDeleteOpen}
+        vms={Array.from(selectedIds).map((id) => vmsRaw.get(id)).filter(Boolean)}
+        onClose={() => setBulkDeleteOpen(false)}
+        onConfirmed={onBulkDeleteConfirmed}
       />
     </div>
   );

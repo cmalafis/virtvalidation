@@ -26,6 +26,13 @@ class VM(Base):
     os_family: Mapped[str | None] = mapped_column(String(32), nullable=True)
     role: Mapped[str | None] = mapped_column(String(64), nullable=True)
     ssh_user: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ssh_port: Mapped[int] = mapped_column(Integer, default=22, server_default="22", nullable=False)
+    # Free-form inventory metadata captured at enrollment time. Not used by
+    # the SSH collector itself; surfaced in the inventory UI and CSV export
+    # so federal customers can reconcile rows against their CMDB.
+    current_platform: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    environment: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[VMStatus] = mapped_column(
         Enum(VMStatus, name="vm_status"), default=VMStatus.discovered, nullable=False
     )
@@ -55,6 +62,16 @@ class VM(Base):
         back_populates="vm",
         cascade="all, delete-orphan",
         order_by="BaselineSnapshot.collected_at.desc()",
+    )
+    # Validations cascade-delete with the VM at both the ORM and DB level.
+    # The DB-side ondelete="CASCADE" lives on ValidationResult.vm_id; the
+    # ORM cascade here ensures `db.delete(vm)` cleans rows up in the same
+    # transaction (also matters under SQLite tests, where FK PRAGMAs vary).
+    validations: Mapped[list["ValidationResult"]] = relationship(  # noqa: F821
+        "ValidationResult",
+        back_populates="vm",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 

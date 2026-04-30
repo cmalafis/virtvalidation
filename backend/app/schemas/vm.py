@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -13,6 +14,10 @@ class VMBase(BaseModel):
     os_family: str | None = Field(default=None, max_length=32)
     role: str | None = Field(default=None, max_length=64)
     ssh_user: str | None = Field(default=None, max_length=64)
+    ssh_port: int = Field(default=22, ge=1, le=65535)
+    current_platform: str | None = Field(default=None, max_length=64)
+    environment: str | None = Field(default=None, max_length=64)
+    owner: str | None = Field(default=None, max_length=128)
     notes: str | None = Field(default=None, max_length=1024)
     vsphere_networks: list[str] = Field(default_factory=list)
     vsphere_datastores: list[str] = Field(default_factory=list)
@@ -32,6 +37,10 @@ class VMUpdate(BaseModel):
     os_family: str | None = Field(default=None, max_length=32)
     role: str | None = Field(default=None, max_length=64)
     ssh_user: str | None = Field(default=None, max_length=64)
+    ssh_port: int | None = Field(default=None, ge=1, le=65535)
+    current_platform: str | None = Field(default=None, max_length=64)
+    environment: str | None = Field(default=None, max_length=64)
+    owner: str | None = Field(default=None, max_length=128)
     status: VMStatus | None = None
     notes: str | None = Field(default=None, max_length=1024)
     vsphere_networks: list[str] | None = None
@@ -63,6 +72,39 @@ class BulkVMResult(BaseModel):
     total: int
     created: list[VMRead]
     skipped: list[BulkVMSkipped]
+
+
+class BulkVMDelete(BaseModel):
+    vm_ids: list[int] = Field(min_length=1, max_length=500)
+
+
+class BulkVMDeleteResult(BaseModel):
+    requested: int
+    deleted: list[int]
+    not_found: list[int]
+
+
+# ---------- on-demand capture ----------
+
+
+class CaptureTaskRead(BaseModel):
+    task_id: str
+    vm_id: int
+    status: Literal["running", "completed", "failed"]
+    started_at: datetime
+    completed_at: datetime | None = None
+    snapshot_id: int | None = None
+    error: str | None = None
+
+
+class BulkCaptureSpawn(BaseModel):
+    vm_id: int
+    task_id: str
+
+
+class BulkCaptureResult(BaseModel):
+    spawned: list[BulkCaptureSpawn]
+    skipped: list[dict]  # [{"vm_id": int, "reason": str}, ...]
 
 
 class SnapshotCreate(BaseModel):

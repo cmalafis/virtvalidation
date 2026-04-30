@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
+from app.core.capture import run_capture_task, task_store
 from app.core.db import get_db
 from app.models.validation import ValidationResult
 from app.models.vm import VM, BaselineSnapshot, VMStatus
@@ -11,7 +13,10 @@ from app.schemas.validation import ValidationResultRead
 from app.schemas.vm import (
     BaselineProfile,
     BulkVMCreate,
+    BulkVMDelete,
+    BulkVMDeleteResult,
     BulkVMResult,
+    CaptureTaskRead,
     SnapshotCreate,
     SnapshotRead,
     VMCreate,
@@ -99,21 +104,190 @@ def get_vm(vm_id: int, db: Session = Depends(get_db)) -> VM:
     return _get_vm_or_404(db, vm_id)
 
 
+def _diff_for_audit(before: dict, after: dict) -> dict:
+    """Return only the keys that actually changed, with before/after values.
+
+    Used so the audit row's `details` column carries the exact field-level
+    delta rather than the whole payload — matters for federal compliance
+    review, where reviewers want to see what an operator actually changed.
+    """
+    delta: dict[str, dict] = {}
+    for key in after:
+        if before.get(key) != after.get(key):
+            delta[key] = {"before": before.get(key), "after": after.get(key)}
+    return delta
+
+
 @router.patch("/{vm_id}", response_model=VMRead)
-def update_vm(vm_id: int, payload: VMUpdate, db: Session = Depends(get_db)) -> VM:
+def update_vm(
+    request: Request,
+    vm_id: int,
+    payload: VMUpdate,
+    db: Session = Depends(get_db),
+) -> VM:
     vm = _get_vm_or_404(db, vm_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        # Nothing to change — suppress the middleware audit so empty PATCHes
+        # don't pollute the trail.
+        request.state.skip_audit_log = True
+        return vm
+
+    before = {k: getattr(vm, k) for k in updates}
+    for field, value in updates.items():
         setattr(vm, field, value)
+    db.flush()
+    after = {k: getattr(vm, k) for k in updates}
+
+    record_audit(
+        db,
+        action="vm.update",
+        actor=request.headers.get("x-actor", "user"),
+        resource_type="vm",
+        resource_id=vm.id,
+        details={
+            "vm_name": vm.name,
+            "diff": _diff_for_audit(before, after),
+        },
+    )
     db.commit()
     db.refresh(vm)
+    request.state.skip_audit_log = True
     return vm
 
 
 @router.delete("/{vm_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_vm(vm_id: int, db: Session = Depends(get_db)) -> None:
+def delete_vm(
+    request: Request,
+    vm_id: int,
+    db: Session = Depends(get_db),
+) -> None:
     vm = _get_vm_or_404(db, vm_id)
-    db.delete(vm)
+    # Audit FIRST so the trail records what was deleted; the audit_logs
+    # table is intentionally not FK'd to vms, so the row survives the
+    # cascade. Federal review can still answer "who deleted db-prod-01?"
+    # months after the row is gone.
+    record_audit(
+        db,
+        action="vm.delete",
+        actor=request.headers.get("x-actor", "user"),
+        resource_type="vm",
+        resource_id=vm.id,
+        details={
+            "vm_name": vm.name,
+            "source_hostname": vm.source_hostname,
+            "ip_address": vm.ip_address,
+        },
+    )
+    db.delete(vm)  # cascades snapshots + validations via the ORM relationships
     db.commit()
+    request.state.skip_audit_log = True
+
+
+@router.delete("", response_model=BulkVMDeleteResult)
+def delete_vms_bulk(
+    request: Request,
+    payload: BulkVMDelete,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Delete multiple VMs in one round-trip.
+
+    Returns the lists of deleted vs not-found ids. Each successfully
+    deleted VM gets its own ``vm.delete`` audit row so per-VM forensics
+    still work after a bulk operation.
+    """
+    actor = request.headers.get("x-actor", "user")
+    requested = list(dict.fromkeys(payload.vm_ids))  # de-dupe, preserve order
+    found_vms = {vm.id: vm for vm in db.scalars(select(VM).where(VM.id.in_(requested))).all()}
+
+    deleted: list[int] = []
+    not_found: list[int] = []
+    for vid in requested:
+        vm = found_vms.get(vid)
+        if vm is None:
+            not_found.append(vid)
+            continue
+        record_audit(
+            db,
+            action="vm.delete",
+            actor=actor,
+            resource_type="vm",
+            resource_id=vm.id,
+            details={
+                "vm_name": vm.name,
+                "source_hostname": vm.source_hostname,
+                "ip_address": vm.ip_address,
+                "via_bulk": True,
+            },
+        )
+        db.delete(vm)
+        deleted.append(vid)
+    db.commit()
+
+    request.state.skip_audit_log = True
+    return {"requested": len(requested), "deleted": deleted, "not_found": not_found}
+
+
+# ---------------------------------------------------------------------------
+# On-demand baseline capture
+# ---------------------------------------------------------------------------
+@router.post(
+    "/{vm_id}/capture",
+    response_model=CaptureTaskRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def trigger_capture(
+    request: Request,
+    vm_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Spawn an immediate baseline collection in the background.
+
+    Returns 202 with the task handle immediately; the actual SSH session
+    runs after the response is sent so the dashboard can poll for status.
+    """
+    vm = _get_vm_or_404(db, vm_id)
+    actor = request.headers.get("x-actor", "user")
+
+    task = task_store.create(vm_id=vm.id)
+    record_audit(
+        db,
+        action="capture.triggered",
+        actor=actor,
+        resource_type="vm",
+        resource_id=vm.id,
+        details={
+            "vm_name": vm.name,
+            "task_id": task.task_id,
+            "via": "single",
+        },
+    )
+    db.commit()
+
+    background_tasks.add_task(run_capture_task, task.task_id, vm.id, actor=actor)
+    request.state.skip_audit_log = True
+    return task.to_dict()
+
+
+@router.get("/{vm_id}/capture/{task_id}", response_model=CaptureTaskRead)
+def get_capture_status(vm_id: int, task_id: str) -> dict:
+    task = task_store.get(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Capture task {task_id} not found. Tasks are kept in memory only "
+                "and may have been cleared by an appliance restart — re-trigger "
+                "the capture if needed."
+            ),
+        )
+    if task.vm_id != vm_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} belongs to vm_id={task.vm_id}, not {vm_id}",
+        )
+    return task.to_dict()
 
 
 @router.post(

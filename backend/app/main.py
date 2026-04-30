@@ -7,6 +7,7 @@ from app.api.audit import router as audit_router
 from app.api.health import router as health_router
 from app.api.plans import router as plans_router
 from app.api.settings import settings_router, system_router
+from app.api.snapshots import router as snapshots_router
 from app.api.templates import router as templates_router
 from app.api.vms import router as vms_router
 from app.core.db import Base, engine
@@ -46,6 +47,7 @@ app.add_middleware(
 app.add_middleware(AuditMiddleware)
 
 app.include_router(vms_router, prefix="/api/vms")
+app.include_router(snapshots_router, prefix="/api/snapshots")
 app.include_router(plans_router, prefix="/api/plans")
 app.include_router(health_router, prefix="/api/health")
 app.include_router(system_router, prefix="/api/system")

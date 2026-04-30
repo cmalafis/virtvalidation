@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Seed three roadmap issues + supporting labels + the v1.0.0 milestone.
+# Seed roadmap issues + supporting labels + milestones.
 #
-# Idempotent: labels and the milestone are check-then-create, and issue
+# Idempotent: labels and milestones are check-then-create, and issue
 # creation is dedupe-checked by exact-title match (open + closed) so a
-# second run will not silently produce duplicates.
+# second run will not silently produce duplicates. The "expansion"
+# entries (e.g. notifications) post a comment on the existing issue
+# when found and create the issue with the expansion text as the body
+# when no match exists.
 #
 # Issue bodies live as standalone Markdown files under
-# scripts/roadmap-issues/ — easier to review/edit than embedded heredocs,
-# and side-steps macOS bash 3.2's broken heredoc-inside-$(…) parsing.
+# scripts/roadmap-issues/ — easier to review/edit than embedded
+# heredocs, and side-steps macOS bash 3.2's broken heredoc-inside-$(…)
+# parsing.
 #
 # Prereqs:
 #   brew install gh         # or your platform's equivalent
@@ -67,37 +71,57 @@ ensure_label() {
 }
 
 echo "→ ensuring labels"
-ensure_label "enhancement"    "a2eeef" "New feature or capability"
-ensure_label "documentation"  "0075ca" "Docs only"
-ensure_label "testing"        "d4a017" "Tests, CI, QA"
-ensure_label "area: backend"  "1d76db" "Python / FastAPI / SSH / LLM"
-ensure_label "area: docs"     "5319e7" "Markdown docs + product map"
-ensure_label "federal"        "0b3a5b" "Federal / DoD / regulated environments"
-ensure_label "roadmap"        "b58900" "Tracked on the public roadmap"
+ensure_label "enhancement"     "a2eeef" "New feature or capability"
+ensure_label "documentation"   "0075ca" "Docs only"
+ensure_label "testing"         "d4a017" "Tests, CI, QA"
+ensure_label "area: backend"   "1d76db" "Python / FastAPI / SSH / LLM"
+ensure_label "area: frontend"  "61dafb" "React / Vite / dashboard UI"
+ensure_label "area: docs"      "5319e7" "Markdown docs + product map"
+ensure_label "area: infra"     "0e8a16" "Containerfiles, Helm, Quadlet, OpenShift"
+ensure_label "federal"         "0b3a5b" "Federal / DoD / regulated environments"
+ensure_label "roadmap"         "b58900" "Tracked on the public roadmap"
 
 # ---------------------------------------------------------------------------
-# Milestone — v1.0.0 (referenced by issue 2)
+# Milestones — v1.0.0 + v3.0.0
 # ---------------------------------------------------------------------------
-echo "→ ensuring milestone v1.0.0"
-MILESTONE_NUM=$(
-  gh api "repos/$REPO/milestones?state=all" \
-    --jq '.[] | select(.title=="v1.0.0") | .number' || true
-)
-if [ -z "$MILESTONE_NUM" ]; then
-  MILESTONE_NUM=$(
-    gh api -X POST "repos/$REPO/milestones" \
-      -f title="v1.0.0" \
-      -f description="GA target — Linux + Windows support, RBAC, multi-tenant" \
-      --jq .number
+ensure_milestone() {
+  local title="$1"
+  local description="$2"
+  local num
+  num=$(
+    gh api "repos/$REPO/milestones?state=all" \
+      --jq ".[] | select(.title==\"$title\") | .number" || true
   )
-  echo "  + milestone created: v1.0.0 (#$MILESTONE_NUM)"
-else
-  echo "  · milestone exists: v1.0.0 (#$MILESTONE_NUM)"
-fi
+  if [ -z "$num" ]; then
+    num=$(
+      gh api -X POST "repos/$REPO/milestones" \
+        -f title="$title" \
+        -f description="$description" \
+        --jq .number
+    )
+    echo "  + milestone created: $title (#$num)"
+  else
+    echo "  · milestone exists: $title (#$num)"
+  fi
+}
+
+echo "→ ensuring milestones"
+ensure_milestone "v1.0.0" "GA target — Linux + Windows support, RBAC, multi-tenant"
+ensure_milestone "v3.0.0" "Enterprise — OpenShift-native deployment, KServe, ArgoCD"
 
 # ---------------------------------------------------------------------------
 # Issue creation — dedupe by exact title match across open + closed
 # ---------------------------------------------------------------------------
+find_issue_number() {
+  # Echoes the number of the first issue (open or closed) whose title
+  # matches the argument exactly. Empty string if none.
+  local title="$1"
+  gh issue list --repo "$REPO" --state all --limit 200 \
+      --json number,title \
+      --jq ".[] | select(.title==\"$title\") | .number" \
+    | head -n 1 || true
+}
+
 create_issue() {
   local title="$1"
   local labels="$2"     # comma-separated
@@ -110,12 +134,7 @@ create_issue() {
   fi
 
   local existing
-  existing=$(
-    gh issue list --repo "$REPO" --state all --limit 200 \
-        --json number,title \
-        --jq ".[] | select(.title==\"$title\") | .number" \
-      || true
-  )
+  existing=$(find_issue_number "$title")
   if [ -n "$existing" ]; then
     echo "  · issue exists, skipping: #$existing  $title"
     return 0
@@ -137,7 +156,35 @@ create_issue() {
   echo "  + created: $url"
 }
 
+# Comment-or-create — used for "expand existing issue" entries. If a
+# match is found, post the body file as a comment. If not, create a new
+# issue with the expansion text as the body so the content isn't lost.
+expand_issue() {
+  local title="$1"
+  local labels="$2"
+  local milestone="$3"
+  local body_file="$4"
+
+  if [ ! -f "$body_file" ]; then
+    echo "error: body file not found: $body_file" >&2
+    return 1
+  fi
+
+  local existing
+  existing=$(find_issue_number "$title")
+  if [ -n "$existing" ]; then
+    gh issue comment "$existing" --repo "$REPO" --body-file "$body_file" >/dev/null
+    echo "  + commented on: #$existing  $title"
+    return 0
+  fi
+
+  echo "  · no existing issue — creating fresh"
+  create_issue "$title" "$labels" "$milestone" "$body_file"
+}
+
 echo "→ creating issues"
+
+# ---------- 2026-04-29 batch (v0.1.0-alpha → v1.0.0 roadmap items) ----------
 
 create_issue \
   "Make Linux SSH collector OS-aware (RHEL 7/8/9/10 support)" \
@@ -156,6 +203,35 @@ create_issue \
   "documentation,testing,area: docs" \
   "" \
   "$BODIES_DIR/03-os-compat-matrix.md"
+
+# ---------- 2026-04-29 batch (Elyra/KServe inspiration — non-pivot) ---------
+
+create_issue \
+  "Git integration for generated artifacts" \
+  "enhancement,federal,area: backend" \
+  "" \
+  "$BODIES_DIR/04-git-integration.md"
+
+create_issue \
+  "Visual pipeline view in dashboard" \
+  "enhancement,area: frontend" \
+  "" \
+  "$BODIES_DIR/05-visual-pipeline-view.md"
+
+# Notifications — expand-or-create. The original issue is expected to
+# already exist in the tracker; if it doesn't, create it with the
+# expansion content as the body.
+expand_issue \
+  "Notification integrations (Slack, email, webhooks)" \
+  "enhancement,area: backend" \
+  "" \
+  "$BODIES_DIR/06-notifications-expand.md"
+
+create_issue \
+  "VirtValidate Enterprise — OpenShift-native deployment" \
+  "enhancement,roadmap,area: infra" \
+  "v3.0.0" \
+  "$BODIES_DIR/07-enterprise-openshift.md"
 
 echo
 echo "Done."
