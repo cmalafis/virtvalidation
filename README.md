@@ -1,199 +1,147 @@
+<div align="center">
+
+<img src="docs/assets/logo.png" alt="VirtValidate" width="120" />
+
 # VirtValidate
 
-> AI-powered VM migration validation for VMware → OpenShift Virtualization
+**AI-powered VM migration validation for VMware → OpenShift Virtualization**
+
+Capture pre-migration baselines, generate intelligent migration waves with MTV-ready YAML, and validate post-migration state — all running air-gapped with local AI inference.
 
 [![CI](https://github.com/cmalafis/virtvalidation/actions/workflows/ci.yml/badge.svg)](https://github.com/cmalafis/virtvalidation/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/cmalafis/virtvalidation/actions/workflows/codeql.yml/badge.svg)](https://github.com/cmalafis/virtvalidation/actions/workflows/codeql.yml)
-[![Lighthouse a11y](https://github.com/cmalafis/virtvalidation/actions/workflows/lighthouse.yml/badge.svg)](https://github.com/cmalafis/virtvalidation/actions/workflows/lighthouse.yml)
-[![Coverage](https://codecov.io/gh/cmalafis/virtvalidation/branch/main/graph/badge.svg)](https://codecov.io/gh/cmalafis/virtvalidation)
-[![Latest release](https://img.shields.io/github/v/release/cmalafis/virtvalidation?include_prereleases&sort=semver)](https://github.com/cmalafis/virtvalidation/releases)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
-[![React 18](https://img.shields.io/badge/react-18-61dafb.svg)](https://react.dev/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/cmalafis/virtvalidation?include_prereleases)](https://github.com/cmalafis/virtvalidation/releases)
+[![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org)
+[![Podman](https://img.shields.io/badge/podman-rootless-892CA0?logo=podman&logoColor=white)](https://podman.io)
 
-## What this is
+[Quick Start](#quick-start) · [Product Map](docs/product-map.html) · [Roadmap](https://github.com/cmalafis/virtvalidation/projects) · [Contributing](CONTRIBUTING.md)
 
-VirtValidate is a self-hosted appliance that validates VMs migrated from
-VMware to OpenShift Virtualization, then turns the validated waves into
-ready-to-apply Migration Toolkit for Virtualization (MTV / Forklift)
-plans. All reasoning runs on a local Ollama model — VMs, baselines, and
-plans never leave the operator's network.
+</div>
 
-## Goals
+---
 
-- **Air-gapped by design.** No external API calls, ever. The platform
-  ships with everything it needs to run in a regulated or classified
-  environment.
-- **Operator in the loop.** VirtValidate generates the wave plan and the
-  MTV YAML; the operator reviews and applies. The appliance never
-  touches the destination cluster directly.
-- **Federal-friendly.** Apache 2.0 licensed, Podman-first, runs on
-  RHEL/Fedora out of the box, and uses only OSS components.
-- **Traceable.** Every mutating action lands in an audit log; every
-  generated plan carries the rationale the LLM used to build it.
+## Why VirtValidate
 
-## Quickstart
+VMware-to-OpenShift Virtualization migrations involve hundreds or thousands of VMs and almost no tooling for the most critical question: **did each VM actually migrate correctly?**
 
-```bash
-# 1. Copy and configure environment
-cp .env.example .env
-$EDITOR .env
+Existing tools handle the mechanics of migration — moving disks, recreating VMs, mapping networks. None of them tell you whether the migrated VM is actually healthy, configured the same as before, and ready for production traffic.
 
-# 2. Generate the SSH key the appliance uses to reach VMs
-mkdir -p backend/app/keys
-ssh-keygen -t ed25519 -N "" -f backend/app/keys/id_ed25519 \
-    -C "virtvalidate@appliance"
+VirtValidate fills that gap. It SSHes into source VMs to build a behavioral baseline over days, intelligently groups VMs into migration waves with ready-to-apply MTV YAML, then validates post-migration state and produces CISO-ready reports — all without sending a single byte to the cloud.
 
-# 3. Pull Llama 3 (first run only)
-podman-compose up -d ollama
-podman-compose exec ollama ollama pull llama3:8b
+## Key Features
 
-# 4. Start everything
-podman-compose up -d
-
-# 5. Open the dashboard
-open http://localhost:3000
-```
-
-## Documentation
-
-| Doc | What it covers |
-|-----|----------------|
-| [docs/INSTALLATION.md](docs/INSTALLATION.md) | End-to-end Podman install, GPU setup, model pull, Quadlet for prod, troubleshooting |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every `.env` variable + which settings live in PostgreSQL and are editable from the UI |
-| [docs/SSH_SETUP.md](docs/SSH_SETUP.md) | Key distribution playbook, sudoers rules, the exact commands the collector runs, rotation |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System diagram, component breakdown, data flow, air-gap rationale |
-| [docs/API.md](docs/API.md) | Reference for every HTTP endpoint, auto-generated from the FastAPI OpenAPI spec |
-| [docs/vm-inventory-template.csv](docs/vm-inventory-template.csv) | CSV inventory template — paste into the dashboard's bulk upload tab |
-
-API reference is auto-generated — re-run `python scripts/generate_api_docs.py`
-after route changes. The live OpenAPI is also served at `/openapi.json` and
-`/docs` when the backend is running.
-
-## Requirements
-
-- Podman 4.4+ (rootless)
-- podman-compose 1.0.6+
-- 16 GB RAM, 30 GB disk free
-- NVIDIA GPU with CUDA 12+ recommended (CPU inference works, slower)
-- RHEL 9 / Fedora 40+ recommended; Ubuntu 22.04+ also supported
+- **Multi-day baseline collection** — captures services, network, storage, cron, and configuration state over a 3-7 day window
+- **AI-powered migration planner** — local Llama 3 groups VMs into waves based on application dependencies, network mappings, and storage constraints
+- **MTV YAML generation** — produces ready-to-apply Forklift `Plan`, `NetworkMap`, and `StorageMap` resources per wave
+- **Intelligent post-migration validation** — diffs current state against baseline, LLM reasons over findings and produces remediation steps
+- **Plain-English wave reports** — CISO-ready PDF reports with executive summaries and per-VM findings
+- **Air-gapped by design** — zero external API calls, all inference local, full audit trail
 
 ## Architecture
 
+VirtValidate runs as a self-contained Podman appliance inside your environment. SSH into source VMs, validate target VMs, all AI inference local.
+
 ```
-┌─────────────────────────────────────┐
-│  React Dashboard  :3000             │
-├─────────────────────────────────────┤
-│  FastAPI Backend  :8000             │
-├──────────────┬──────────────────────┤
-│  PostgreSQL  │   Ollama + Llama 3   │
-│  :5432       │   :11434             │
-└──────────────┴──────────────────────┘
-All containers run rootless via Podman.
-No data leaves this machine.
-```
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full system overview.
-
-## VM inventory CSV format
-
-[`docs/vm-inventory-template.csv`](docs/vm-inventory-template.csv) is the
-canonical template for the bulk upload tab. Columns:
-
-| Column | Required | Notes |
-|--------|----------|-------|
-| `hostname` | yes | DNS-resolvable source hostname (RVTools `DNS Name` works too) |
-| `ip_address` | no | Primary IPv4 — used by the SSH collector |
-| `ssh_username` | no | Account VirtValidate authenticates as on the source VM |
-| `ssh_port` | no | Defaults to 22 |
-| `current_platform` | no | Free-form (`vmware`, `vsphere-7`, …); informational |
-| `role` | no | Hint to the planner (`database`, `app`, `loadbalancer`, `batch`, …) |
-| `environment` | no | `prod` / `staging` / `dev`; informational |
-| `owner` | no | Team or contact; informational |
-| `vsphere_networks` | for MTV | Source portgroups, semicolon-separated |
-| `vsphere_datastores` | for MTV | Source datastores, semicolon-separated |
-| `target_namespace` | for MTV | Destination OpenShift namespace |
-| `target_storage_class` | for MTV | Destination StorageClass |
-| `target_network_attachment` | for MTV | Destination NetworkAttachmentDefinition (NAD) |
-| `notes` | no | Free-form, surfaced in the dashboard |
-
-Lists in `vsphere_networks` and `vsphere_datastores` go inside one CSV cell:
-
-```csv
-db-prod-01.corp.local,...,VM Network;DB Backend,nfs-prod-fast;nfs-prod-bulk,...
+┌──────────────┐         ┌────────────────────────────┐         ┌──────────────┐
+│   VMware     │ ◄────── │   VirtValidate Appliance   │ ──────► │  OCP-Virt    │
+│   vSphere    │         │                            │         │  (KubeVirt)  │
+│              │   SSH   │  React · FastAPI · Ollama  │   SSH   │              │
+│  Source VMs  │ ──────► │  PostgreSQL · Llama 3 8B   │ ◄────── │  Target VMs  │
+└──────────────┘         └────────────────────────────┘         └──────────────┘
+                                       │
+                                       ▼
+                         Wave Reports · MTV YAML · Audit
 ```
 
-The MTV columns are optional for VMs you only want to *validate*, but they
-are required for any VM you want to include in a generated MTV migration
-plan (see below).
+**[Full architecture diagram and feature catalog →](docs/product-map.html)**
 
-## Generating MTV migration plans
+## Quick Start
 
-VirtValidate generates Migration Toolkit for Virtualization (MTV / Forklift)
-plans straight from a wave. The flow is intentionally hands-off so the
-operator stays in control of the actual cutover:
+VirtValidate runs on any Linux host with Podman. NVIDIA GPU recommended for inference performance, but CPU works.
 
-1. **VirtValidate generates the plan.** From the Migration Plan tab, click
-   **↓ MTV YAML** on a wave. The dashboard calls
-   `GET /api/plans/{plan_id}/waves/{wave_number}/mtv-yaml` and downloads a
-   multi-document YAML containing one `NetworkMap`, one `StorageMap`, and
-   one `Plan` (forklift.konveyor.io/v1beta1, warm migration by default).
-   The maps are derived from the VMs' `vsphere_networks` /
-   `vsphere_datastores` and their target `target_network_attachment` /
-   `target_storage_class`.
+### Requirements
 
-2. **You review the YAML.** Open it in your editor. The Plan's
-   `spec.description` carries the wave's planner rationale so reviewers
-   know *why* these VMs are batched together. Adjust storage class names,
-   NADs, or per-VM `namespace` overrides to match your cluster.
+- Podman 4.x+ and `podman-compose`
+- 16 GB RAM minimum
+- 35 GB disk for AI model + database
+- NVIDIA GPU recommended (CPU inference works, slower)
 
-3. **You apply with `oc`.** From a workstation with cluster access:
+### Install
 
-   ```bash
-   oc apply -f wave-1-plan-42.yaml
-   ```
+```bash
+git clone https://github.com/cmalafis/virtvalidation
+cd virtvalidation
+cp .env.example .env
 
-   MTV picks up the Plan and starts the migration. The Forklift controller
-   reports progress back to the cluster — VirtValidate intentionally does
-   not poll MTV state, so it keeps working in air-gapped environments
-   where only the operator workstation has cluster credentials.
+# Start the stack
+podman-compose up -d
 
-4. **You come back, mark the wave complete.** Once MTV finishes the wave,
-   come back to VirtValidate to run post-migration validation and mark
-   the wave done. The next wave's YAML is then ready to download.
+# Pull the local LLM (~5GB, one-time)
+podman exec $(podman ps -q --filter name=ollama) ollama pull llama3:8b
 
-The MTV provider names and namespace are configurable via
-`MTV_NAMESPACE`, `MTV_SOURCE_PROVIDER`, `MTV_DESTINATION_PROVIDER`, and
-`MTV_DEFAULT_TARGET_NAMESPACE` in `.env`. The Provider resources
-themselves must already exist in the cluster — VirtValidate references
-them but does not create them.
+# Open the dashboard
+open http://localhost:3000
+```
+
+That's it. Everything runs locally. No data leaves your machine.
+
+### First Run
+
+1. **Generate SSH key** — Settings → SSH Public Key → key auto-generates on first load
+2. **Distribute key to VMs** — copy the public key into `~/.ssh/authorized_keys` on each VM you want to monitor (see [docs/SSH_SETUP.md](docs/SSH_SETUP.md))
+3. **Enroll your VMs** — Add VMs button → Manual, CSV, or RVTools XLSX upload
+4. **Watch the baseline build** — automatic SSH collection runs twice daily by default
+5. **Plan your migration** — Migration Plan tab → Generate Plan → Download MTV YAML
+6. **Migrate and validate** — apply the YAML with MTV, click Mark Wave Complete, get your report
+
+## Documentation
+
+- [**Product Map**](docs/product-map.html) — full architecture, feature catalog, roadmap
+- [**Installation Guide**](docs/INSTALLATION.md) — detailed setup including production Quadlet deployment
+- [**SSH Setup**](docs/SSH_SETUP.md) — distributing keys, sudoers configuration, security model
+- [**Configuration Reference**](docs/CONFIGURATION.md) — all environment variables explained
+- [**API Reference**](docs/API.md) — REST endpoint documentation
+- [**Security Model**](SECURITY.md) — threat model and reporting vulnerabilities
 
 ## Roadmap
 
-Items below are loosely ordered. Anything ticked is in `main`; anything
-unticked is fair game for a contribution — open an issue to discuss
-scope before starting on a large item.
+VirtValidate is in active development. Current focus: production hardening for v0.2.0.
 
-- [x] React dashboard with bulk CSV / RVTools XLSX enrollment
-- [x] FastAPI backend skeleton, audit middleware, settings store
-- [x] SSH baseline collector (Paramiko + Ed25519)
-- [x] Local-LLM validation engine (Ollama + Llama 3)
-- [x] LLM-powered migration wave planner with dependency awareness
-- [x] PostgreSQL persistence with Alembic migrations
-- [x] MTV / Forklift NetworkMap + StorageMap + Plan YAML generator
-- [ ] One-click "Mark Wave Complete" with post-migration validation
-- [ ] Wave-aware retry / partial re-validation flows
-- [ ] OAuth / OIDC sign-in (currently anonymous behind reverse proxy)
-- [ ] Quadlet bundle for systemd-managed prod deployments
-- [ ] Pluggable LLM backend (vLLM, llama.cpp server) alongside Ollama
-- [ ] CIS / STIG hardening profile presets for generated baselines
+| Release | Status | Theme |
+|---------|--------|-------|
+| **v0.1.0-alpha** | ✅ Shipped | Foundation — full end-to-end MVP |
+| **v0.2.0** | 🔄 In Progress | Polish & hardening, encrypted keys, app probes |
+| **v0.3.0** | 📋 Planned | Ansible playbook generation, vCenter discovery, Helm chart |
+| **v1.0.0** | 🎯 Target | Multi-tenancy, RBAC, vLLM, Windows VMs, GA |
+| **v2.0.0** | 🔮 Future | Federal classified — Vault, HSM/TPM, CAC/PIV, FIPS |
+
+See the [GitHub Projects board](https://github.com/cmalafis/virtvalidation/projects) for detailed work tracking and the [product map](docs/product-map.html) for the complete feature catalog.
 
 ## Contributing
 
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for dev
-setup, code style (ruff + mypy), tests, and the DCO sign-off requirement.
-Security issues should be reported privately per [SECURITY.md](SECURITY.md).
+Contributions are welcome. VirtValidate follows standard open source practices:
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and PR process
+- Check the [issues](https://github.com/cmalafis/virtvalidation/issues) labeled `good first issue`
+- Join the discussion in [GitHub Discussions](https://github.com/cmalafis/virtvalidation/discussions)
+
+All contributors must agree to the [Code of Conduct](CODE_OF_CONDUCT.md) and sign off commits per the DCO.
+
+## Security
+
+Found a security issue? Please **do not open a public issue.** See [SECURITY.md](SECURITY.md) for responsible disclosure.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](LICENSE).
+
+VirtValidate is built on the shoulders of giants. Thanks to the maintainers of [Ollama](https://ollama.ai), [Llama](https://llama.meta.com), [FastAPI](https://fastapi.tiangolo.com), [Forklift/MTV](https://github.com/kubev2v/forklift), [Podman](https://podman.io), and [PostgreSQL](https://www.postgresql.org).
+
+---
+
+<div align="center">
+
+**Built for federal, defense, and regulated environments where data cannot leave the network.**
+
+</div>
