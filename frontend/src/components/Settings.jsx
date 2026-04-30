@@ -453,7 +453,7 @@ function ConfigurationForm({ onSavedModelChange }) {
                 display: "block", marginTop: 8, fontSize: 13, color: "#ccaaaa",
                 fontFamily: "'Barlow', sans-serif", lineHeight: 1.5,
               }}>
-                Couldn't list models from Ollama: {modelsError}. The currently-saved model still appears above.
+                Couldn&apos;t list models from Ollama: {modelsError}. The currently-saved model still appears above.
               </span>
             )}
           </label>

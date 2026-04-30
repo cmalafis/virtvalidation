@@ -609,7 +609,7 @@ function rowToPayload(rawRow) {
 // Minimal CSV parser supporting quoted fields with embedded commas + escaped
 // double-quotes. Strips a leading BOM if present.
 function parseCSV(text) {
-  const trimmed = text.replace(/^﻿/, "");
+  const trimmed = text.replace(/^\uFEFF/, "");
   const lines = trimmed.split(/\r?\n/).filter((l) => l.length > 0);
   if (lines.length < 2) return { headers: [], rows: [] };
   const parseLine = (line) => {
