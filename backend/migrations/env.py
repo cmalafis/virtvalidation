@@ -16,7 +16,6 @@ from app.core.db import Base
 from app.models import (  # noqa: F401  (register models on Base)
     audit,
     plan,
-    settings as _settings_model,
     validation,
     vm,
 )

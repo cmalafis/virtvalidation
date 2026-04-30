@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/logo.png" alt="VirtValidate" width="120" />
+<img src="docs/assets/logo.svg" alt="VirtValidate" width="120" />
 
 # VirtValidate
 
