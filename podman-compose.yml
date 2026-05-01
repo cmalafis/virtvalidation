@@ -33,6 +33,18 @@ services:
       - SSH_KEY_PATH=${SSH_KEY_PATH:-/app/keys/id_ed25519}
     volumes:
       - ./backend/app/keys:/app/keys:Z
+      # ----- DEVELOPMENT-ONLY bind mounts -----
+      # Mount the source tree on top of the baked image so uvicorn's
+      # --reload flag picks up edits without a container rebuild. Save a
+      # .py file → uvicorn detects the change → reloads the app inside
+      # the running container. Dev iteration in seconds instead of minutes.
+      #
+      # DO NOT replicate these mounts in infra/quadlet/ for production —
+      # production must run the immutable baked image so the deployed code
+      # matches the signed/attested artifact. The Quadlet units intentionally
+      # only mount /app/keys and the Postgres/Ollama data volumes.
+      - ./backend/app:/app/app:Z
+      - ./backend/migrations:/app/migrations:Z
     depends_on:
       - postgres
       - ollama
