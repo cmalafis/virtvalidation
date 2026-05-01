@@ -496,6 +496,43 @@ Depends on: `app.core.config`, `app.core.db`
 
 </details>
 
+<details><summary><strong><code>app.api.network_reviews</code></strong> — <em>API endpoints</em> · Network design review HTTP surface.</summary>
+
+Path: `backend/app/api/network_reviews.py`  
+Depends on: `app.core`, `app.core.audit`, `app.core.db`, `app.core.network_review`, `app.models.network_review`, `app.schemas.network_review`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `POST` | `/api/network-reviews` | `create_review(request, payload, db)` | — |
+| `GET` | `/api/network-reviews` | `list_reviews(db)` | Index. Sorted newest first; embeds the finding+severity counts so |
+| `GET` | `/api/network-reviews/{review_id}` | `get_review(review_id, db)` | — |
+| `PUT` | `/api/network-reviews/{review_id}/notes` | `update_notes(request, review_id, payload, db)` | — |
+| `PUT` | `/api/network-reviews/{review_id}/yaml` | `update_yaml(request, review_id, payload, db)` | — |
+| `POST` | `/api/network-reviews/{review_id}/analyze` | `analyze_review(request, review_id, background_tasks, db)` | — |
+| `DELETE` | `/api/network-reviews/{review_id}` | `delete_review(request, review_id, db)` | — |
+| `PATCH` | `/api/network-reviews/{review_id}/findings/{finding_id}` | `update_finding_triage(request, review_id, finding_id, payload, db)` | — |
+
+</details>
+
+<details><summary><strong><code>app.api.reports</code></strong> — <em>API endpoints</em> · Dashboard-level report endpoints.</summary>
+
+Path: `backend/app/api/reports.py`  
+Depends on: `app.core.config`, `app.core.db`, `app.models.plan`, `app.models.validation`, `app.models.vm`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `GET` | `/api/reports/full-validation` | `full_validation(db)` | — |
+| `GET` | `/api/reports/executive-summary` | `executive_summary(db)` | — |
+| `GET` | `/api/reports/failed-degraded` | `failed_degraded(db)` | — |
+| `GET` | `/api/reports/wave-plan` | `wave_plan(db)` | — |
+| `GET` | `/api/reports/baseline-snapshot` | `baseline_snapshot(db)` | — |
+
+</details>
+
 <details><summary><strong><code>app.api.settings</code></strong> — <em>API endpoints</em> · Settings + system-info endpoints powering the /settings page.</summary>
 
 Path: `backend/app/api/settings.py`  
@@ -555,6 +592,27 @@ Depends on: `app.core.config`
 
 </details>
 
+<details><summary><strong><code>app.core.network_review</code></strong> — <em>Business logic</em> · Network Design Review — gap analysis between source VMware networking and</summary>
+
+Path: `backend/app/core/network_review.py`  
+Depends on: `app.core.config`, `app.models.vm`
+
+**Classes**
+
+- **`NetworkReviewError`** (Class)
+  - Raised when the LLM call fails or returns unparseable output.
+- **`NetworkReviewer`** (Class)
+  - Wraps the local Ollama call. Same pattern as MigrationPlanner /
+  - Methods:
+    - `analyze(self)`
+
+**Functions**
+
+- `build_source_summary(db)` — Aggregate vSphere networks across all enrolled VMs.
+- `normalize_findings(items)` — Public re-export for callers that already have raw finding dicts
+
+</details>
+
 <details><summary><strong><code>app.core.os_profile</code></strong> — <em>Business logic</em> · OS detection for the SSH collector.</summary>
 
 Path: `backend/app/core/os_profile.py`  
@@ -577,7 +635,7 @@ Path: `backend/app/core/os_profile.py`
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.audit`, `app.api.health`, `app.api.plans`, `app.api.settings`, `app.api.snapshots`, `app.api.templates`, `app.api.vms`, `app.core.db`, `app.core.scheduler`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.settings`, `app.api.snapshots`, `app.api.templates`, `app.api.vms`, `app.core.db`, `app.core.scheduler`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -588,7 +646,27 @@ Depends on: `app.api.audit`, `app.api.health`, `app.api.plans`, `app.api.setting
 <details><summary><strong><code>app.models.__init__</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/models/__init__.py`  
-Depends on: `app.models.audit`, `app.models.plan`, `app.models.settings`, `app.models.validation`, `app.models.vm`
+Depends on: `app.models.audit`, `app.models.network_review`, `app.models.plan`, `app.models.settings`, `app.models.validation`, `app.models.vm`
+
+</details>
+
+<details><summary><strong><code>app.models.network_review</code></strong> — <em>Data models / schemas</em> · Network design review tables.</summary>
+
+Path: `backend/app/models/network_review.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`NetworkReviewStatus`** (Class)
+- **`FindingCategory`** (Class)
+- **`FindingSeverity`** (Class)
+- **`FindingConfidence`** (Class)
+- **`FindingTriage`** (Class)
+  - Operator triage state — set after the LLM returned a finding.
+- **`NetworkDesignReview`** (SQLAlchemy model · table `network_design_reviews`)
+  - Fields: `id`, `name`, `status`, `customer_notes`, `proposed_yaml`, `analysis_results`, `last_analyzed_at`, `last_error`, `created_at`, `updated_at`, `findings`
+- **`NetworkFinding`** (SQLAlchemy model · table `network_findings`)
+  - Fields: `id`, `review_id`, `category`, `severity`, `confidence`, `triage`, `title`, `description`, `source_evidence`, `proposed_evidence`, `recommendation`, `created_at`, `review`
 
 </details>
 
@@ -605,6 +683,32 @@ Depends on: `app.core.db`
 - **`AppSettings`** (SQLAlchemy model · table `app_settings`)
   - Singleton settings row — always id=1.
   - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.schemas.network_review</code></strong> — <em>Data models / schemas</em></summary>
+
+Path: `backend/app/schemas/network_review.py`  
+Depends on: `app.models.network_review`
+
+**Classes**
+
+- **`NetworkReviewCreate`** (Pydantic schema)
+  - Fields: `name`, `customer_notes`, `proposed_yaml`
+- **`NetworkReviewNotesUpdate`** (Pydantic schema)
+  - Fields: `customer_notes`
+- **`NetworkReviewYamlUpdate`** (Pydantic schema)
+  - Fields: `proposed_yaml`
+- **`NetworkFindingTriageUpdate`** (Pydantic schema)
+  - Fields: `triage`
+- **`NetworkFindingRead`** (Pydantic schema)
+  - Fields: `id`, `category`, `severity`, `confidence`, `triage`, `title`, `description`, `source_evidence`, `proposed_evidence`, `recommendation`, `created_at`
+- **`NetworkReviewSummary`** (Pydantic schema)
+  - Lightweight row for the index page.
+  - Fields: `id`, `name`, `status`, `finding_count`, `severity_counts`, `created_at`, `updated_at`, `last_analyzed_at`
+- **`NetworkReviewRead`** (Pydantic schema)
+  - Full review with embedded findings — used by the detail view.
+  - Fields: `id`, `name`, `status`, `customer_notes`, `proposed_yaml`, `analysis_results`, `last_analyzed_at`, `last_error`, `created_at`, `updated_at`, `findings`
 
 </details>
 
@@ -647,6 +751,67 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/components/NetworkReviewDetail.jsx</code></strong> — <em>Frontend component</em> · Per-review detail page. Renders the full report view + lets operators</summary>
+
+API calls:
+- `/api/network-reviews/{id}`
+- `/api/network-reviews/{id}/analyze`
+- `/api/network-reviews/{id}/findings/{id}`
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`NetworkReviewDetail`** (component)
+- **`FindingCard`** (component)
+- **`ConfidenceTag`** (component)
+- **`EvidenceBlock`** (component)
+- **`SourceProposedBlocks`** (component)
+- **`ConfidenceLimitations`** (component)
+- **`StatusPill`** (component)
+- **`Caveats`** (component)
+- **`H2`** (component)
+- **`Err`** (component)
+- **`Shell`** (component)
+- **`Styles`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/components/NetworkReviewNew.jsx</code></strong> — <em>Frontend component</em> · New Network Design Review wizard. Single-page form: name → notes upload</summary>
+
+API calls:
+- `/api/network-reviews`
+- `/api/network-reviews/{id}/analyze`
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`NetworkReviewNew`** (component)
+- **`Section`** (component)
+- **`Field`** (component)
+- **`FileLoader`** (component)
+- **`Notice`** (component)
+- **`Styles`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/components/ReportView.jsx</code></strong> — <em>Frontend component</em> · Inline report viewer. Mirrors the dashboard aesthetic exactly so users</summary>
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`ReportView`** (component)
+- **`ExecutiveSummaryView`** (component)
+- **`ValidationListView`** (component)
+- **`ValidationCard`** (component)
+- **`WavePlanView`** (component)
+- **`BaselineSnapshotView`** (component)
+- **`SectionTitle`** (component)
+- **`SubLabel`** (component)
+- **`Stat`** (component)
+- **`Pill`** (component)
+- **`Loader`** (component)
+- **`Err`** (component)
+- **`ReportStyles`** (component)
+
+</details>
+
 <details><summary><strong><code>frontend/src/components/Settings.jsx</code></strong> — <em>Frontend component</em></summary>
 
 API calls:
@@ -673,10 +838,38 @@ Exports / inner components:
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/VirtValidate.jsx</code></strong> — <em>Frontend component</em></summary>
+<details><summary><strong><code>frontend/src/components/VMDetail.jsx</code></strong> — <em>Frontend component</em> · Per-VM detail page — everything operators want to see about a VM in one</summary>
+
+API calls:
+- `/api/audit?resource_type=vm&limit=50`
+- `/api/plans?limit=20`
+- `/api/vms/{id}`
+- `/api/vms/{id}/baseline/profile`
+- `/api/vms/{id}/capture`
+- `/api/vms/{id}/capture/{id}`
+- `/api/vms/{id}/snapshots`
+- `/api/vms/{id}/validation/latest`
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`classifyCaptureError`** (helper)
+- **`VMDetail`** (component)
+- **`Shell`** (component)
+- **`Section`** (component)
+- **`Field`** (component)
+- **`Stat`** (component)
+- **`Subtitle`** (component)
+- **`Banner`** (component)
+- **`Error`** (component)
+- **`OSBadge`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/components/VirtValidate.jsx</code></strong> — <em>Frontend component</em> · Design Review status + severity colors. Module-level so the dashboard</summary>
 
 API calls:
 - `/api/audit?{id}`
+- `/api/network-reviews`
 - `/api/plans`
 - `/api/plans/{id}/waves/{id}/mtv-yaml`
 - `/api/plans?limit=1`
@@ -691,6 +884,7 @@ API calls:
 - `/api/vms/{id}/validation/latest`
 
 Exports / inner components:
+- **`NetworkReviewStatusPill`** (component)
 - **`mapVM`** (helper)
 - **`fetchJSON`** (helper)
 - **`OSBadge`** (component)

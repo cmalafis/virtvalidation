@@ -21,6 +21,33 @@ const SEVERITY_COLOR = {
 
 const RISK_COLOR = { low: "#00ff88", medium: "#ffaa00", high: "#ff3355" };
 
+// Design Review status + severity colors. Module-level so the dashboard
+// tab pill stays consistent with the detail page's pill (they're rendered
+// in different files; same palette either way).
+const NETWORK_REVIEW_STATUS_COLOR = {
+  draft: "#aaaacc",
+  analyzing: "#88aaff",
+  completed: "#00ff88",
+  failed: "#ff5577",
+};
+const SEVERITY_COLOR_DR = {
+  critical: "#ff3355", high: "#ff7755", medium: "#ffaa00",
+  low: "#88aaff", info: "#aaaacc",
+};
+
+function NetworkReviewStatusPill({ status }) {
+  const c = NETWORK_REVIEW_STATUS_COLOR[status] || "#aaaacc";
+  return (
+    <span style={{
+      fontSize: 11, color: c, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700,
+      padding: "4px 10px", border: `1px solid ${c}66`, background: `${c}11`,
+      fontFamily: "'Barlow', sans-serif", display: "inline-block",
+    }}>
+      {status}
+    </span>
+  );
+}
+
 const VM_STATUS_MAP = {
   discovered:         { preStatus: "pending",  postStatus: "pending" },
   baseline_captured:  { preStatus: "captured", postStatus: "pending" },
@@ -113,6 +140,77 @@ const SeverityTag = ({ s }) => {
     }}>{s || "—"}</span>
   );
 };
+
+const CONFIDENCE_LABEL = {
+  high: { color: "#00ff88", label: "HIGH" },
+  medium: { color: "#ffaa00", label: "MEDIUM" },
+  low: { color: "#ff5577", label: "LOW" },
+};
+
+// Per-finding card for the dashboard validation panel. Mirrors VMDetail's
+// Finding component — kept here so the dashboard panel can stay self-contained.
+function FindingCard({ f }) {
+  const sevColor = SEVERITY_COLOR[f.severity] || "#aaaacc";
+  const conf = CONFIDENCE_LABEL[f.confidence] || null;
+  return (
+    <div style={{
+      padding: "14px 18px", marginBottom: 12,
+      border: "1px solid #1a1a2e", borderLeft: `3px solid ${sevColor}`,
+      background: "#07070f",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+        <SeverityTag s={f.severity} />
+        {f.category && (
+          <span style={{ fontSize: 11, color: "#aaaacc", letterSpacing: "0.06em", textTransform: "uppercase", fontFamily: "'Barlow', sans-serif", fontWeight: 600 }}>
+            {f.category}
+          </span>
+        )}
+        {conf && (
+          <span style={{
+            fontSize: 10, color: conf.color, border: `1px solid ${conf.color}55`,
+            padding: "2px 7px", letterSpacing: "0.08em", fontWeight: 700,
+            textTransform: "uppercase", fontFamily: "'Barlow', sans-serif",
+          }}>{conf.label} CONFIDENCE</span>
+        )}
+      </div>
+      {f.title && (
+        <div style={{ fontSize: 14, color: "#eeeeff", fontWeight: 700, marginBottom: 6, lineHeight: 1.5, fontFamily: "'Barlow', sans-serif" }}>
+          {f.title}
+        </div>
+      )}
+      {(f.description || f.message) && (
+        <div style={{ fontSize: 13, color: "#ccccee", lineHeight: 1.6, marginBottom: f.source_evidence || f.current_evidence ? 12 : 0, fontFamily: "'Barlow', sans-serif" }}>
+          {f.description || f.message}
+        </div>
+      )}
+      {(f.source_evidence || f.current_evidence) && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: f.remediation ? 12 : 0 }}>
+          {f.source_evidence && (
+            <div style={{ padding: "8px 10px", background: "#0a0a18", border: "1px solid #1a1a2e" }}>
+              <div style={{ fontSize: 10, color: "#88aaff", letterSpacing: "0.08em", fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Baseline</div>
+              <code style={{ fontSize: 12, color: "#ccccee", fontFamily: "'Share Tech Mono', monospace", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {f.source_evidence}
+              </code>
+            </div>
+          )}
+          {f.current_evidence && (
+            <div style={{ padding: "8px 10px", background: "#0a0a18", border: "1px solid #1a1a2e" }}>
+              <div style={{ fontSize: 10, color: "#ffaa00", letterSpacing: "0.08em", fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Current</div>
+              <code style={{ fontSize: 12, color: "#ccccee", fontFamily: "'Share Tech Mono', monospace", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {f.current_evidence}
+              </code>
+            </div>
+          )}
+        </div>
+      )}
+      {f.remediation && (
+        <div style={{ fontSize: 13, color: "#ccccee", lineHeight: 1.6, paddingTop: 10, borderTop: "1px solid #1a1a2e", fontFamily: "'Barlow', sans-serif" }}>
+          <span style={{ color: "#88aaff", fontWeight: 700, marginRight: 8 }}>Remediation:</span>{f.remediation}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Metric labels are short human descriptors → Barlow. Values stay monospace
 // because they're almost always technical data (IPs, IDs, sizes, OS names).
@@ -1561,7 +1659,7 @@ function GeneratePlanModal({ open, onClose, vms, onCreated }) {
     try {
       await toast.promise(promise, {
         loading: "Generating plan via Ollama…",
-        success: (r) => `Plan #${r.data.id} generated (${r.data.waves.length} waves)`,
+        success: (r) => `Plan #${r.data.id} generated (${(r.data.waves || []).length} waves)`,
         error: (e) => e.message || "Plan generation failed",
       }, TOAST_OPTS);
       onCreated();
@@ -1684,6 +1782,11 @@ export default function VirtValidate() {
   const [planRetrying, setPlanRetrying] = useState(false);
 
   // Audit log
+  // Network design reviews — lightweight index for the dashboard tab.
+  const [networkReviews, setNetworkReviews] = useState([]);
+  const [networkReviewsLoading, setNetworkReviewsLoading] = useState(false);
+  const [networkReviewsError, setNetworkReviewsError] = useState(null);
+
   const [auditEntries, setAuditEntries] = useState([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState(null);
@@ -1741,6 +1844,19 @@ export default function VirtValidate() {
     }
   }, []);
 
+  const loadNetworkReviews = useCallback(async () => {
+    setNetworkReviewsLoading(true);
+    try {
+      const { data } = await fetchJSON("/api/network-reviews");
+      setNetworkReviews(Array.isArray(data) ? data : []);
+      setNetworkReviewsError(null);
+    } catch (e) {
+      setNetworkReviewsError(e.message || "Failed to load reviews");
+    } finally {
+      setNetworkReviewsLoading(false);
+    }
+  }, []);
+
   const loadVMDetail = useCallback(async (id, ctrl) => {
     setDetailLoading(true);
     setValidationLoading(true);
@@ -1769,12 +1885,13 @@ export default function VirtValidate() {
         if (valRes.error.name !== "AbortError") {
           setValidationError(valRes.error.message || "Failed to load validation");
         }
-      } else if (valRes.status === 404) {
-        setValidationMissing(true);
-        setValidation(null);
       } else {
-        setValidation(valRes.data);
-        setValidationMissing(false);
+        // /validation/latest returns 200 with `{ validation: null }` when
+        // no run exists — treat null as "missing" and render the empty
+        // state instead of a real result.
+        const v = valRes.data?.validation || null;
+        setValidation(v);
+        setValidationMissing(v == null);
       }
 
       // os_profile is only useful once a baseline exists — silently fall
@@ -1801,6 +1918,12 @@ export default function VirtValidate() {
     loadAudit({ action: auditActionFilter, resourceType: auditResourceFilter });
   }, [activeTab, auditActionFilter, auditResourceFilter, loadAudit]);
 
+  // Design reviews: same lazy-load pattern as audit log.
+  useEffect(() => {
+    if (activeTab !== "design review") return;
+    loadNetworkReviews();
+  }, [activeTab, loadNetworkReviews]);
+
   // Refetch on selection change
   useEffect(() => {
     if (selectedVMId == null) {
@@ -1823,23 +1946,159 @@ export default function VirtValidate() {
     }
   }, [vms, selectedVMId]);
 
-  // Sidebar action: simulate kicking off a validation refresh
+  // Poll a list of (vm_id, task_id) handles for the validate endpoint, the
+  // same way pollCaptureTasks polls capture handles. Returns {ok, failed}.
+  const pollValidationTasks = useCallback(async (handles) => {
+    const pending = new Map(handles.map((h) => [h.vm_id, h.task_id]));
+    let ok = 0;
+    let failed = 0;
+    const startedAt = Date.now();
+    while (pending.size > 0 && Date.now() - startedAt < 300_000) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const checks = await Promise.all(
+        Array.from(pending.entries()).map(async ([vmId, taskId]) => {
+          try {
+            const { data } = await fetchJSON(`/api/vms/${vmId}/validate/${taskId}`);
+            return { vmId, data };
+          } catch (e) {
+            return { vmId, data: null, error: e.message };
+          }
+        })
+      );
+      let anyResolved = false;
+      for (const { vmId, data, error } of checks) {
+        const status = data?.status ?? "failed";
+        if (status === "running") continue;
+        anyResolved = true;
+        pending.delete(vmId);
+        if (status === "completed") ok += 1;
+        else failed += 1;
+        if (status === "failed") {
+          const errMsg = data?.error || error || "Validation failed";
+          const vmName = vms.find((v) => v.id === vmId)?.name || `vm ${vmId}`;
+          toast.error(`Validation failed for ${vmName}: ${errMsg}`, { ...TOAST_OPTS, duration: 8000 });
+        }
+      }
+      if (anyResolved) loadVMs();
+    }
+    return { ok, failed };
+  }, [loadVMs, vms]);
+
+  // Sidebar action: kick off a validation against the selected VM (or
+  // run-all when nothing is selected). The selected-VM path mirrors the
+  // capture flow — single POST, then poll the task to terminal state.
   const onRunValidation = async () => {
+    if (validationRunning) return;
     if (selectedVMId == null) {
-      toast("Select a VM first", { ...TOAST_OPTS, icon: "ℹ️" });
+      // Bulk path: run validation against every VM with a baseline.
+      let result;
+      try {
+        const { data } = await fetchJSON("/api/validations/run-all", { method: "POST" });
+        result = data;
+      } catch (e) {
+        toast.error(e.message || "Failed to start bulk validation", TOAST_OPTS);
+        return;
+      }
+      const spawnCount = result.spawned.length;
+      const skipCount = result.skipped.length;
+      if (spawnCount === 0) {
+        toast.error(
+          skipCount > 0
+            ? `Skipped all ${skipCount} VMs (no baseline or host) — capture baselines first`
+            : "No VMs to validate",
+          TOAST_OPTS,
+        );
+        return;
+      }
+      setValidationRunning(true);
+      toast(`Validating ${spawnCount} VM${spawnCount === 1 ? "" : "s"}…`, { ...TOAST_OPTS, icon: "🤖" });
+      try {
+        const { ok, failed } = await pollValidationTasks(result.spawned);
+        const parts = [`Validated ${ok} of ${spawnCount}`];
+        if (failed > 0) parts.push(`${failed} failed`);
+        if (skipCount > 0) parts.push(`${skipCount} skipped`);
+        if (failed === 0 && skipCount === 0) toast.success(parts.join(" · "), TOAST_OPTS);
+        else toast(parts.join(" · "), { ...TOAST_OPTS, icon: failed > 0 ? "⚠️" : "ℹ️" });
+      } finally {
+        setValidationRunning(false);
+      }
       return;
     }
+
+    // Single-VM path.
     setValidationRunning(true);
     try {
-      // Validation runs are scheduled server-side; here we just refresh
-      // the latest result and surface a clear in-progress indicator.
+      const { data } = await fetchJSON(`/api/vms/${selectedVMId}/validate`, { method: "POST" });
+      const vmName = vms.find((v) => v.id === selectedVMId)?.name || `vm ${selectedVMId}`;
+      toast(`Validating ${vmName}…`, { ...TOAST_OPTS, icon: "🤖" });
+      const { ok, failed } = await pollValidationTasks([{ vm_id: selectedVMId, task_id: data.task_id }]);
+      if (ok > 0) toast.success(`Validation completed for ${vmName}`, TOAST_OPTS);
+      else if (failed > 0) toast.error(`Validation failed for ${vmName} — check audit log`, TOAST_OPTS);
       await loadVMDetail(selectedVMId);
-      toast.success("Validation refreshed", TOAST_OPTS);
     } catch (e) {
-      toast.error(e.message || "Validation refresh failed", TOAST_OPTS);
+      // Surface backend's "no baseline" 400 cleanly.
+      toast.error(e.message || "Validation failed to start", TOAST_OPTS);
     } finally {
       setValidationRunning(false);
     }
+  };
+
+  // Map raw SSH/capture error strings to operator-facing next-step hints.
+  // Keeps the backend free of UX-string baggage — the message lives where
+  // the affordance does. New failure modes can be added by appending a
+  // pattern + hint here without touching the SSH layer.
+  const classifyCaptureError = (raw) => {
+    const msg = String(raw || "").toLowerCase();
+    if (!msg) return { category: "unknown", hint: "No error detail available." };
+    if (msg.includes("not found") && msg.includes("known_hosts")) {
+      return {
+        category: "host_key_unknown",
+        hint: "Strict host-key checking is enabled and this VM isn't in known_hosts. Switch to auto-accept in Settings, or distribute the key out-of-band.",
+      };
+    }
+    if (msg.includes("man-in-the-middle") || msg.includes("host key") && msg.includes("changed")) {
+      return {
+        category: "host_key_mismatch",
+        hint: "Host key changed. Could be a VM rebuild — or a real attack. Compare fingerprints before re-accepting.",
+      };
+    }
+    if (msg.includes("connection refused") || msg.includes("errno 111")) {
+      return {
+        category: "connection_refused",
+        hint: "Connection refused. Check that sshd is running on the VM and that the security group / firewall allows inbound TCP on the SSH port.",
+      };
+    }
+    if (msg.includes("timed out") || msg.includes("timeout")) {
+      return {
+        category: "timeout",
+        hint: "Connection timed out. Check network reachability — try `nc -vz <host> 22` from the appliance.",
+      };
+    }
+    if (msg.includes("authentication") || msg.includes("permission denied")) {
+      return {
+        category: "auth_failed",
+        hint: "SSH authentication failed. Verify the appliance public key is in ~/.ssh/authorized_keys on the VM (Settings → SSH Public Key has the canonical line).",
+      };
+    }
+    if (msg.includes("sudo") || msg.includes("not in sudoers")) {
+      return {
+        category: "sudo_denied",
+        hint: "sudo is required for systemctl/ss/findmnt. Add a NOPASSWD rule per docs/SSH_SETUP.md.",
+      };
+    }
+    if (msg.includes("command not found")) {
+      return {
+        category: "command_missing",
+        hint: "A required tool (ss, findmnt, systemctl) is missing on the VM. Check the OS compatibility matrix in docs/COMPATIBILITY.md.",
+      };
+    }
+    if (msg.includes("ssh key not found")) {
+      return {
+        category: "key_missing",
+        hint: "Appliance SSH key missing — generate one via Settings or `ssh-keygen -t ed25519 -f /app/keys/id_ed25519`.",
+      };
+    }
+    return { category: "generic", hint: raw };
   };
 
   // Poll a list of (vm_id, task_id) handles every 2s, updating
@@ -1886,8 +2145,14 @@ export default function VirtValidate() {
           next.delete(vmId);
           return next;
         });
-        if (status === "failed" && (data?.error || error)) {
-          // Capture failure surfaces in the bookend toast; keep silent here.
+        if (status === "failed") {
+          const errMsg = data?.error || error || "Capture failed (no detail)";
+          const { hint } = classifyCaptureError(errMsg);
+          // Per-VM toast so operators see WHY each one failed, not just a
+          // count in the bookend toast. The hint is the actionable line —
+          // the raw error message goes to console for deeper investigation.
+          const vmName = vms.find((v) => v.id === vmId)?.name || `vm ${vmId}`;
+          toast.error(`Capture failed for ${vmName}: ${hint}`, { ...TOAST_OPTS, duration: 8000 });
         }
       }
 
@@ -1899,7 +2164,7 @@ export default function VirtValidate() {
     }
 
     return { ok, failed };
-  }, [loadVMs]);
+  }, [loadVMs, vms]);
 
   const onCaptureSingle = useCallback(async (vm) => {
     if (activeCaptures.has(vm.id)) return;
@@ -2016,7 +2281,7 @@ export default function VirtValidate() {
   }, [vms]);
 
   const validatedPct = total === 0 ? 0 : Math.round(((healthy + degraded + failed) / total) * 100);
-  const tabs = ["validation", "migration plan", "inventory", "reports", "audit log"];
+  const tabs = ["validation", "migration plan", "inventory", "reports", "design review", "audit log"];
 
   const detailPostStatus = validation
     ? VERDICT_TO_STATUS[validation.status] || "pending"
@@ -2376,44 +2641,25 @@ export default function VirtValidate() {
                         marginBottom: 14, fontFamily: "'Barlow', sans-serif",
                         textTransform: "uppercase", fontWeight: 700,
                       }}>AI Findings</div>
-                      {validation.findings.length === 0 ? (
+                      {(validation.findings || []).length === 0 ? (
                         <div style={{
                           fontSize: 14, color: "#aaaacc", marginBottom: 18,
                           fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
                         }}>No findings recorded.</div>
                       ) : (
-                        validation.findings.map((f, i) => (
-                          <div key={i} className="finding-row" style={{ borderLeftColor: SEVERITY_COLOR[f.severity] || "#8888aa" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                              <SeverityTag s={f.severity} />
-                              {f.category && (
-                                <span style={{
-                                  fontSize: 11, color: "#aaaacc", letterSpacing: "0.06em",
-                                  textTransform: "uppercase", fontFamily: "'Barlow', sans-serif",
-                                  fontWeight: 600,
-                                }}>
-                                  {f.category}
-                                </span>
-                              )}
-                            </div>
-                            <div style={{
-                              fontSize: 14, color: "#ccccee", fontFamily: "'Barlow', sans-serif",
-                              lineHeight: 1.6,
-                            }}>
-                              {f.message}
-                            </div>
-                          </div>
+                        (validation.findings || []).map((f, i) => (
+                          <FindingCard key={i} f={f} />
                         ))
                       )}
 
-                      {validation.remediation.length > 0 && (
+                      {(validation.remediation || []).length > 0 && (
                         <>
                           <div style={{
                             fontSize: 13, color: "#aaaacc", letterSpacing: "0.08em",
                             margin: "24px 0 14px", fontFamily: "'Barlow', sans-serif",
                             textTransform: "uppercase", fontWeight: 700,
                           }}>Remediation</div>
-                          {validation.remediation.map((r, i) => (
+                          {(validation.remediation || []).map((r, i) => (
                             <div key={i} style={{ marginBottom: 14, fontFamily: "'Barlow', sans-serif" }}>
                               <div style={{ fontSize: 14, color: "#ccccee", lineHeight: 1.6 }}>
                                 <span style={{ color: "#88aaff", marginRight: 8, fontWeight: 700 }}>
@@ -2477,8 +2723,8 @@ export default function VirtValidate() {
                         <span style={{ fontFamily: "'Share Tech Mono', monospace", color: "#eeeeff" }}>
                           #{plan.id}
                         </span>
-                        {" · "}{plan.waves.length} wave{plan.waves.length === 1 ? "" : "s"}
-                        {" · "}{plan.vm_ids.length} VMs
+                        {" · "}{(plan.waves || []).length} wave{(plan.waves || []).length === 1 ? "" : "s"}
+                        {" · "}{(plan.vm_ids || []).length} VMs
                       </span>
                       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                         <span style={{
@@ -2499,7 +2745,7 @@ export default function VirtValidate() {
                     )}
                   </div>
 
-                  {plan.waves.map((wave) => (
+                  {(plan.waves || []).map((wave) => (
                     <div key={wave.wave_number} style={{ border: "1px solid #1a1a2e", marginBottom: 14 }}>
                       <div className="wave-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 22px", background: "#0a0a16" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -2518,7 +2764,7 @@ export default function VirtValidate() {
                           <span style={{
                             fontSize: 13, color: "#aaaacc",
                             fontFamily: "'Barlow', sans-serif",
-                          }}>{wave.vm_ids.length} VMs</span>
+                          }}>{(wave.vm_ids || []).length} VMs</span>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                           <WaveMTVDownload planId={plan.id} waveNumber={wave.wave_number} />
@@ -2543,7 +2789,7 @@ export default function VirtValidate() {
                         </div>
                       )}
                       <div style={{ padding: "10px 22px 18px", borderTop: "1px solid #0f0f1e" }}>
-                        {wave.vm_ids.map((vid) => (
+                        {(wave.vm_ids || []).map((vid) => (
                           <div key={vid} style={{
                             display: "flex", alignItems: "center", justifyContent: "space-between",
                             padding: "12px 0", borderBottom: "1px solid #0f0f1e",
@@ -2655,10 +2901,16 @@ export default function VirtValidate() {
                                 style={{ accentColor: "#4488ff", width: 16, height: 16, marginTop: 4 }}
                               />
                               <div>
-                                <div style={{
-                                  fontSize: 16, fontFamily: "'Barlow', sans-serif",
-                                  fontWeight: 700, color: "#eeeeff",
-                                }}>{vm.name}</div>
+                                <Link
+                                  to={`/vms/${vm.id}`}
+                                  style={{
+                                    fontSize: 16, fontFamily: "'Barlow', sans-serif",
+                                    fontWeight: 700, color: "#eeeeff",
+                                    textDecoration: "none", display: "block",
+                                  }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.color = "#aaccff"; }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.color = "#eeeeff"; }}
+                                >{vm.name} →</Link>
                                 <div style={{
                                   fontSize: 13, color: "#aaaacc", marginTop: 4,
                                   fontFamily: "'Barlow', sans-serif",
@@ -2739,16 +2991,26 @@ export default function VirtValidate() {
             <div className="fade-in">
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {[
-                  { name: "Full Migration Validation Report", desc: "All VMs, all findings, remediation steps. CISO-ready.", icon: "▤" },
-                  { name: "Executive Summary", desc: "High-level migration status, risk overview, wave completion.", icon: "◈" },
-                  { name: "Failed & Degraded VMs", desc: "Filtered report — only VMs requiring action.", icon: "⚠" },
-                  { name: "Migration Wave Plan", desc: "AI-generated wave sequencing with rationale.", icon: "◎" },
-                  { name: "Pre-Migration Baseline Snapshot", desc: "Full captured state of all VMs before migration.", icon: "◷" },
+                  { type: "full-validation",   name: "Full Migration Validation Report", desc: "All VMs, all findings, remediation steps. CISO-ready.", icon: "▤" },
+                  { type: "executive-summary", name: "Executive Summary",                desc: "High-level migration status, risk overview, wave completion.", icon: "◈" },
+                  { type: "failed-degraded",   name: "Failed & Degraded VMs",            desc: "Filtered report — only VMs requiring action.", icon: "⚠" },
+                  { type: "wave-plan",         name: "Migration Wave Plan",              desc: "AI-generated wave sequencing with rationale.", icon: "◎" },
+                  { type: "baseline-snapshot", name: "Pre-Migration Baseline Snapshot",  desc: "Full captured state of all VMs before migration.", icon: "◷" },
                 ].map(r => (
-                  <div key={r.name} style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "20px 24px", border: "1px solid #1a1a2e", background: "#0a0a18",
-                  }}>
+                  // The whole row is the click target — opens the inline
+                  // report viewer. Per spec: don't make users hunt for the
+                  // export button just to read a report.
+                  <Link
+                    key={r.type}
+                    to={`/reports/${r.type}`}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "20px 24px", border: "1px solid #1a1a2e", background: "#0a0a18",
+                      textDecoration: "none", transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#4488ff44"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#1a1a2e"; }}
+                  >
                     <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
                       <span style={{ fontSize: 22, color: "#3a3a55" }}>{r.icon}</span>
                       <div>
@@ -2762,16 +3024,93 @@ export default function VirtValidate() {
                         }}>{r.desc}</div>
                       </div>
                     </div>
-                    <button onClick={() => toast("Report export wires up to /api/plans/{id}/waves/{n}/report/pdf", { ...TOAST_OPTS, icon: "ℹ️" })}
-                      style={{
-                        background: "transparent", border: "1px solid #3a3a55", color: "#ccccee",
-                        padding: "9px 18px", fontSize: 12, fontFamily: "'Barlow', sans-serif",
-                        letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
-                        cursor: "pointer",
-                      }}>Export PDF</button>
-                  </div>
+                    <span style={{
+                      background: "transparent", border: "1px solid #4488ff", color: "#aaccff",
+                      padding: "9px 18px", fontSize: 12, fontFamily: "'Barlow', sans-serif",
+                      letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+                    }}>View Report →</span>
+                  </Link>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* DESIGN REVIEW TAB */}
+          {activeTab === "design review" && (
+            <div className="fade-in">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+                <div>
+                  <div style={{ fontSize: 14, color: "#aaaacc", lineHeight: 1.6, maxWidth: 780 }}>
+                    Compare a proposed OpenShift Virtualization network design against your VMware source environment.
+                    Decision support — every finding still needs a network-engineer review before action.
+                  </div>
+                </div>
+                <Link to="/design-reviews/new" style={{
+                  background: "#1d3a8a", border: "1px solid #4488ff", color: "#eef2ff",
+                  padding: "10px 18px", fontFamily: "'Barlow', sans-serif", fontSize: 12,
+                  letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+                  textDecoration: "none", whiteSpace: "nowrap",
+                }}>+ New review</Link>
+              </div>
+
+              {networkReviewsError ? (
+                <ErrorState title="Couldn't load reviews" message={networkReviewsError} onRetry={loadNetworkReviews} />
+              ) : networkReviewsLoading ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {Array.from({ length: 3 }).map((_, i) => <Shimmer key={i} width="100%" height={60}/>)}
+                </div>
+              ) : networkReviews.length === 0 ? (
+                <EmptyState
+                  icon="◇"
+                  title="No design reviews yet"
+                  description="Create a review to validate a proposed OpenShift Virtualization network design against your source VMware environment."
+                  ctaLabel="Create First Review"
+                  onCta={() => window.location.assign("/design-reviews/new")}
+                />
+              ) : (
+                <div style={{ border: "1px solid #1a1a2e" }}>
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1.2fr",
+                    padding: "12px 18px", borderBottom: "1px solid #1a1a2e", background: "#0a0a16",
+                  }}>
+                    {["Name", "Status", "Findings", "Severity Mix", "Last Analyzed"].map((h) => (
+                      <span key={h} style={{
+                        fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
+                        fontFamily: "'Barlow', sans-serif", textTransform: "uppercase", fontWeight: 700,
+                      }}>{h}</span>
+                    ))}
+                  </div>
+                  {networkReviews.map((r, i) => (
+                    <Link key={r.id} to={`/design-reviews/${r.id}`}
+                      style={{
+                        display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1.2fr",
+                        padding: "14px 18px", alignItems: "center",
+                        borderBottom: i < networkReviews.length - 1 ? "1px solid #0f0f1e" : "none",
+                        textDecoration: "none", transition: "background 0.15s",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(68,136,255,0.04)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    >
+                      <span style={{ fontSize: 14, color: "#eeeeff", fontFamily: "'Barlow', sans-serif", fontWeight: 600 }}>{r.name}</span>
+                      <NetworkReviewStatusPill status={r.status} />
+                      <span style={{ fontSize: 13, color: "#ccccee", fontFamily: "'Share Tech Mono', monospace" }}>{r.finding_count}</span>
+                      <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {Object.entries(r.severity_counts || {}).map(([sev, count]) => (
+                          <span key={sev} style={{
+                            fontSize: 10, color: SEVERITY_COLOR_DR[sev] || "#aaaacc",
+                            border: `1px solid ${(SEVERITY_COLOR_DR[sev] || "#aaaacc")}55`,
+                            padding: "2px 7px", letterSpacing: "0.06em", fontWeight: 700,
+                            fontFamily: "'Barlow', sans-serif", textTransform: "uppercase",
+                          }}>{sev} · {count}</span>
+                        ))}
+                      </span>
+                      <span style={{ fontSize: 12, color: "#aaaacc", fontFamily: "'Share Tech Mono', monospace" }}>
+                        {r.last_analyzed_at ? new Date(r.last_analyzed_at).toLocaleString() : "—"}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -2913,8 +3252,13 @@ export default function VirtValidate() {
           )}
         </div>
 
-        {/* Right sidebar — system info */}
-        <div style={{ width: 260, borderLeft: "1px solid #1a1a2e", padding: 22, background: "#080814", flexShrink: 0 }}>
+        {/* Right sidebar — system info. Independently scrollable so the
+             AI Engine indicator at the bottom stays reachable on short
+             viewports (1280×720 etc.) where the content overflowed before. */}
+        <div style={{
+          width: 260, borderLeft: "1px solid #1a1a2e", padding: 22, background: "#080814",
+          flexShrink: 0, overflowY: "auto", height: "100%",
+        }}>
           <div style={{
             fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
             marginBottom: 18, fontFamily: "'Barlow', sans-serif",
@@ -2954,18 +3298,20 @@ export default function VirtValidate() {
 
             <button className="quick-action"
               onClick={onRunValidation}
-              disabled={validationRunning || selectedVMId == null}
-              title={selectedVMId == null ? "Select a VM first" : "Refresh latest validation"}
+              disabled={validationRunning || vmsLoading}
+              title={selectedVMId == null
+                ? "Run validation against every VM with a baseline"
+                : "Run validation for the selected VM"}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", marginBottom: 10,
                 background: "none", border: "1px solid #2a2a44",
-                color: validationRunning || selectedVMId == null ? "#888899" : "#ccccee",
+                color: validationRunning || vmsLoading ? "#888899" : "#ccccee",
                 padding: "11px 14px", fontSize: 12, fontFamily: "'Barlow', sans-serif",
                 letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
-                cursor: validationRunning || selectedVMId == null ? "not-allowed" : "pointer", textAlign: "left",
+                cursor: validationRunning || vmsLoading ? "wait" : "pointer", textAlign: "left",
                 transition: "all 0.15s",
               }}>
-              <span>Run Validation</span>
+              <span>{selectedVMId == null ? "Run Validation (All)" : "Run Validation"}</span>
               {validationRunning && <Spinner size={12}/>}
             </button>
 

@@ -1,4 +1,13 @@
 from app.models.audit import AuditLog
+from app.models.network_review import (
+    FindingCategory,
+    FindingConfidence,
+    FindingSeverity,
+    FindingTriage,
+    NetworkDesignReview,
+    NetworkFinding,
+    NetworkReviewStatus,
+)
 from app.models.plan import MigrationPlan
 from app.models.settings import AppSettings, SchedulePreset
 from app.models.validation import ValidationResult, ValidationStatus
@@ -14,4 +23,11 @@ __all__ = [
     "AppSettings",
     "SchedulePreset",
     "AuditLog",
+    "NetworkDesignReview",
+    "NetworkFinding",
+    "NetworkReviewStatus",
+    "FindingCategory",
+    "FindingSeverity",
+    "FindingConfidence",
+    "FindingTriage",
 ]

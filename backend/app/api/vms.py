@@ -7,9 +7,14 @@ from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
 from app.core.capture import run_capture_task, task_store
 from app.core.db import get_db
+from app.core.validation import run_validation_task
+from app.core.validation import task_store as validation_task_store
 from app.models.validation import ValidationResult
 from app.models.vm import VM, BaselineSnapshot, VMStatus
-from app.schemas.validation import ValidationResultRead
+from app.schemas.validation import (
+    LatestValidationResponse,
+    ValidationTaskRead,
+)
 from app.schemas.vm import (
     BaselineProfile,
     BulkVMCreate,
@@ -337,8 +342,15 @@ def get_snapshot(vm_id: int, snapshot_id: int, db: Session = Depends(get_db)) ->
     return snapshot
 
 
-@router.get("/{vm_id}/validation/latest", response_model=ValidationResultRead)
-def latest_validation(vm_id: int, db: Session = Depends(get_db)) -> ValidationResult:
+@router.get("/{vm_id}/validation/latest", response_model=LatestValidationResponse)
+def latest_validation(vm_id: int, db: Session = Depends(get_db)) -> dict:
+    """Return the latest validation result for a VM.
+
+    "No validation yet" is a 200 with ``{"validation": null}`` — the VM
+    detail page reads this on every load, and a 404 would force the UI
+    to differentiate "VM doesn't exist" (real error) from "validation
+    hasn't been run yet" (empty state) at the response level.
+    """
     _get_vm_or_404(db, vm_id)
     row = db.scalars(
         select(ValidationResult)
@@ -346,9 +358,82 @@ def latest_validation(vm_id: int, db: Session = Depends(get_db)) -> ValidationRe
         .order_by(ValidationResult.validated_at.desc())
         .limit(1)
     ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"No validation results for VM {vm_id}")
-    return row
+    return {"validation": row}
+
+
+# ---------------------------------------------------------------------------
+# On-demand validation
+# ---------------------------------------------------------------------------
+@router.post(
+    "/{vm_id}/validate",
+    response_model=ValidationTaskRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def trigger_validation(
+    request: Request,
+    vm_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Spawn an immediate post-migration validation in the background.
+
+    Returns 202 with the task handle. The actual SSH+LLM round-trip runs
+    after the response is sent so the UI can poll for progress. A VM with
+    no baseline is rejected up-front (400) — running the diff engine
+    against an empty baseline produces a meaningless verdict.
+    """
+    vm = _get_vm_or_404(db, vm_id)
+    actor = request.headers.get("x-actor", "user")
+
+    has_baseline = (
+        db.scalar(select(BaselineSnapshot.id).where(BaselineSnapshot.vm_id == vm.id).limit(1))
+        is not None
+    )
+    if not has_baseline:
+        request.state.skip_audit_log = True
+        raise HTTPException(
+            status_code=400,
+            detail="Capture a baseline first before running validation",
+        )
+
+    task = validation_task_store.create(vm_id=vm.id)
+    record_audit(
+        db,
+        action="validation.triggered",
+        actor=actor,
+        resource_type="vm",
+        resource_id=vm.id,
+        details={
+            "vm_name": vm.name,
+            "task_id": task.task_id,
+            "via": "single",
+        },
+    )
+    db.commit()
+
+    background_tasks.add_task(run_validation_task, task.task_id, vm.id, actor=actor)
+    request.state.skip_audit_log = True
+    return task.to_dict()
+
+
+@router.get("/{vm_id}/validate/{task_id}", response_model=ValidationTaskRead)
+def get_validation_status(vm_id: int, task_id: str) -> dict:
+    task = validation_task_store.get(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Validation task {task_id} not found. Tasks are kept in memory "
+                "only and may have been cleared by an appliance restart — "
+                "re-trigger the validation if needed."
+            ),
+        )
+    if task.vm_id != vm_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} belongs to vm_id={task.vm_id}, not {vm_id}",
+        )
+    return task.to_dict()
 
 
 @router.get("/{vm_id}/baseline/history", response_model=list[SnapshotRead])

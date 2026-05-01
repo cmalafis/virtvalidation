@@ -59,3 +59,29 @@ virtvalidate/
 - [ ] LLM validation engine
 - [ ] Migration planner
 - [ ] PostgreSQL models
+
+## DEFENSIVE CODING REQUIREMENTS
+
+When writing React components that consume API data, ALWAYS:
+
+1. Assume any nested field might be undefined or null
+2. Use optional chaining (?.) and nullish coalescing (??) for all 
+   nested property access
+3. Provide empty array defaults: const items = data?.items ?? []
+4. Render explicit empty states for missing data, never let the 
+   component crash
+5. Wrap pages in error boundaries
+6. Test components with: no data, partial data, error responses, 
+   loading states
+
+Common patterns that crash:
+- array.length when array is undefined → use (array || []).length
+- object.field when object is undefined → use object?.field
+- array.map(...) when array is undefined → use (array || []).map(...)
+- nested.path.access → use nested?.path?.access
+
+When writing API endpoints, ALWAYS return consistent response 
+shapes. Don't return 404 for "no data yet" — return 200 with 
+empty arrays/null fields. The frontend should never have to 
+distinguish between "endpoint doesn't exist" and "endpoint exists 
+but no data."

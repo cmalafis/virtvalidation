@@ -1513,6 +1513,123 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.api.network_reviews",
+        "title": "app.api.network_reviews",
+        "subtitle": "backend/app/api/network_reviews.py",
+        "summary": "Network design review HTTP surface.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/api/network-reviews",
+            "handler": "create_review",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/network-reviews",
+            "handler": "list_reviews",
+            "summary": "Index. Sorted newest first; embeds the finding+severity counts so"
+          },
+          {
+            "method": "GET",
+            "path": "/api/network-reviews/{review_id}",
+            "handler": "get_review",
+            "summary": ""
+          },
+          {
+            "method": "PUT",
+            "path": "/api/network-reviews/{review_id}/notes",
+            "handler": "update_notes",
+            "summary": ""
+          },
+          {
+            "method": "PUT",
+            "path": "/api/network-reviews/{review_id}/yaml",
+            "handler": "update_yaml",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/network-reviews/{review_id}/analyze",
+            "handler": "analyze_review",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/network-reviews/{review_id}",
+            "handler": "delete_review",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/network-reviews/{review_id}/findings/{finding_id}",
+            "handler": "update_finding_triage",
+            "summary": ""
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.core.db",
+          "app.core.network_review",
+          "app.models.network_review",
+          "app.schemas.network_review"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.api.reports",
+        "title": "app.api.reports",
+        "subtitle": "backend/app/api/reports.py",
+        "summary": "Dashboard-level report endpoints.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/reports/full-validation",
+            "handler": "full_validation",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/reports/executive-summary",
+            "handler": "executive_summary",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/reports/failed-degraded",
+            "handler": "failed_degraded",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/reports/wave-plan",
+            "handler": "wave_plan",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/reports/baseline-snapshot",
+            "handler": "baseline_snapshot",
+            "summary": ""
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.config",
+          "app.core.db",
+          "app.models.plan",
+          "app.models.validation",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.api.settings",
         "title": "app.api.settings",
         "subtitle": "backend/app/api/settings.py",
@@ -1662,6 +1779,52 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.network_review",
+        "title": "app.core.network_review",
+        "subtitle": "backend/app/core/network_review.py",
+        "summary": "Network Design Review \u2014 gap analysis between source VMware networking and",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "NetworkReviewError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the LLM call fails or returns unparseable output."
+          },
+          {
+            "name": "NetworkReviewer",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "analyze",
+                "summary": ""
+              }
+            ],
+            "summary": "Wraps the local Ollama call. Same pattern as MigrationPlanner /"
+          }
+        ],
+        "functions": [
+          {
+            "name": "build_source_summary",
+            "summary": "Aggregate vSphere networks across all enrolled VMs."
+          },
+          {
+            "name": "normalize_findings",
+            "summary": "Public re-export for callers that already have raw finding dicts"
+          }
+        ],
+        "depends_on": [
+          "app.core.config",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.os_profile",
         "title": "app.core.os_profile",
         "subtitle": "backend/app/core/os_profile.py",
@@ -1723,7 +1886,9 @@ const DATA = {
         "depends_on": [
           "app.api.audit",
           "app.api.health",
+          "app.api.network_reviews",
           "app.api.plans",
+          "app.api.reports",
           "app.api.settings",
           "app.api.snapshots",
           "app.api.templates",
@@ -1746,10 +1911,108 @@ const DATA = {
         "functions": [],
         "depends_on": [
           "app.models.audit",
+          "app.models.network_review",
           "app.models.plan",
           "app.models.settings",
           "app.models.validation",
           "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.network_review",
+        "title": "app.models.network_review",
+        "subtitle": "backend/app/models/network_review.py",
+        "summary": "Network design review tables.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "NetworkReviewStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "FindingCategory",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "FindingSeverity",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "FindingConfidence",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "FindingTriage",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Operator triage state \u2014 set after the LLM returned a finding."
+          },
+          {
+            "name": "NetworkDesignReview",
+            "kind": "model",
+            "table": "network_design_reviews",
+            "fields": [
+              "id",
+              "name",
+              "status",
+              "customer_notes",
+              "proposed_yaml",
+              "analysis_results",
+              "last_analyzed_at",
+              "last_error",
+              "created_at",
+              "updated_at",
+              "findings"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "NetworkFinding",
+            "kind": "model",
+            "table": "network_findings",
+            "fields": [
+              "id",
+              "review_id",
+              "category",
+              "severity",
+              "confidence",
+              "triage",
+              "title",
+              "description",
+              "source_evidence",
+              "proposed_evidence",
+              "recommendation",
+              "created_at",
+              "review"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
         ]
       },
       {
@@ -1795,6 +2058,120 @@ const DATA = {
         "functions": [],
         "depends_on": [
           "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.network_review",
+        "title": "app.schemas.network_review",
+        "subtitle": "backend/app/schemas/network_review.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "NetworkReviewCreate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "customer_notes",
+              "proposed_yaml"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "NetworkReviewNotesUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "customer_notes"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "NetworkReviewYamlUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "proposed_yaml"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "NetworkFindingTriageUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "triage"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "NetworkFindingRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "category",
+              "severity",
+              "confidence",
+              "triage",
+              "title",
+              "description",
+              "source_evidence",
+              "proposed_evidence",
+              "recommendation",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "NetworkReviewSummary",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "name",
+              "status",
+              "finding_count",
+              "severity_counts",
+              "created_at",
+              "updated_at",
+              "last_analyzed_at"
+            ],
+            "methods": [],
+            "summary": "Lightweight row for the index page."
+          },
+          {
+            "name": "NetworkReviewRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "name",
+              "status",
+              "customer_notes",
+              "proposed_yaml",
+              "analysis_results",
+              "last_analyzed_at",
+              "last_error",
+              "created_at",
+              "updated_at",
+              "findings"
+            ],
+            "methods": [],
+            "summary": "Full review with embedded findings \u2014 used by the detail view."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.models.network_review"
         ]
       },
       {
@@ -1906,6 +2283,182 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/components/NetworkReviewDetail.jsx",
+        "title": "NetworkReviewDetail.jsx",
+        "subtitle": "frontend/src/components/NetworkReviewDetail.jsx",
+        "summary": "Per-review detail page. Renders the full report view + lets operators",
+        "category": "frontend",
+        "api_calls": [
+          "/api/network-reviews/{id}",
+          "/api/network-reviews/{id}/analyze",
+          "/api/network-reviews/{id}/findings/{id}"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "NetworkReviewDetail",
+            "kind": "component"
+          },
+          {
+            "name": "FindingCard",
+            "kind": "component"
+          },
+          {
+            "name": "ConfidenceTag",
+            "kind": "component"
+          },
+          {
+            "name": "EvidenceBlock",
+            "kind": "component"
+          },
+          {
+            "name": "SourceProposedBlocks",
+            "kind": "component"
+          },
+          {
+            "name": "ConfidenceLimitations",
+            "kind": "component"
+          },
+          {
+            "name": "StatusPill",
+            "kind": "component"
+          },
+          {
+            "name": "Caveats",
+            "kind": "component"
+          },
+          {
+            "name": "H2",
+            "kind": "component"
+          },
+          {
+            "name": "Err",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          },
+          {
+            "name": "Styles",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/NetworkReviewNew.jsx",
+        "title": "NetworkReviewNew.jsx",
+        "subtitle": "frontend/src/components/NetworkReviewNew.jsx",
+        "summary": "New Network Design Review wizard. Single-page form: name \u2192 notes upload",
+        "category": "frontend",
+        "api_calls": [
+          "/api/network-reviews",
+          "/api/network-reviews/{id}/analyze"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "NetworkReviewNew",
+            "kind": "component"
+          },
+          {
+            "name": "Section",
+            "kind": "component"
+          },
+          {
+            "name": "Field",
+            "kind": "component"
+          },
+          {
+            "name": "FileLoader",
+            "kind": "component"
+          },
+          {
+            "name": "Notice",
+            "kind": "component"
+          },
+          {
+            "name": "Styles",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/ReportView.jsx",
+        "title": "ReportView.jsx",
+        "subtitle": "frontend/src/components/ReportView.jsx",
+        "summary": "Inline report viewer. Mirrors the dashboard aesthetic exactly so users",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "ReportView",
+            "kind": "component"
+          },
+          {
+            "name": "ExecutiveSummaryView",
+            "kind": "component"
+          },
+          {
+            "name": "ValidationListView",
+            "kind": "component"
+          },
+          {
+            "name": "ValidationCard",
+            "kind": "component"
+          },
+          {
+            "name": "WavePlanView",
+            "kind": "component"
+          },
+          {
+            "name": "BaselineSnapshotView",
+            "kind": "component"
+          },
+          {
+            "name": "SectionTitle",
+            "kind": "component"
+          },
+          {
+            "name": "SubLabel",
+            "kind": "component"
+          },
+          {
+            "name": "Stat",
+            "kind": "component"
+          },
+          {
+            "name": "Pill",
+            "kind": "component"
+          },
+          {
+            "name": "Loader",
+            "kind": "component"
+          },
+          {
+            "name": "Err",
+            "kind": "component"
+          },
+          {
+            "name": "ReportStyles",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/components/Settings.jsx",
         "title": "Settings.jsx",
         "subtitle": "frontend/src/components/Settings.jsx",
@@ -1975,13 +2528,78 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/components/VMDetail.jsx",
+        "title": "VMDetail.jsx",
+        "subtitle": "frontend/src/components/VMDetail.jsx",
+        "summary": "Per-VM detail page \u2014 everything operators want to see about a VM in one",
+        "category": "frontend",
+        "api_calls": [
+          "/api/audit?resource_type=vm&limit=50",
+          "/api/plans?limit=20",
+          "/api/vms/{id}",
+          "/api/vms/{id}/baseline/profile",
+          "/api/vms/{id}/capture",
+          "/api/vms/{id}/capture/{id}",
+          "/api/vms/{id}/snapshots",
+          "/api/vms/{id}/validation/latest"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "classifyCaptureError",
+            "kind": "helper"
+          },
+          {
+            "name": "VMDetail",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          },
+          {
+            "name": "Section",
+            "kind": "component"
+          },
+          {
+            "name": "Field",
+            "kind": "component"
+          },
+          {
+            "name": "Stat",
+            "kind": "component"
+          },
+          {
+            "name": "Subtitle",
+            "kind": "component"
+          },
+          {
+            "name": "Banner",
+            "kind": "component"
+          },
+          {
+            "name": "Error",
+            "kind": "component"
+          },
+          {
+            "name": "OSBadge",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/components/VirtValidate.jsx",
         "title": "VirtValidate.jsx",
         "subtitle": "frontend/src/components/VirtValidate.jsx",
-        "summary": "",
+        "summary": "Design Review status + severity colors. Module-level so the dashboard",
         "category": "frontend",
         "api_calls": [
           "/api/audit?{id}",
+          "/api/network-reviews",
           "/api/plans",
           "/api/plans/{id}/waves/{id}/mtv-yaml",
           "/api/plans?limit=1",
@@ -1996,6 +2614,10 @@ const DATA = {
           "/api/vms/{id}/validation/latest"
         ],
         "members": [
+          {
+            "name": "NetworkReviewStatusPill",
+            "kind": "component"
+          },
           {
             "name": "mapVM",
             "kind": "helper"

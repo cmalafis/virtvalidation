@@ -5,10 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.audit import router as audit_router
 from app.api.health import router as health_router
+from app.api.network_reviews import router as network_reviews_router
 from app.api.plans import router as plans_router
+from app.api.reports import router as reports_router
 from app.api.settings import settings_router, system_router
 from app.api.snapshots import router as snapshots_router
 from app.api.templates import router as templates_router
+from app.api.validations import router as validations_router
 from app.api.vms import router as vms_router
 from app.core.db import Base, engine
 from app.core.scheduler import shutdown_scheduler, start_scheduler
@@ -54,3 +57,6 @@ app.include_router(system_router, prefix="/api/system")
 app.include_router(settings_router, prefix="/api/settings")
 app.include_router(audit_router, prefix="/api/audit")
 app.include_router(templates_router, prefix="/api/templates")
+app.include_router(reports_router, prefix="/api/reports")
+app.include_router(network_reviews_router, prefix="/api/network-reviews")
+app.include_router(validations_router, prefix="/api/validations")

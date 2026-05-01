@@ -24,6 +24,14 @@ _ACTIONS: list[tuple[str, re.Pattern[str], str, str | None, int | None]] = [
     ("POST", re.compile(r"^/api/vms/(\d+)/snapshots/?$"), "baseline.create", "baseline", 1),
     ("POST", re.compile(r"^/api/vms/(\d+)/capture/?$"), "capture.triggered", "vm", 1),
     ("POST", re.compile(r"^/api/snapshots/capture-all/?$"), "capture.bulk_triggered", "vm", None),
+    ("POST", re.compile(r"^/api/vms/(\d+)/validate/?$"), "validation.triggered", "vm", 1),
+    (
+        "POST",
+        re.compile(r"^/api/validations/run-all/?$"),
+        "validation.bulk_triggered",
+        "vm",
+        None,
+    ),
     # ssh.host_key_* rows are emitted directly by the capture wrapper —
     # no middleware-side inference needed; they're listed below for the
     # frontend filter dropdown.

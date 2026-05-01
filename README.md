@@ -36,6 +36,7 @@ VirtValidate fills that gap. It SSHes into source VMs to build a behavioral base
 - **MTV YAML generation** — produces ready-to-apply Forklift `Plan`, `NetworkMap`, and `StorageMap` resources per wave
 - **Intelligent post-migration validation** — diffs current state against baseline, LLM reasons over findings and produces remediation steps
 - **Plain-English wave reports** — CISO-ready PDF reports with executive summaries and per-VM findings
+- **Network design review** — local-LLM gap analysis between VMware source networking and a proposed OpenShift Virtualization design (CUDN / NAD / NetworkPolicy / Multus). See [docs/NETWORK_REVIEW.md](docs/NETWORK_REVIEW.md).
 - **Air-gapped by design** — zero external API calls, all inference local, full audit trail
 
 ## Architecture
@@ -103,6 +104,7 @@ That's it. Everything runs locally. No data leaves your machine.
 - [**Installation Guide**](docs/INSTALLATION.md) — detailed setup including production Quadlet deployment
 - [**SSH Setup**](docs/SSH_SETUP.md) — distributing keys, sudoers configuration, security model
 - [**OS Compatibility Matrix**](docs/COMPATIBILITY.md) — RHEL 7/8/9/10, Rocky, Alma, CentOS, Ubuntu/Debian status
+- [**Network Design Review**](docs/NETWORK_REVIEW.md) — usage guide for the local-LLM network gap analysis feature
 - [**Configuration Reference**](docs/CONFIGURATION.md) — all environment variables explained
 - [**API Reference**](docs/API.md) — REST endpoint documentation
 - [**Security Model**](SECURITY.md) — threat model and reporting vulnerabilities
