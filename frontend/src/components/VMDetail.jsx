@@ -414,8 +414,8 @@ function VMDetailBody() {
               )}
               {validation?.findings?.length > 0 && (
                 <>
-                  <Subtitle>Findings ({validation.findings.length})</Subtitle>
-                  {validation.findings.map((f, i) => (
+                  <Subtitle>Findings ({(validation.findings ?? []).length})</Subtitle>
+                  {(validation.findings ?? []).map((f, i) => (
                     <Finding key={i} f={f} />
                   ))}
                 </>

@@ -371,8 +371,8 @@ function ValidationCard({ vm }) {
       )}
       {vm.findings?.length > 0 && (
         <div style={{ marginTop: 14 }}>
-          <SubLabel>Findings ({vm.findings.length})</SubLabel>
-          {vm.findings.map((f, i) => (
+          <SubLabel>Findings ({(vm.findings ?? []).length})</SubLabel>
+          {(vm.findings ?? []).map((f, i) => (
             <div key={i} style={{ paddingLeft: 14, borderLeft: `2px solid ${SEVERITY_COLOR[f.severity] || "#aaaacc"}`, marginBottom: 10 }}>
               <div style={{ fontSize: 11, color: SEVERITY_COLOR[f.severity] || "#aaaacc", letterSpacing: "0.08em", fontWeight: 700, textTransform: "uppercase" }}>
                 {f.severity || "?"}{f.category ? ` · ${f.category}` : ""}
