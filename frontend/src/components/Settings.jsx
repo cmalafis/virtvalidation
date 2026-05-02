@@ -408,6 +408,165 @@ function ConnectionStatus() {
 }
 
 
+// Read-only FIPS 140-3 compliance panel. Federal customers (DoD,
+// civilian agencies, FedRAMP) need to attest that the appliance
+// operates inside a FIPS boundary; this surface lets them see the
+// posture without shelling into the host. The panel is read-only —
+// FIPS_MODE is a deployment env var, not a runtime toggle.
+function FIPSCompliancePanel() {
+  const [info, setInfo] = useState(undefined);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const body = await fetchJSON("/api/system/fips-status");
+      setInfo(body);
+    } catch (e) {
+      setError(e.message || "Failed to load FIPS status");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) {
+    return (
+      <Section title="FIPS 140-3 Compliance" subtitle="Read-only — controlled at deployment time via the FIPS_MODE env var.">
+        <Shimmer width="100%" height={64}/>
+      </Section>
+    );
+  }
+  if (error || !info) {
+    return (
+      <Section title="FIPS 140-3 Compliance" subtitle="Read-only — controlled at deployment time via the FIPS_MODE env var.">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+          <div style={{ fontSize: 14, color: "#ccaaaa", fontFamily: "'Barlow', sans-serif", lineHeight: 1.5 }}>
+            {error || "No FIPS status available."}
+          </div>
+          <SecondaryButton onClick={load}>↻ Retry</SecondaryButton>
+        </div>
+      </Section>
+    );
+  }
+
+  // Headline status: green only when both configured AND detected line up.
+  // Mismatches surface in amber so the operator can't miss them.
+  const headline = info.effective
+    ? { color: "#00ff88", label: "ACTIVE" }
+    : info.configured || info.detected
+    ? { color: "#ffaa00", label: "MISMATCH" }
+    : { color: "#aaaacc", label: "NOT CONFIGURED" };
+
+  const Pill = ({ ok, label, color }) => (
+    <span style={{
+      fontSize: 11, fontFamily: "'Share Tech Mono', monospace",
+      letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+      color: color || (ok ? "#00ff88" : "#ff5577"),
+      border: `1px solid ${(color || (ok ? "#00ff88" : "#ff5577"))}66`,
+      padding: "3px 9px",
+    }}>{label}</span>
+  );
+
+  return (
+    <Section
+      title="FIPS 140-3 Compliance"
+      subtitle="Read-only — controlled at deployment time via the FIPS_MODE env var."
+      action={<SecondaryButton onClick={load}>↻ Refresh</SecondaryButton>}
+    >
+      <div style={{
+        padding: "16px 18px", border: "1px solid #1a1a2e", background: "#07070f", marginBottom: 12,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 16 }}>
+          <div style={{
+            fontSize: 15, color: "#eeeeff", fontWeight: 700,
+            fontFamily: "'Barlow', sans-serif", letterSpacing: "0.04em",
+          }}>Compliance Posture</div>
+          <Pill color={headline.color} label={headline.label}/>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: info.mismatch_warning ? 14 : 0 }}>
+          <div>
+            <div style={{
+              fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
+              fontFamily: "'Barlow', sans-serif", textTransform: "uppercase", fontWeight: 700,
+              marginBottom: 6,
+            }}>Configured (FIPS_MODE)</div>
+            <Pill ok={info.configured} label={info.configured ? "TRUE" : "FALSE"}/>
+          </div>
+          <div>
+            <div style={{
+              fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
+              fontFamily: "'Barlow', sans-serif", textTransform: "uppercase", fontWeight: 700,
+              marginBottom: 6,
+            }}>Detected (host OS)</div>
+            <Pill ok={info.detected} label={info.detected ? "TRUE" : "FALSE"}/>
+          </div>
+        </div>
+        {info.mismatch_warning && (
+          <div style={{
+            marginTop: 4, padding: "12px 14px", background: "#0a0a18",
+            border: "1px solid #ffaa0066", color: "#ffe9aa",
+            fontSize: 13, lineHeight: 1.6, fontFamily: "'Barlow', sans-serif",
+          }}>
+            <strong style={{ color: "#ffaa00", letterSpacing: "0.04em" }}>⚠ Mismatch:</strong>{" "}
+            {info.mismatch_warning}
+          </div>
+        )}
+      </div>
+
+      {Array.isArray(info.operations) && info.operations.length > 0 && (
+        <div style={{ border: "1px solid #1a1a2e", background: "#07070f" }}>
+          <div style={{
+            display: "grid", gridTemplateColumns: "2fr 1.5fr 0.8fr 0.8fr",
+            padding: "10px 14px", borderBottom: "1px solid #1a1a2e", background: "#0a0a16",
+          }}>
+            {["Operation", "Configured", "FIPS-Approved", "Enforced"].map((h) => (
+              <span key={h} style={{
+                fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
+                fontWeight: 700, textTransform: "uppercase",
+                fontFamily: "'Barlow', sans-serif",
+              }}>{h}</span>
+            ))}
+          </div>
+          {info.operations.map((op, i) => (
+            <div key={i} style={{
+              display: "grid", gridTemplateColumns: "2fr 1.5fr 0.8fr 0.8fr",
+              padding: "12px 14px", borderBottom: "1px solid #0f0f1e",
+              alignItems: "center",
+              fontSize: 13, color: "#ccccee",
+            }}>
+              <span style={{ fontFamily: "'Barlow', sans-serif", fontWeight: 600 }}>
+                {op.name}
+              </span>
+              <span style={{
+                fontFamily: "'Share Tech Mono', monospace",
+                color: "#aaaacc", wordBreak: "break-all",
+              }}>{op.configured}</span>
+              <Pill ok={op.fips_approved} label={op.fips_approved ? "YES" : "NO"}/>
+              <Pill ok={op.enforced} label={op.enforced ? "YES" : "NO"}/>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{
+        fontSize: 13, color: "#aaaacc", fontFamily: "'Barlow', sans-serif",
+        lineHeight: 1.6, marginTop: 14,
+      }}>
+        Set <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>FIPS_MODE=true</code> in
+        the deployment environment AND boot the host with FIPS enabled
+        (RHEL: <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>fips-mode-setup --enable</code>;
+        RHCOS: <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>fips: true</code> in
+        install-config). See <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>docs/FIPS_DEPLOYMENT.md</code>.
+      </div>
+    </Section>
+  );
+}
+
+
 // Read-only backend identification panel. Surfaces the configured
 // backend type, model, endpoint, and live status so operators can see
 // what their deployment is wired up against. Switching backends is a
@@ -864,6 +1023,7 @@ export default function Settings() {
       <div style={{ maxWidth: 960, margin: "0 auto", padding: 32 }} className="fade-in">
         <SSHKeyViewer />
         <ConnectionStatus />
+        <FIPSCompliancePanel />
         <LLMBackendPanel />
         <ConfigurationForm />
       </div>

@@ -168,6 +168,35 @@ VLLM_ENDPOINT=https://vllm.namespace.svc.cluster.local
 VLLM_MODEL_NAME=granite-3-8b-instruct
 ```
 
+### `FIPS_MODE`
+
+| | |
+|---|---|
+| Default | `false` |
+| Type | bool |
+| Editable in UI | no — deploy-time only |
+
+Activates application-level FIPS 140-3 enforcement: SSH key loader
+rejects non-FIPS-approved algorithms (Ed25519, RSA < 3072), and
+`/api/system/fips-status` reports the configured + detected posture
+so federal reviewers can audit. Setting this to `true` does **not**
+make the host OS FIPS-compliant — the OS must be booted in FIPS mode
+separately. See [FIPS_DEPLOYMENT.md](FIPS_DEPLOYMENT.md).
+
+### `SSH_KEY_ALGORITHM`
+
+| | |
+|---|---|
+| Default | `ed25519` |
+| Allowed | `ed25519`, `rsa-3072`, `ecdsa-p384` |
+| Editable in UI | no — deploy-time only |
+
+Documents the algorithm of the SSH key on disk so the Settings UI and
+audit trail can show the operator's intent. Does not generate or
+validate the key file itself — the SSH collector auto-detects the
+type at load time. The FIPS gate (active when `FIPS_MODE=true`) is
+the actual enforcement mechanism.
+
 ### `SSH_KEY_PATH`
 
 | | |

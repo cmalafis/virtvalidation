@@ -42,13 +42,36 @@ chmod 600 backend/app/keys/id_ed25519
 chmod 644 backend/app/keys/id_ed25519.pub
 ```
 
-Why Ed25519 only:
+Why Ed25519 by default:
 
 - Smaller (~68 bytes) and faster than equivalent-strength RSA.
 - Uniformly supported by OpenSSH 6.5+ — every RHEL/Ubuntu/SLES VM you
   care about migrating already speaks it.
 - Shorter authorized_keys line means less paste friction during bulk
   enrollment.
+
+### FIPS 140-3 deployments
+
+Ed25519 is **not yet approved** under FIPS 186-5. Federal customers
+must use an approved algorithm:
+
+```bash
+# RSA-3072 (FIPS 186-5 minimum)
+ssh-keygen -t rsa -b 3072 -N "" \
+    -f backend/app/keys/id_ed25519 \
+    -C "virtvalidate@appliance"
+
+# Or ECDSA P-384 (FIPS 186-5 approved)
+ssh-keygen -t ecdsa -b 384 -N "" \
+    -f backend/app/keys/id_ed25519 \
+    -C "virtvalidate@appliance"
+```
+
+The file path is unchanged — the SSH collector auto-detects the key
+type at load time. When `FIPS_MODE=true`, the collector rejects
+Ed25519 keys at the first SSH connection attempt; out of FIPS mode,
+all three algorithms work interchangeably. See [FIPS_DEPLOYMENT.md](FIPS_DEPLOYMENT.md)
+for the full federal-deployment guide.
 
 ---
 

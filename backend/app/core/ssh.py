@@ -26,6 +26,7 @@ from typing import Iterator, Literal, Optional
 import paramiko
 
 from app.core.commands import CommandSet, command_set_for
+from app.core.fips import FIPSViolation, validate_ssh_key
 from app.core.os_profile import UNKNOWN_PROFILE, OSProfile, detect
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,47 @@ class SSHCollectionError(RuntimeError):
         self.kind = kind
         self.host = host
         self.fingerprint = fingerprint
+
+
+def load_private_key(path: Path) -> paramiko.PKey:
+    """Load a private key from disk, auto-detecting its type.
+
+    Tries each paramiko key class in turn — we'd rather pay the cost of
+    a few exceptions on startup than force operators to declare their
+    key type up-front. Federal deployments swap from Ed25519 (default)
+    to RSA-3072 / ECDSA P-384 by simply replacing the key file.
+
+    Raises ``SSHCollectionError`` when no class can parse the file.
+    """
+    last_err: Exception | None = None
+    for cls in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
+        try:
+            return cls.from_private_key_file(str(path))
+        except paramiko.SSHException as e:
+            last_err = e
+            continue
+    raise SSHCollectionError(
+        f"Failed to load SSH key at {path} as Ed25519/RSA/ECDSA: {last_err}"
+    )
+
+
+def _key_size_bits(key: paramiko.PKey) -> int | None:
+    """Best-effort key size in bits.
+
+    Ed25519 keys are always 256 bits; RSA exposes ``size``; ECDSA
+    exposes ``ecdsa_curve.key_length``. We return ``None`` when the
+    type doesn't expose a size — the FIPS gate then rejects rather
+    than guessing.
+    """
+    if isinstance(key, paramiko.RSAKey):
+        return key.size
+    if isinstance(key, paramiko.ECDSAKey):
+        # paramiko stores the curve as an object with ``key_length``.
+        curve = getattr(key, "ecdsa_curve", None)
+        return getattr(curve, "key_length", None)
+    if isinstance(key, paramiko.Ed25519Key):
+        return 256
+    return None
 
 
 def _fingerprint_for(key: paramiko.PKey) -> str:
@@ -178,10 +220,15 @@ class SSHCollector:
         if not self.key_path.is_file():
             raise SSHCollectionError(f"SSH key not found at {self.key_path}")
 
+        key = load_private_key(self.key_path)
+        # FIPS gate — rejects Ed25519 / undersized RSA / unrecognized
+        # algorithms when fips_mode is on. No-op otherwise. We translate
+        # the FIPSViolation into an SSHCollectionError so every call site
+        # already handling SSH errors keeps working without special-casing.
         try:
-            key = paramiko.Ed25519Key.from_private_key_file(str(self.key_path))
-        except paramiko.SSHException as e:
-            raise SSHCollectionError(f"Failed to load Ed25519 key: {e}") from e
+            validate_ssh_key(key.get_name(), _key_size_bits(key))
+        except FIPSViolation as e:
+            raise SSHCollectionError(str(e)) from e
 
         client = paramiko.SSHClient()
         client.load_system_host_keys()

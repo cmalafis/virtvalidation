@@ -8,6 +8,21 @@ class Settings(BaseSettings):
     ssh_key_path: str = "/app/keys/id_ed25519"
     cluster_name: str = "ocp-virt-prod-01"
 
+    # ----- FIPS 140-3 compliance -----
+    # When fips_mode is on, the appliance refuses to load SSH keys that
+    # aren't on the FIPS-approved list (RSA ≥3072, ECDSA P-384, ECDSA
+    # P-256), warns at startup if the host OS isn't actually running in
+    # FIPS mode, and reports its compliance posture via /api/system/fips-status.
+    # This is a deployment decision — flip it via the FIPS_MODE env var,
+    # not the Settings UI.
+    fips_mode: bool = False
+    # Operators generating SSH keys themselves can set this to document
+    # the algorithm in use. The runtime accepts any key paramiko can load
+    # (the FIPS gate enforces approval); this field exists so the
+    # Settings UI and audit trail can show the operator's intent.
+    # Allowed: "ed25519" (default, NON-FIPS), "rsa-3072", "ecdsa-p384".
+    ssh_key_algorithm: str = "ed25519"
+
     # ----- LLM backend selection -----
     # Pluggable inference backend chosen at deployment time. Supported
     # values: "ollama" (default standalone appliance), "kserve" (RHOAI

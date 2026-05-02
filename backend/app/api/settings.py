@@ -12,12 +12,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings as app_config
 from app.core.db import get_db
+from app.core.fips import fips_status
 from app.core.llm.factory import get_llm_backend
 from app.core.scheduler import next_run_time, reschedule_baseline_job
 from app.models.settings import AppSettings
 from app.schemas.settings import (
     AppSettingsRead,
     AppSettingsUpdate,
+    FIPSStatus,
     LLMBackendInfo,
     OllamaModelsResponse,
     SSHPublicKey,
@@ -70,7 +72,12 @@ def update_settings(payload: AppSettingsUpdate, db: Session = Depends(get_db)) -
 
 @system_router.get("/ssh-public-key", response_model=SSHPublicKey)
 def ssh_public_key() -> dict:
-    """Return the OpenSSH public key VirtValidate uses. Never the private key."""
+    """Return the OpenSSH public key VirtValidate uses. Never the private key.
+
+    Polymorphic across Ed25519 / RSA / ECDSA — federal deployments
+    running in FIPS mode use RSA-3072 or ECDSA P-384 and must still see
+    their public key here, not just Ed25519.
+    """
     priv_path = Path(app_config.ssh_key_path)
     pub_path = priv_path.with_suffix(priv_path.suffix + ".pub")
 
@@ -78,11 +85,20 @@ def ssh_public_key() -> dict:
     if pub_path.is_file():
         raw = pub_path.read_text(encoding="utf-8").strip()
     elif priv_path.is_file():
-        try:
-            key = paramiko.Ed25519Key.from_private_key_file(str(priv_path))
-            raw = f"{key.get_name()} {key.get_base64()}"
-        except paramiko.SSHException as e:
-            raise HTTPException(status_code=500, detail=f"Failed to load SSH key: {e}") from e
+        last_err: paramiko.SSHException | None = None
+        for cls in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
+            try:
+                key = cls.from_private_key_file(str(priv_path))
+                raw = f"{key.get_name()} {key.get_base64()}"
+                break
+            except paramiko.SSHException as e:
+                last_err = e
+                continue
+        if raw is None:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load SSH key (Ed25519/RSA/ECDSA): {last_err}",
+            )
 
     if not raw:
         raise HTTPException(
@@ -121,6 +137,18 @@ def ollama_models() -> dict:
     backend = get_llm_backend()
     names = backend.list_models() or []
     return {"models": [{"name": n} for n in names]}
+
+
+@system_router.get("/fips-status", response_model=FIPSStatus)
+def fips_status_endpoint() -> dict:
+    """FIPS 140-3 compliance posture — configured + detected + per-op status.
+
+    Read-only — FIPS is a deployment decision controlled by the
+    ``FIPS_MODE`` env var. The Settings UI surfaces this to operators
+    so federal reviewers can audit the appliance's posture without
+    shelling into the host.
+    """
+    return fips_status()
 
 
 @system_router.get("/llm-info", response_model=LLMBackendInfo)

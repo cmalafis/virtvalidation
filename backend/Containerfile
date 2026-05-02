@@ -1,3 +1,14 @@
+# Default base — matches our standalone podman-compose deployment.
+# For FIPS 140-3 deployments (federal customers, FedRAMP), swap this
+# line for the Red Hat UBI Python image and run on a FIPS-enabled
+# host so the bundled OpenSSL operates in FIPS mode automatically:
+#
+#     FROM registry.access.redhat.com/ubi9/python-312:latest
+#
+# UBI alone does NOT make the deployment FIPS-compliant — the host OS
+# (RHEL 8/9 with `fips-mode-setup --enable`, or RHCOS deployed with
+# `fips: true`) is what activates the FIPS-validated cryptography.
+# See docs/FIPS_DEPLOYMENT.md for the full requirements.
 FROM docker.io/python:3.12-slim
 WORKDIR /app
 # weasyprint runtime needs Pango / Cairo / GDK-Pixbuf to render PDF.

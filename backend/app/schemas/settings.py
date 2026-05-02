@@ -71,3 +71,22 @@ class LLMBackendHealth(BaseModel):
 class LLMBackendInfo(BaseModel):
     config: LLMBackendConfig
     health: LLMBackendHealth
+
+
+# ---------------------------------------------------------------------------
+# FIPS 140-3 status — exposed at /api/system/fips-status and embedded in
+# /api/health/full so federal reviewers can audit the posture in one shot.
+# ---------------------------------------------------------------------------
+class FIPSOperationStatus(BaseModel):
+    name: str
+    configured: str
+    fips_approved: bool
+    enforced: bool
+
+
+class FIPSStatus(BaseModel):
+    configured: bool
+    detected: bool
+    effective: bool
+    mismatch_warning: str | None = None
+    operations: list[FIPSOperationStatus]

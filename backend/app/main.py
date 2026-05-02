@@ -14,6 +14,7 @@ from app.api.templates import router as templates_router
 from app.api.validations import router as validations_router
 from app.api.vms import router as vms_router
 from app.core.db import Base, engine
+from app.core.fips import log_startup_warning as _fips_startup_log
 from app.core.scheduler import shutdown_scheduler, start_scheduler
 from app.middleware.audit import AuditMiddleware
 from app.models import audit as _audit_models  # noqa: F401  (register models on Base)
@@ -26,6 +27,10 @@ from app.models import vm as _vm_models  # noqa: F401  (register models on Base)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    # Log the FIPS posture at boot so federal deployments leave a clear
+    # breadcrumb in container logs about whether the application is
+    # actually running in compliance mode.
+    _fips_startup_log()
     start_scheduler()
     try:
         yield

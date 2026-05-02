@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.fips import fips_status
 from app.core.llm.factory import get_llm_backend
 
 router = APIRouter(tags=["health"])
@@ -69,6 +70,10 @@ def full_health(db: Session = Depends(get_db)) -> dict:
             "database": pg,
             "llm": llm,
         },
+        # FIPS posture — surfaced here so federal reviewers and load
+        # balancer health probes both see the compliance status in
+        # one round-trip.
+        "fips": fips_status(),
         # Deprecated — remove once the dashboard build catches up.
         "ollama": llm,
         "postgres": pg,
