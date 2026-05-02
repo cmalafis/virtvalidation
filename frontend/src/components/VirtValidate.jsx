@@ -241,24 +241,53 @@ const DISTRO_LABEL = {
   fedora: "Fedora",
   ubuntu: "Ubuntu",
   debian: "Debian",
-  unknown: "Unknown Linux",
+  unknown: "Unknown",
+  // Windows distros — keep the labels short; the OSBadge already shows
+  // the full pretty_name when available, so these are the fallback.
+  "windows-server-2019": "Windows Server 2019",
+  "windows-server-2022": "Windows Server 2022",
+  "windows-server-2025": "Windows Server 2025",
+  "windows-unknown": "Windows (unrecognized build)",
+};
+
+// OS family icons surfaced in the OSBadge so operators can scan a long
+// inventory and tell Windows from Linux without reading the label.
+const FAMILY_ICON = {
+  windows: "▣",
+  "rhel-like": "◆",
+  "debian-like": "◇",
+  unknown: "○",
 };
 
 function OSBadge({ profile }) {
   if (!profile) return null;
   const conf = CONFIDENCE_COLOR[profile.detection_confidence] || CONFIDENCE_COLOR.low;
-  const label = DISTRO_LABEL[profile.distro] || profile.distro || "Unknown Linux";
-  const versionLabel = profile.major_version
-    ? (profile.minor_version
-        ? `${profile.major_version}.${profile.minor_version}`
-        : String(profile.major_version))
-    : "?";
+  const label = profile.pretty_name
+    || DISTRO_LABEL[profile.distro]
+    || profile.distro
+    || "Unknown";
+  // Windows reports BuildNumber in minor_version (e.g. 20348). Render
+  // <major>.<minor> for Linux and just the build number for Windows
+  // since "10.20348" reads weirdly to Windows operators.
+  const family = profile.distro_family || "unknown";
+  const versionLabel = family === "windows"
+    ? (profile.minor_version ? `build ${profile.minor_version}` : "")
+    : (profile.major_version
+        ? (profile.minor_version
+            ? `${profile.major_version}.${profile.minor_version}`
+            : String(profile.major_version))
+        : "?");
+  const icon = FAMILY_ICON[family] || FAMILY_ICON.unknown;
   return (
     <div style={{
       display: "inline-flex", alignItems: "center", gap: 14,
       padding: "10px 14px", border: `1px solid ${conf.color}55`,
       background: `${conf.color}0d`,
     }}>
+      <span style={{
+        fontFamily: "'Share Tech Mono', monospace", fontSize: 18,
+        color: conf.color, lineHeight: 1,
+      }} title={`OS family: ${family}`}>{icon}</span>
       <div>
         <div style={{
           fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
@@ -1112,6 +1141,11 @@ function ManualTab({ onSubmit, submitting, initial }) {
   const [targetSC, setTargetSC] = useState(initial?.target_storage_class ?? "");
   const [targetNAD, setTargetNAD] = useState(initial?.target_network_attachment ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  // OS hint — sets expectations and pre-populates the inventory display
+  // before the first SSH probe runs. Auto-detect (empty string) is the
+  // default; the SSH collector will overwrite os_family with what it
+  // actually detects on first capture.
+  const [osHint, setOsHint] = useState(initial?.os_family ?? "");
 
   const portInt = parseInt(sshPort, 10);
   const portValid = Number.isFinite(portInt) && portInt >= 1 && portInt <= 65535;
@@ -1127,6 +1161,7 @@ function ManualTab({ onSubmit, submitting, initial }) {
       ssh_user: sshUser.trim() || null,
       ssh_port: portInt,
       current_platform: platform || null,
+      os_family: osHint || null,
       role: role.trim() || null,
       environment: environment.trim() || null,
       owner: owner.trim() || null,
@@ -1185,6 +1220,20 @@ function ManualTab({ onSubmit, submitting, initial }) {
             {PLATFORM_OPTIONS.map((p) => (
               <option key={p.value} value={p.value}>{p.label}</option>
             ))}
+          </select>
+        </FormField>
+        <FormField
+          label="OS Hint"
+          hint="Optional — VirtValidate auto-detects on first capture. Set this to pre-populate inventory display."
+        >
+          <select
+            value={osHint}
+            onChange={(e) => setOsHint(e.target.value)}
+            style={inputStyle}
+          >
+            <option value="">Auto-detect (default)</option>
+            <option value="linux">Linux</option>
+            <option value="windows">Windows Server</option>
           </select>
         </FormField>
         <FormField label="Role" hint="database, app, lb, cache, …">

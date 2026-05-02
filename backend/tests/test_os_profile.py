@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.commands import CommandSet, command_set_for
-from app.core.os_profile import UNKNOWN_PROFILE, detect
+from app.core.os_profile import UNKNOWN_PROFILE, detect, detect_windows
 
 # ---------------------------------------------------------------------------
 # Sample os-release payloads
@@ -229,6 +229,158 @@ def test_unknown_os_falls_back_to_modern_defaults():
 
 
 # ---------------------------------------------------------------------------
+# Windows detection — Get-CimInstance Win32_OperatingSystem JSON
+# ---------------------------------------------------------------------------
+
+# Real Get-CimInstance Win32_OperatingSystem | ConvertTo-Json output, trimmed
+# to the fields the detector reads. The full payload includes ~40 properties;
+# we keep only what the detector branches on so the fixtures stay readable.
+WIN_2019_CIM_JSON = """
+{
+  "Caption": "Microsoft Windows Server 2019 Datacenter",
+  "Version": "10.0.17763",
+  "BuildNumber": "17763",
+  "OSArchitecture": "64-bit",
+  "OSType": 18
+}
+"""
+
+WIN_2022_CIM_JSON = """
+{
+  "Caption": "Microsoft Windows Server 2022 Standard",
+  "Version": "10.0.20348",
+  "BuildNumber": "20348",
+  "OSArchitecture": "64-bit",
+  "OSType": 18
+}
+"""
+
+WIN_2025_CIM_JSON = """
+{
+  "Caption": "Microsoft Windows Server 2025 Datacenter",
+  "Version": "10.0.26100",
+  "BuildNumber": "26100",
+  "OSArchitecture": "64-bit",
+  "OSType": 18
+}
+"""
+
+# Get-CimInstance can return a JSON array when the input pipeline produces
+# multiple objects — defensive case the detector should handle by picking
+# the first element.
+WIN_2022_CIM_ARRAY = '[{"Caption":"Microsoft Windows Server 2022 Standard","Version":"10.0.20348","BuildNumber":"20348","OSArchitecture":"64-bit"}]'
+
+WIN_UNKNOWN_BUILD_JSON = """
+{
+  "Caption": "Microsoft Windows Server vNext Preview",
+  "Version": "10.0.99999",
+  "BuildNumber": "99999",
+  "OSArchitecture": "ARM64"
+}
+"""
+
+
+def test_detect_windows_server_2019():
+    profile = detect_windows(get_ciminstance_json=WIN_2019_CIM_JSON)
+    assert profile.distro == "windows-server-2019"
+    assert profile.distro_family == "windows"
+    assert profile.major_version == 10
+    assert profile.minor_version == 17763
+    assert profile.kernel_version == "10.0.17763"
+    assert profile.architecture == "64-bit"
+    assert profile.is_systemd is False
+    assert profile.detection_confidence == "high"
+    assert "Server 2019" in profile.pretty_name
+
+
+def test_detect_windows_server_2022():
+    profile = detect_windows(get_ciminstance_json=WIN_2022_CIM_JSON)
+    assert profile.distro == "windows-server-2022"
+    assert profile.distro_family == "windows"
+    assert profile.minor_version == 20348
+    assert profile.detection_confidence == "high"
+
+
+def test_detect_windows_server_2025():
+    profile = detect_windows(get_ciminstance_json=WIN_2025_CIM_JSON)
+    assert profile.distro == "windows-server-2025"
+    assert profile.minor_version == 26100
+    assert profile.detection_confidence == "high"
+
+
+def test_detect_windows_handles_top_level_array():
+    profile = detect_windows(get_ciminstance_json=WIN_2022_CIM_ARRAY)
+    # Should pick the first element transparently.
+    assert profile.distro == "windows-server-2022"
+
+
+def test_detect_windows_unknown_build_falls_back_to_windows_unknown():
+    """Unknown build numbers (preview channels, future releases) keep the
+    family routing to Windows so the PowerShell command set still
+    dispatches — just at lower confidence."""
+    profile = detect_windows(get_ciminstance_json=WIN_UNKNOWN_BUILD_JSON)
+    assert profile.distro == "windows-unknown"
+    assert profile.distro_family == "windows"
+    assert profile.detection_confidence == "medium"
+
+
+def test_detect_windows_handles_malformed_json():
+    """Don't crash on garbage input — return windows-unknown so the
+    collector can keep going (or short-circuit cleanly)."""
+    profile = detect_windows(get_ciminstance_json="{not valid json")
+    assert profile.distro == "windows-unknown"
+    assert profile.distro_family == "windows"
+    assert profile.detection_confidence == "low"
+
+
+def test_detect_windows_handles_empty_input():
+    profile = detect_windows(get_ciminstance_json="")
+    assert profile.distro == "windows-unknown"
+    assert profile.distro_family == "windows"
+
+
+def test_command_set_for_windows_returns_powershell_commands():
+    profile = detect_windows(get_ciminstance_json=WIN_2022_CIM_JSON)
+    cs = command_set_for(profile)
+    # Every required field is a PowerShell invocation. We don't try to
+    # match the full string — just confirm the command set didn't fall
+    # through to the Linux dispatch.
+    assert "powershell" in cs.services_running.lower()
+    assert "powershell" in cs.listening_ports.lower()
+    assert "powershell" in cs.mounts.lower()
+    # Windows-only fields populated.
+    assert cs.windows_hotfixes is not None
+    assert "Get-HotFix" in cs.windows_hotfixes
+    assert cs.windows_ad_membership is not None
+
+
+def test_command_set_for_windows_uses_convert_to_json():
+    """Every Windows command emits structured JSON the collector can
+    parse without text scraping."""
+    profile = detect_windows(get_ciminstance_json=WIN_2022_CIM_JSON)
+    cs = command_set_for(profile)
+    for cmd in (
+        cs.services_running,
+        cs.listening_ports,
+        cs.mounts,
+        cs.network_addr_v4,
+        cs.network_addr_v6,
+        cs.network_routes,
+        cs.cron_system_paths,
+    ):
+        assert "ConvertTo-Json" in cmd, f"Missing ConvertTo-Json in: {cmd}"
+
+
+def test_linux_command_set_does_not_populate_windows_fields():
+    """Sanity — the Linux dispatch leaves the Windows-only fields None
+    so existing Linux call sites don't have to know about them."""
+    cs = _cs(OS_RELEASE_RHEL_9)
+    assert cs.windows_hotfixes is None
+    assert cs.windows_ad_membership is None
+    assert cs.windows_processes is None
+
+
+# ---------------------------------------------------------------------------
 # SSHCollector dispatch — mock the whole client so we can capture commands
 # ---------------------------------------------------------------------------
 class _StubClient:
@@ -402,3 +554,207 @@ def test_collector_falls_back_to_modern_defaults_for_unknown_os(monkeypatch):
     assert profile["distro"] == "unknown"
     assert profile["detection_confidence"] == "low"
     assert "ss -tulnH" in stub.commands
+
+
+# ---------------------------------------------------------------------------
+# Windows path — collector falls through POSIX detection, runs PowerShell,
+# normalizes JSON output to the Linux-shaped raw_data fields.
+# ---------------------------------------------------------------------------
+class _StubStdoutBytes:
+    """Variant of _StubStdout whose ``read()`` returns raw bytes —
+    lets a test exercise the UTF-16 LE BOM path that real PowerShell
+    sessions hit on Server 2019 hosts."""
+
+    def __init__(self, raw: bytes):
+        self._raw = raw
+        self.channel = _StubChannel(0)
+
+    def read(self) -> bytes:
+        return self._raw
+
+
+def _win_fixture_responses() -> dict[str, bytes]:
+    """Build a full set of canned PowerShell responses keyed by the
+    exact command string the Windows CommandSet emits. Returned as
+    raw bytes so the BOM and CRLF behavior is realistic."""
+    import json as _json
+
+    # Helper — encode JSON as UTF-16 LE with BOM, with CRLF line endings.
+    # Mimics what real Server 2019 OpenSSH+PowerShell emits.
+    def utf16(payload) -> bytes:
+        body = _json.dumps(payload) + "\r\n"
+        return b"\xff\xfe" + body.encode("utf-16-le")
+
+    def utf8(payload) -> bytes:
+        return (_json.dumps(payload) + "\r\n").encode("utf-8")
+
+    # Build the same command strings the Windows CommandSet emits so the
+    # stub matches the collector's call sites verbatim. Pull them from
+    # the live CommandSet so this test stays in sync if the strings
+    # change.
+    profile = detect_windows(get_ciminstance_json=WIN_2022_CIM_JSON)
+    cs = command_set_for(profile)
+
+    return {
+        # OS detection — POSIX probe fails (empty), Windows probe succeeds.
+        "cat /etc/os-release": b"",
+        # The detector's hard-coded Windows probe.
+        (
+            'powershell -NoProfile -NonInteractive -Command "'
+            "Get-CimInstance Win32_OperatingSystem | "
+            'ConvertTo-Json -Compress -Depth 3"'
+        ): utf16(_json.loads(WIN_2022_CIM_JSON)),
+        cs.hostname_fqdn: b"\xff\xfeW\x00I\x00N\x002\x002\x00.\x00c\x00o\x00r\x00p\x00\r\x00\n\x00",
+        cs.services_running: utf16(
+            [
+                {"Name": "sshd", "Status": "Running", "StartType": "Automatic", "DisplayName": "OpenSSH SSH Server"},
+                {"Name": "W3SVC", "Status": "Running", "StartType": "Automatic", "DisplayName": "World Wide Web Publishing Service"},
+            ]
+        ),
+        cs.network_addr_v4: utf8(
+            [{"InterfaceAlias": "Ethernet0", "IPAddress": "10.0.0.5", "PrefixLength": 24}]
+        ),
+        cs.network_addr_v6: utf8([]),
+        cs.network_routes: utf8(
+            [{"DestinationPrefix": "0.0.0.0/0", "NextHop": "10.0.0.1", "InterfaceAlias": "Ethernet0", "RouteMetric": 0}]
+        ),
+        cs.resolv_conf: utf8(
+            [{"InterfaceAlias": "Ethernet0", "ServerAddresses": ["10.0.0.2", "10.0.0.3"]}]
+        ),
+        cs.listening_ports: utf8(
+            [
+                {"LocalAddress": "0.0.0.0", "LocalPort": 22, "OwningProcess": 1234},
+                {"LocalAddress": "0.0.0.0", "LocalPort": 80, "OwningProcess": 5678},
+            ]
+        ),
+        cs.mounts: utf8(
+            [
+                {"DriveLetter": "C", "FileSystemLabel": "OS", "FileSystemType": "NTFS", "Size": 64424509440, "SizeRemaining": 32212254720, "HealthStatus": "Healthy"}
+            ]
+        ),
+        cs.cron_system_paths: utf8(
+            [
+                {"TaskName": "Backup", "TaskPath": "\\Custom\\", "State": "Ready", "Author": "ops"},
+                {"TaskName": "Patch", "TaskPath": "\\Custom\\", "State": "Ready", "Author": "ops"},
+            ]
+        ),
+        cs.windows_hotfixes: utf8(
+            [{"HotFixID": "KB5036909", "Description": "Security Update", "InstalledOn": "2026-04-01"}]
+        ),
+        cs.windows_ad_membership: utf8(
+            {"Domain": "corp.local", "PartOfDomain": True, "DomainRole": 3}
+        ),
+    }
+
+
+def test_collector_drives_windows_path_and_normalizes_to_linux_shape(monkeypatch):
+    """End-to-end: SSHCollector talks to a Windows VM, parses
+    PowerShell+JSON output (with UTF-16 BOM on some commands), and
+    produces raw_data in the same shape the diff engine consumes for
+    Linux VMs."""
+    from app.core.ssh import SSHCollector
+
+    responses = _win_fixture_responses()
+    stub = _StubClient({})  # we override exec_command directly
+
+    def _exec_bytes(cmd, timeout=0):
+        stub.commands.append(cmd)
+        body = responses.get(cmd, b"")
+        return None, _StubStdoutBytes(body), _StubStdoutBytes(b"")
+
+    stub.exec_command = _exec_bytes
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_connect(self, host, username):
+        yield stub
+
+    monkeypatch.setattr(SSHCollector, "_connect", fake_connect)
+
+    collector = SSHCollector(key_path="/dev/null")
+    state = collector.collect(host="10.0.0.5", username="virtvalidate")
+
+    # OS profile picked Windows.
+    profile = state["meta"]["os_profile"]
+    assert profile["distro"] == "windows-server-2022"
+    assert profile["distro_family"] == "windows"
+    assert profile["is_systemd"] is False
+
+    # POSIX probe ran first, came back empty, then Windows probe fired.
+    assert stub.commands[0] == "cat /etc/os-release"
+    assert any("Win32_OperatingSystem" in c for c in stub.commands)
+
+    # Services normalized to systemd-shaped fields the diff engine reads.
+    services = state["services"]
+    units = {s["unit"] for s in services}
+    assert {"sshd", "W3SVC"} <= units
+    assert all(s["active"] == "active" for s in services)
+
+    # Ports look the same as Linux ones.
+    ports = state["ports"]
+    assert {"proto": "tcp", "state": "LISTEN", "address": "0.0.0.0", "port": 22} in ports
+    assert any(p["port"] == 80 for p in ports)
+
+    # Volumes mapped to the mounts field.
+    mounts = state["mounts"]
+    assert any("C:" in m["target"] for m in mounts)
+    assert mounts[0]["fstype"] == "NTFS"
+
+    # Network normalized.
+    net = state["network"]
+    assert "Ethernet0" in net["interfaces"]
+    assert "10.0.0.5/24" in net["interfaces"]["Ethernet0"]["ipv4"]
+    assert "10.0.0.2" in net["dns"]
+
+    # Scheduled tasks land under cron.system so the diff engine compares
+    # them the same way it compares /etc/cron.d/* on Linux.
+    cron = state["cron"]
+    assert cron["user_crontabs"] == {}
+    paths = {entry["path"] for entry in cron["system"]}
+    assert "\\Custom\\" in paths
+
+    # Windows-only fields populated alongside the shared ones.
+    assert state["hotfixes"][0]["id"] == "KB5036909"
+    assert state["ad_membership"]["domain"] == "corp.local"
+    assert state["ad_membership"]["part_of_domain"] is True
+
+
+def test_run_strips_utf16_bom_and_crlf():
+    """Direct unit test for _run — confirms UTF-16 LE and UTF-8 BOM
+    handling without going through the full collect() path."""
+    from app.core.ssh import SSHCollector
+
+    collector = SSHCollector(key_path="/dev/null")
+
+    class _Client:
+        def exec_command(self, cmd, timeout=0):
+            # UTF-16 LE BOM + "ok\r\n"
+            return None, _StubStdoutBytes(b"\xff\xfeo\x00k\x00\r\x00\n\x00"), _StubStdoutBytes(b"")
+
+    out = collector._run(_Client(), "any-command")
+    assert out == "ok\n"
+
+
+def test_run_strips_utf8_bom():
+    from app.core.ssh import SSHCollector
+
+    collector = SSHCollector(key_path="/dev/null")
+
+    class _Client:
+        def exec_command(self, cmd, timeout=0):
+            return None, _StubStdoutBytes(b"\xef\xbb\xbfhello\r\n"), _StubStdoutBytes(b"")
+
+    assert collector._run(_Client(), "any") == "hello\n"
+
+
+def test_run_json_returns_none_on_garbage():
+    from app.core.ssh import SSHCollector
+
+    collector = SSHCollector(key_path="/dev/null")
+
+    class _Client:
+        def exec_command(self, cmd, timeout=0):
+            return None, _StubStdoutBytes(b"not valid json\r\n"), _StubStdoutBytes(b"")
+
+    assert collector._run_json(_Client(), "any") is None

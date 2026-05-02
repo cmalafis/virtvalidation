@@ -25,17 +25,27 @@ class LLMError(RuntimeError):
     """
 
 
-SYSTEM_PROMPT = """You are VirtValidate, an expert Linux systems engineer validating a VM
-that was migrated from VMware to OpenShift Virtualization. Compare the
-pre-migration baseline against the current state and identify any
-meaningful differences that indicate the migration didn't preserve the
-workload's expected behavior.
+SYSTEM_PROMPT = """You are VirtValidate, an expert systems engineer validating a VM that
+was migrated from VMware to OpenShift Virtualization. The VM may be
+Linux (RHEL family, Debian/Ubuntu) or Windows Server (2019/2022/2025).
+Compare the pre-migration baseline against the current state and
+identify any meaningful differences that indicate the migration didn't
+preserve the workload's expected behavior.
 
 You will receive:
-  - the VM's role / OS / hostname
-  - the pre-migration baseline profile (services, network, ports, mounts, cron)
+  - the VM's role / OS profile / hostname (OS family is given explicitly)
+  - the pre-migration baseline profile (services, network, ports, mounts,
+    cron-or-scheduled-tasks; on Windows VMs, additional hotfixes and
+    AD-membership blocks)
   - the post-migration current state (same shape)
   - a precomputed structured diff highlighting added / removed / changed items
+
+Use platform-appropriate terminology in your findings:
+  - Linux: systemd services, cron jobs, mounts, iptables/nftables
+  - Windows: Windows services, scheduled tasks, drives/volumes,
+    Windows Firewall, AD membership, installed hotfixes
+Do not say "cron job missing" for a Windows VM, or "scheduled task drift"
+for a Linux VM — match the OS the VM actually runs.
 
 Severity guidance — use this exactly:
 
@@ -111,7 +121,12 @@ class LLMClient:
     def validate(self, baseline: dict, current_state: dict, vm_role: str) -> dict:
         """Reason over pre/post migration diff and return a structured verdict."""
         diff = self._diff_state(baseline, current_state)
-        user_prompt = self._render_prompt(vm_role, diff)
+        # The OS profile is captured at baseline time; surface it in the
+        # prompt so the LLM uses Windows terminology for Windows VMs and
+        # Linux terminology for Linux VMs without us having to maintain
+        # per-OS prompt templates.
+        os_profile = (baseline.get("meta") or {}).get("os_profile") or {}
+        user_prompt = self._render_prompt(vm_role, os_profile, diff)
         try:
             response = self.backend.chat_sync(
                 messages=[
@@ -152,9 +167,45 @@ class LLMClient:
         return verdict
 
     @staticmethod
-    def _render_prompt(vm_role: str, diff: dict) -> str:
+    def _render_prompt(vm_role: str, os_profile: dict, diff: dict) -> str:
+        family = (os_profile.get("distro_family") or "unknown").lower()
+        distro = os_profile.get("distro") or "unknown"
+        version = os_profile.get("major_version") or 0
+        minor = os_profile.get("minor_version") or 0
+        version_label = f"{version}.{minor}" if minor else str(version)
+        pretty = os_profile.get("pretty_name") or ""
+
+        # Family-specific terminology hint. Keeps the system prompt
+        # generic and lets each request remind the model which side of
+        # the fence this particular VM is on.
+        if family == "windows":
+            term_hint = (
+                "This is a Windows VM — use Windows terminology in your findings:\n"
+                "  - Windows services (NOT systemd units)\n"
+                "  - scheduled tasks (NOT cron jobs)\n"
+                "  - drives/volumes (NOT mountpoints)\n"
+                "  - Windows Firewall (NOT iptables/nftables)\n"
+                "  - if AD membership or hotfix blocks are present, factor them in.\n"
+            )
+        elif family in {"rhel-like", "debian-like"}:
+            term_hint = (
+                "This is a Linux VM — use Linux terminology in your findings:\n"
+                "  - systemd services / units\n"
+                "  - cron jobs (system + per-user)\n"
+                "  - mountpoints + filesystems\n"
+                "  - iptables/nftables firewall\n"
+            )
+        else:
+            term_hint = (
+                "OS family was not detected. Use generic terminology and "
+                "lower confidence on findings that depend on platform "
+                "conventions.\n"
+            )
+
         return (
-            f"VM role: {vm_role or 'unspecified'}\n\n"
+            f"VM role: {vm_role or 'unspecified'}\n"
+            f"OS: {pretty or distro} ({family}, version {version_label})\n\n"
+            f"{term_hint}\n"
             f"State diff (baseline -> current):\n"
             f"{json.dumps(diff, indent=2, sort_keys=True)}\n"
         )

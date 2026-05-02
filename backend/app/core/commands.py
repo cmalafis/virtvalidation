@@ -28,6 +28,10 @@ class CommandSet:
     Attribute names are normalized across all OS variants — only the
     underlying command string changes per dispatch entry. This keeps the
     collector free of ``if rhel else ...`` branching.
+
+    Windows fields default to ``None`` so the existing Linux command sets
+    don't have to populate them. The collector consults
+    ``profile.distro_family`` to decide which path to drive.
     """
 
     # ---- currently collected ----
@@ -51,6 +55,16 @@ class CommandSet:
     firewall_inspect: str
     time_sync_status: str
     package_list: str
+
+    # ---- Windows-only fields (None on Linux command sets). The collector
+    # reads these only when ``profile.distro_family == "windows"``; on
+    # Linux it stays on the POSIX fields above. The values are full
+    # PowerShell command strings the collector pipes through SSH.
+    windows_system_info: str | None = None
+    windows_hotfixes: str | None = None
+    windows_ad_membership: str | None = None
+    windows_processes: str | None = None
+    windows_users: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -187,17 +201,174 @@ def _modern_default() -> CommandSet:
     return _rhel_modern()
 
 
+# ---------------------------------------------------------------------------
+# Windows Server (2019 / 2022 / 2025).
+#
+# All commands run via PowerShell over OpenSSH. ConvertTo-Json gives us
+# structured output the collector parses directly — no fragile text scraping.
+# Compress reduces newlines + indentation that would otherwise have to
+# survive an SSH channel cleanly. The wrapping `powershell -Command "…"`
+# is required because Windows OpenSSH defaults to CMD when the operator
+# hasn't set DefaultShell to PowerShell.
+#
+# The Linux-shaped fields (services_running, listening_ports, mounts,
+# cron_*) are populated with PowerShell equivalents so the collector's
+# main loop walks the same fields regardless of OS — the parsing branch
+# decides whether to scrape text or json.loads().
+# ---------------------------------------------------------------------------
+_PS = "powershell -NoProfile -NonInteractive -Command"
+
+
+def _ps(cmd: str) -> str:
+    """Wrap a PowerShell expression so it survives the SSH channel.
+
+    Doubles up double quotes inside the command body — the outer SSH
+    layer hands the entire string to the remote shell as one argv,
+    which on Windows means the command body must already be quoted
+    correctly. Single quotes inside PowerShell strings stay single.
+    """
+    body = cmd.strip()
+    return f'{_PS} "{body}"'
+
+
+def _windows_powershell() -> CommandSet:
+    """PowerShell-based commands for Windows Server 2019+.
+
+    Maps the Linux-shaped CommandSet fields to their Windows equivalents:
+
+      - services_running    → Get-Service (running only)
+      - listening_ports     → Get-NetTCPConnection -State Listen
+      - mounts              → Get-Volume (drives + filesystems)
+      - cron_*              → Get-ScheduledTask (cron_user_template
+                              re-purposed as a single-shot command —
+                              the {user} substitution is ignored)
+      - network_addr_v4/v6  → Get-NetIPAddress -AddressFamily IPv4/IPv6
+      - network_routes      → Get-NetRoute -AddressFamily IPv4
+      - resolv_conf         → Get-DnsClientServerAddress
+      - os_release          → Get-CimInstance Win32_OperatingSystem
+      - uname_kernel/arch   → derived from Win32_OperatingSystem
+      - hostname_fqdn       → [System.Net.Dns]::GetHostByName output
+      - firewall_inspect    → Get-NetFirewallRule (enabled rules)
+      - time_sync_status    → w32tm /query /status
+      - package_list        → Get-CimInstance Win32_Product
+
+    All commands emit JSON via ConvertTo-Json. The SSH collector
+    branches on ``profile.distro_family == "windows"`` and parses
+    accordingly.
+    """
+    return CommandSet(
+        services_running=_ps(
+            "Get-Service | Where-Object { $_.Status -eq 'Running' } | "
+            "Select-Object Name, Status, StartType, DisplayName | "
+            "ConvertTo-Json -Compress"
+        ),
+        network_addr_v4=_ps(
+            "Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+            "Select-Object InterfaceAlias, IPAddress, PrefixLength | "
+            "ConvertTo-Json -Compress"
+        ),
+        network_addr_v6=_ps(
+            "Get-NetIPAddress -AddressFamily IPv6 -ErrorAction SilentlyContinue | "
+            "Select-Object InterfaceAlias, IPAddress, PrefixLength | "
+            "ConvertTo-Json -Compress"
+        ),
+        network_routes=_ps(
+            "Get-NetRoute -AddressFamily IPv4 | "
+            "Select-Object DestinationPrefix, NextHop, InterfaceAlias, RouteMetric | "
+            "ConvertTo-Json -Compress"
+        ),
+        resolv_conf=_ps(
+            "Get-DnsClientServerAddress -AddressFamily IPv4 | "
+            "Select-Object InterfaceAlias, ServerAddresses | "
+            "ConvertTo-Json -Compress"
+        ),
+        listening_ports=_ps(
+            "Get-NetTCPConnection -State Listen | "
+            "Select-Object LocalAddress, LocalPort, OwningProcess | "
+            "ConvertTo-Json -Compress"
+        ),
+        mounts=_ps(
+            "Get-Volume | "
+            "Select-Object DriveLetter, FileSystemLabel, FileSystemType, "
+            "Size, SizeRemaining, HealthStatus | "
+            "ConvertTo-Json -Compress"
+        ),
+        # Windows has scheduled tasks instead of crontabs. The collector
+        # keys on the same fields (cron_users / cron_user_template /
+        # cron_system_paths) but here cron_users returns nothing (so the
+        # collector skips per-user iteration) and cron_system_paths
+        # returns the full task list as JSON.
+        cron_users="",
+        cron_user_template="",
+        cron_system_paths=_ps(
+            "Get-ScheduledTask | Where-Object { $_.State -eq 'Ready' } | "
+            "Select-Object TaskName, TaskPath, State, Author | "
+            "ConvertTo-Json -Compress"
+        ),
+        os_release=_ps(
+            "Get-CimInstance Win32_OperatingSystem | "
+            "ConvertTo-Json -Compress -Depth 3"
+        ),
+        # uname_kernel + uname_arch are emitted from the same Win32 query
+        # so we don't need three round-trips for OS detection. The
+        # collector pulls them from the os_release JSON itself.
+        uname_kernel="",
+        uname_arch="",
+        hostname_fqdn=_ps(
+            "[System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).HostName"
+        ),
+        firewall_inspect=_ps(
+            "Get-NetFirewallRule | Where-Object Enabled -eq 'True' | "
+            "Select-Object DisplayName, Direction, Action, Profile | "
+            "ConvertTo-Json -Compress"
+        ),
+        time_sync_status="w32tm /query /status",
+        package_list=_ps(
+            "Get-CimInstance Win32_Product | "
+            "Select-Object Name, Version, Vendor | "
+            "ConvertTo-Json -Compress"
+        ),
+        windows_system_info=_ps(
+            "Get-CimInstance Win32_OperatingSystem | "
+            "ConvertTo-Json -Compress -Depth 3"
+        ),
+        windows_hotfixes=_ps(
+            "Get-HotFix | "
+            "Select-Object HotFixID, Description, InstalledOn | "
+            "ConvertTo-Json -Compress"
+        ),
+        windows_ad_membership=_ps(
+            "Get-CimInstance Win32_ComputerSystem | "
+            "Select-Object Domain, PartOfDomain, DomainRole | "
+            "ConvertTo-Json -Compress"
+        ),
+        windows_processes=_ps(
+            "Get-Process | Sort-Object CPU -Descending | "
+            "Select-Object -First 20 ProcessName, Id, CPU, WorkingSet | "
+            "ConvertTo-Json -Compress"
+        ),
+        windows_users=_ps(
+            "Get-LocalUser | "
+            "Select-Object Name, Enabled, LastLogon | "
+            "ConvertTo-Json -Compress"
+        ),
+    )
+
+
 def command_set_for(profile: OSProfile) -> CommandSet:
     """Pick the right ``CommandSet`` for an ``OSProfile``.
 
     Branching rules — keep them coarse so future OS additions don't
     explode the matrix:
 
+      - Windows                 → PowerShell + ConvertTo-Json command set
       - RHEL-like, major <= 7   → RHEL 7 commandset (legacy iproute, yum)
       - RHEL-like, major >= 8   → RHEL modern commandset
       - Debian-like             → Debian/Ubuntu commandset
       - Anything else (unknown) → conservative modern-Linux defaults
     """
+    if profile.distro_family == "windows":
+        return _windows_powershell()
     if profile.distro_family == "rhel-like":
         if profile.major_version and profile.major_version <= 7:
             return _rhel7()

@@ -33,14 +33,24 @@ differences are confined to one place.
 
 ## Windows
 
-| Distro | Status | Notes |
-|---|---|---|
-| **Windows Server 2019** | Planned | v1.0.0 milestone. Will use a parallel `WinRMCollector`. |
-| **Windows Server 2022** | Planned | v1.0.0 milestone. |
-| **Windows Server 2025** | Planned | v1.0.0 milestone. |
+| Distro                  | Status      | Notes                                                |
+|-------------------------|-------------|------------------------------------------------------|
+| **Windows Server 2019** | Tested      | OpenSSH built-in (must be installed via WindowsCapability). |
+| **Windows Server 2022** | Tested      | Recommended target — same path as Server 2019.       |
+| **Windows Server 2025** | Best effort | Newer release, partial validation against build 26100. |
+| **Windows Server 2016** | Future      | Manual OpenSSH install required; lower priority.     |
 
-Windows support is tracked in the [issue queue](https://github.com/cmalafis/virtvalidation/issues)
-under the `federal` + `roadmap` labels.
+Windows transport is **OpenSSH**, not WinRM. Commands run via PowerShell
+with `ConvertTo-Json` for structured output. Setup is operator-managed
+— see [WINDOWS_SETUP.md](WINDOWS_SETUP.md) for the full enrollment
+guide (OpenSSH install, default-shell configuration, service-account
+provisioning, key distribution).
+
+The Windows collector populates the same baseline shape as Linux
+(`services`, `ports`, `mounts`, `cron`, `network`) by normalizing
+`Get-Service` / `Get-NetTCPConnection` / `Get-Volume` /
+`Get-ScheduledTask` output. Windows-only blocks (`hotfixes`,
+`ad_membership`) ride alongside the shared fields.
 
 ## Detection confidence
 

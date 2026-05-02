@@ -103,7 +103,8 @@ That's it. Everything runs locally. No data leaves your machine.
 - [**Architecture Reference**](docs/ARCHITECTURE.md) — markdown view of the same data
 - [**Installation Guide**](docs/INSTALLATION.md) — detailed setup including production Quadlet deployment
 - [**SSH Setup**](docs/SSH_SETUP.md) — distributing keys, sudoers configuration, security model
-- [**OS Compatibility Matrix**](docs/COMPATIBILITY.md) — RHEL 7/8/9/10, Rocky, Alma, CentOS, Ubuntu/Debian status
+- [**Windows Setup**](docs/WINDOWS_SETUP.md) — OpenSSH + PowerShell configuration for Windows Server VMs
+- [**OS Compatibility Matrix**](docs/COMPATIBILITY.md) — RHEL 7/8/9/10, Rocky, Alma, CentOS, Ubuntu/Debian, Windows Server 2019/2022/2025 status
 - [**Network Design Review**](docs/NETWORK_REVIEW.md) — usage guide for the local-LLM network gap analysis feature
 - [**Configuration Reference**](docs/CONFIGURATION.md) — all environment variables explained
 - [**API Reference**](docs/API.md) — REST endpoint documentation
@@ -118,7 +119,7 @@ VirtValidate is in active development. Current focus: production hardening for v
 | **v0.1.0-alpha** | ✅ Shipped | Foundation — full end-to-end MVP |
 | **v0.2.0** | 🔄 In Progress | Polish & hardening, encrypted keys, app probes |
 | **v0.3.0** | 📋 Planned | Ansible playbook generation, vCenter discovery, Helm chart |
-| **v1.0.0** | 🎯 Target | Multi-tenancy, RBAC, vLLM, Windows VMs, GA |
+| **v1.0.0** | 🎯 Target | Multi-tenancy, RBAC, vLLM, GA |
 | **v2.0.0** | 🔮 Future | Federal classified — Vault, HSM/TPM, CAC/PIV, FIPS |
 
 See the [GitHub Projects board](https://github.com/cmalafis/virtvalidation/projects) for detailed work tracking and the [product map](docs/product-map.html) for the complete feature catalog.

@@ -23,11 +23,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Literal, Optional
 
+import json
+
 import paramiko
 
 from app.core.commands import CommandSet, command_set_for
 from app.core.fips import FIPSViolation, validate_ssh_key
-from app.core.os_profile import UNKNOWN_PROFILE, OSProfile, detect
+from app.core.os_profile import UNKNOWN_PROFILE, OSProfile, detect, detect_windows
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +189,12 @@ class SSHCollector:
             hostname = self._run(client, cs.hostname_fqdn).strip()
 
             # ---- step 3: per-subsystem collection ------------------------
-            state = {
+            # Windows and Linux share the same raw_data shape so the diff
+            # engine + LLM prompt don't fork. The Windows branch produces
+            # the Linux fields by normalizing PowerShell+JSON output, and
+            # adds optional Windows-only blocks (hotfixes, ad_membership)
+            # that stay null on Linux snapshots.
+            state: dict = {
                 "meta": {
                     "host": host,
                     "username": username,
@@ -204,12 +211,19 @@ class SSHCollector:
                     "os_profile": os_profile.to_dict(),
                     "collected_at": started.isoformat(),
                 },
-                "services": self._collect_services(client, cs),
-                "network": self._collect_network(client, cs),
-                "ports": self._collect_ports(client, cs),
-                "mounts": self._collect_mounts(client, cs),
-                "cron": self._collect_cron(client, cs),
             }
+            if os_profile.distro_family == "windows":
+                state.update(self._collect_windows(client, cs))
+            else:
+                state.update(
+                    {
+                        "services": self._collect_services(client, cs),
+                        "network": self._collect_network(client, cs),
+                        "ports": self._collect_ports(client, cs),
+                        "mounts": self._collect_mounts(client, cs),
+                        "cron": self._collect_cron(client, cs),
+                    }
+                )
         return state
 
     # -----------------------------------------------------------------
@@ -360,30 +374,91 @@ class SSHCollector:
             client.close()
 
     def _run(self, client: paramiko.SSHClient, command: str) -> str:
-        """Execute a command and return stdout. Empty string on non-zero exit."""
+        """Execute a command and return stdout. Empty string on non-zero exit.
+
+        PowerShell over OpenSSH on Windows occasionally emits UTF-16 LE
+        with a BOM prefix; we strip both so the rest of the parsing
+        layer always sees clean UTF-8 text without CRLF artifacts. A
+        plain Linux session runs through this normalization as a no-op
+        because UTF-8 BOMs are rare and CRLF→LF on stripped lines is safe.
+        """
         _, stdout, _stderr = client.exec_command(command, timeout=self.command_timeout)
         exit_code = stdout.channel.recv_exit_status()
-        out = stdout.read().decode("utf-8", errors="replace")
+        raw = stdout.read()
         if exit_code != 0:
             return ""
-        return out
+        # PowerShell honors $OutputEncoding for stdout; its default differs
+        # by Windows version — Server 2019 emits UTF-16 LE with a BOM,
+        # Server 2022+ emits UTF-8 unless the operator's profile changed
+        # it. We try UTF-16 first when we see the LE BOM, then fall back.
+        if raw.startswith(b"\xff\xfe"):
+            text = raw.decode("utf-16-le", errors="replace").lstrip("﻿")
+        elif raw.startswith(b"\xfe\xff"):
+            text = raw.decode("utf-16-be", errors="replace").lstrip("﻿")
+        elif raw.startswith(b"\xef\xbb\xbf"):
+            text = raw.decode("utf-8-sig", errors="replace")
+        else:
+            text = raw.decode("utf-8", errors="replace")
+        # Normalize CRLF → LF so existing line-based parsers don't see
+        # trailing \r artifacts on Windows output.
+        return text.replace("\r\n", "\n").replace("\r", "\n")
+
+    def _run_json(self, client: paramiko.SSHClient, command: str):
+        """Run a command and parse its stdout as JSON.
+
+        ConvertTo-Json sometimes emits a single object even when the
+        operator's intent was a list (when the input pipeline produced
+        exactly one item). We normalize that to a list at the call
+        site as needed. Returns ``None`` on parse failure so the
+        caller can degrade gracefully without raising.
+        """
+        out = self._run(client, command).strip()
+        if not out:
+            return None
+        try:
+            return json.loads(out)
+        except (ValueError, TypeError):
+            logger.warning(
+                "Could not parse JSON output (%d bytes); first 120 chars: %r",
+                len(out),
+                out[:120],
+            )
+            return None
 
     # -----------------------------------------------------------------
     # OS detection
     # -----------------------------------------------------------------
     def _detect_os(self, client: paramiko.SSHClient) -> OSProfile:
         """First step of every collection. Best-effort: returns the
-        ``UNKNOWN_PROFILE`` when /etc/os-release is unreadable so the
-        rest of the collection can still proceed."""
-        # We don't have a CommandSet yet (we're about to derive one), so
-        # use the raw constants. These commands are stable across every
-        # distro we care about.
+        ``UNKNOWN_PROFILE`` when neither POSIX nor Windows detection
+        produces a usable profile.
+
+        Detection order:
+          1. POSIX: ``cat /etc/os-release``. Works for every Linux
+             distro we care about.
+          2. Windows: ``Get-CimInstance Win32_OperatingSystem``. Runs
+             only when the POSIX probe returned nothing — saves a
+             round-trip on the Linux happy path.
+
+        On Windows hosts the POSIX probe either fails (cmd.exe doesn't
+        recognize ``cat``) or returns empty (PowerShell ignores it
+        silently), so the Windows branch fires naturally."""
         os_release = self._run(client, "cat /etc/os-release")
-        if not os_release.strip():
-            return UNKNOWN_PROFILE
-        kernel = self._run(client, "uname -r").strip()
-        arch = self._run(client, "uname -m").strip()
-        return detect(os_release_text=os_release, uname_r=kernel, uname_m=arch)
+        if os_release.strip():
+            kernel = self._run(client, "uname -r").strip()
+            arch = self._run(client, "uname -m").strip()
+            return detect(os_release_text=os_release, uname_r=kernel, uname_m=arch)
+
+        # POSIX probe came back empty — try Windows.
+        ps_probe = (
+            'powershell -NoProfile -NonInteractive -Command "'
+            "Get-CimInstance Win32_OperatingSystem | "
+            'ConvertTo-Json -Compress -Depth 3"'
+        )
+        win_json = self._run(client, ps_probe).strip()
+        if win_json:
+            return detect_windows(get_ciminstance_json=win_json)
+        return UNKNOWN_PROFILE
 
     # -----------------------------------------------------------------
     # Per-subsystem collectors
@@ -516,3 +591,236 @@ class SSHCollector:
                 system_entries.append({"path": path, "entries": entries})
 
         return {"user_crontabs": user_crons, "system": system_entries}
+
+    # -----------------------------------------------------------------
+    # Windows path — produces the same raw_data shape as the Linux
+    # collectors above so the diff engine + LLM prompt don't fork on
+    # OS family. Optional Windows-only fields (hotfixes, ad_membership)
+    # ride alongside the shared fields.
+    # -----------------------------------------------------------------
+    def _collect_windows(self, client: paramiko.SSHClient, cs: CommandSet) -> dict:
+        return {
+            "services": self._collect_windows_services(client, cs),
+            "network": self._collect_windows_network(client, cs),
+            "ports": self._collect_windows_ports(client, cs),
+            "mounts": self._collect_windows_volumes(client, cs),
+            "cron": self._collect_windows_scheduled_tasks(client, cs),
+            "hotfixes": self._collect_windows_hotfixes(client, cs),
+            "ad_membership": self._collect_windows_ad_membership(client, cs),
+        }
+
+    def _collect_windows_services(
+        self, client: paramiko.SSHClient, cs: CommandSet
+    ) -> list[dict]:
+        body = self._run_json(client, cs.services_running) or []
+        if isinstance(body, dict):
+            body = [body]
+        services: list[dict] = []
+        for svc in body:
+            if not isinstance(svc, dict):
+                continue
+            # Normalize to the systemd-style fields the diff engine + LLM
+            # prompt already understand. ``unit`` is the ServiceName,
+            # ``description`` is the DisplayName.
+            services.append(
+                {
+                    "unit": svc.get("Name") or "",
+                    "load": "loaded",
+                    # Get-Service Status is "Running" / "Stopped" / etc.
+                    # Map to systemd's active/inactive vocabulary.
+                    "active": (
+                        "active"
+                        if str(svc.get("Status") or "").lower() == "running"
+                        else "inactive"
+                    ),
+                    "sub": str(svc.get("Status") or "").lower(),
+                    "description": svc.get("DisplayName") or "",
+                }
+            )
+        return services
+
+    def _collect_windows_network(
+        self, client: paramiko.SSHClient, cs: CommandSet
+    ) -> dict:
+        v4 = self._run_json(client, cs.network_addr_v4) or []
+        v6 = self._run_json(client, cs.network_addr_v6) or []
+        if isinstance(v4, dict):
+            v4 = [v4]
+        if isinstance(v6, dict):
+            v6 = [v6]
+        interfaces: dict[str, dict] = {}
+        for entry in v4:
+            if not isinstance(entry, dict):
+                continue
+            iface = entry.get("InterfaceAlias")
+            ip = entry.get("IPAddress")
+            prefix = entry.get("PrefixLength")
+            if not iface or not ip:
+                continue
+            cidr = f"{ip}/{prefix}" if prefix is not None else ip
+            interfaces.setdefault(iface, {"ipv4": [], "ipv6": []})["ipv4"].append(cidr)
+        for entry in v6:
+            if not isinstance(entry, dict):
+                continue
+            iface = entry.get("InterfaceAlias")
+            ip = entry.get("IPAddress")
+            prefix = entry.get("PrefixLength")
+            if not iface or not ip:
+                continue
+            cidr = f"{ip}/{prefix}" if prefix is not None else ip
+            interfaces.setdefault(iface, {"ipv4": [], "ipv6": []})["ipv6"].append(cidr)
+
+        routes_raw = self._run_json(client, cs.network_routes) or []
+        if isinstance(routes_raw, dict):
+            routes_raw = [routes_raw]
+        routes: list[str] = []
+        for r in routes_raw:
+            if not isinstance(r, dict):
+                continue
+            dest = r.get("DestinationPrefix") or "?"
+            via = r.get("NextHop") or "?"
+            iface = r.get("InterfaceAlias") or "?"
+            routes.append(f"{dest} via {via} dev {iface}")
+
+        dns_raw = self._run_json(client, cs.resolv_conf) or []
+        if isinstance(dns_raw, dict):
+            dns_raw = [dns_raw]
+        dns: list[str] = []
+        for d in dns_raw:
+            if not isinstance(d, dict):
+                continue
+            servers = d.get("ServerAddresses") or []
+            if isinstance(servers, str):
+                servers = [servers]
+            for s in servers:
+                if s and s not in dns:
+                    dns.append(s)
+        return {"interfaces": interfaces, "routes": routes, "dns": dns}
+
+    def _collect_windows_ports(
+        self, client: paramiko.SSHClient, cs: CommandSet
+    ) -> list[dict]:
+        body = self._run_json(client, cs.listening_ports) or []
+        if isinstance(body, dict):
+            body = [body]
+        ports: list[dict] = []
+        for entry in body:
+            if not isinstance(entry, dict):
+                continue
+            port = entry.get("LocalPort")
+            try:
+                port_val = int(port) if port is not None else 0
+            except (ValueError, TypeError):
+                port_val = 0
+            if not port_val:
+                continue
+            ports.append(
+                {
+                    "proto": "tcp",  # Get-NetTCPConnection — UDP would need Get-NetUDPEndpoint
+                    "state": "LISTEN",
+                    "address": entry.get("LocalAddress") or "0.0.0.0",
+                    "port": port_val,
+                }
+            )
+        return ports
+
+    def _collect_windows_volumes(
+        self, client: paramiko.SSHClient, cs: CommandSet
+    ) -> list[dict]:
+        body = self._run_json(client, cs.mounts) or []
+        if isinstance(body, dict):
+            body = [body]
+        mounts: list[dict] = []
+        for vol in body:
+            if not isinstance(vol, dict):
+                continue
+            drive = vol.get("DriveLetter")
+            target = f"{drive}:\\" if drive else (vol.get("FileSystemLabel") or "?")
+            entry = {
+                "target": target,
+                # No "source" concept on Windows volumes — populate with
+                # the FileSystemLabel so the diff engine still has a
+                # comparable field.
+                "source": vol.get("FileSystemLabel") or "",
+                "fstype": vol.get("FileSystemType") or "",
+                "options": vol.get("HealthStatus") or "",
+            }
+            if vol.get("Size") is not None:
+                entry["size"] = vol.get("Size")
+            if vol.get("SizeRemaining") is not None:
+                entry["used"] = vol.get("SizeRemaining")
+            mounts.append(entry)
+        return mounts
+
+    def _collect_windows_scheduled_tasks(
+        self, client: paramiko.SSHClient, cs: CommandSet
+    ) -> dict:
+        """Return scheduled tasks under the system_entries key so the
+        existing diff engine compares them the same way it compares
+        ``/etc/cron.d/*`` entries."""
+        body = self._run_json(client, cs.cron_system_paths) or []
+        if isinstance(body, dict):
+            body = [body]
+        # Group tasks under their TaskPath so diffing notices when a
+        # whole path's worth of tasks moves or disappears.
+        grouped: dict[str, list[str]] = {}
+        for task in body:
+            if not isinstance(task, dict):
+                continue
+            path = task.get("TaskPath") or "\\"
+            name = task.get("TaskName")
+            if not name:
+                continue
+            grouped.setdefault(path, []).append(name)
+        system_entries = [
+            {"path": path, "entries": sorted(entries)}
+            for path, entries in sorted(grouped.items())
+        ]
+        return {"user_crontabs": {}, "system": system_entries}
+
+    def _collect_windows_hotfixes(
+        self, client: paramiko.SSHClient, cs: CommandSet
+    ) -> list[dict]:
+        if not cs.windows_hotfixes:
+            return []
+        body = self._run_json(client, cs.windows_hotfixes) or []
+        if isinstance(body, dict):
+            body = [body]
+        out: list[dict] = []
+        for hf in body:
+            if not isinstance(hf, dict):
+                continue
+            installed = hf.get("InstalledOn")
+            if isinstance(installed, dict):
+                # Get-HotFix returns DateTime objects; ConvertTo-Json
+                # serializes them as {"value": "/Date(…)/", "DateTime": "…"}.
+                # Prefer the DateTime string when present.
+                installed = installed.get("DateTime") or installed.get("value")
+            out.append(
+                {
+                    "id": hf.get("HotFixID") or "",
+                    "description": hf.get("Description") or "",
+                    "installed_on": installed or "",
+                }
+            )
+        return out
+
+    def _collect_windows_ad_membership(
+        self, client: paramiko.SSHClient, cs: CommandSet
+    ) -> dict:
+        if not cs.windows_ad_membership:
+            return {}
+        body = self._run_json(client, cs.windows_ad_membership) or {}
+        if isinstance(body, list):
+            body = body[0] if body else {}
+        if not isinstance(body, dict):
+            return {}
+        return {
+            "domain": body.get("Domain") or "",
+            "part_of_domain": bool(body.get("PartOfDomain")),
+            # DomainRole is an enum 0–5; surface the raw int and let the
+            # LLM / dashboard interpret. 0=standalone workstation,
+            # 1=member workstation, 2=standalone server, 3=member server,
+            # 4=backup DC, 5=primary DC.
+            "domain_role": body.get("DomainRole"),
+        }

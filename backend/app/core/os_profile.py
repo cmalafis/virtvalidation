@@ -13,6 +13,7 @@ or guessing — see ``docs/COMPATIBILITY.md`` for the full matrix.
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from typing import Literal
 
@@ -24,10 +25,30 @@ DistroName = Literal[
     "centos",
     "ubuntu",
     "debian",
+    # Windows Server family — same OSProfile shape, different command set.
+    # Build numbers map cleanly to product names: 17763=2019, 20348=2022,
+    # 26100=2025; we surface the product name as distro and the build as
+    # minor_version so existing UI rendering (`distro <major>.<minor>`)
+    # produces a sensible "windows-server-2022 10.20348" string.
+    "windows-server-2019",
+    "windows-server-2022",
+    "windows-server-2025",
+    "windows-unknown",
     "unknown",
 ]
-DistroFamily = Literal["rhel-like", "debian-like", "unknown"]
+DistroFamily = Literal["rhel-like", "debian-like", "windows", "unknown"]
 Confidence = Literal["high", "medium", "low"]
+
+
+# Windows build → product mapping. Build numbers are stable across CUs; the
+# major.minor pair from `Win32_OperatingSystem.Version` (e.g. "10.0.20348")
+# tells us which release we're on. New servers are added here as Microsoft
+# ships them.
+_WINDOWS_BUILD_TO_DISTRO: dict[int, DistroName] = {
+    17763: "windows-server-2019",
+    20348: "windows-server-2022",
+    26100: "windows-server-2025",
+}
 
 
 # Map os-release ID → canonical distro name. Anything not listed here lands
@@ -44,7 +65,7 @@ _DISTRO_BY_ID: dict[str, DistroName] = {
 
 
 def _family_of(distro: DistroName, id_like: str) -> DistroFamily:
-    """RHEL-like vs Debian-like, falling back to unknown.
+    """RHEL-like vs Debian-like vs Windows, falling back to unknown.
 
     Picks the family from the canonical distro first, then from
     ``ID_LIKE`` if the distro itself wasn't recognized — which is how
@@ -54,6 +75,8 @@ def _family_of(distro: DistroName, id_like: str) -> DistroFamily:
         return "rhel-like"
     if distro in {"ubuntu", "debian"}:
         return "debian-like"
+    if distro.startswith("windows"):
+        return "windows"
     tokens = id_like.lower().split()
     if any(t in {"rhel", "fedora", "centos"} for t in tokens):
         return "rhel-like"
@@ -170,6 +193,98 @@ def detect(
         is_systemd=True,
         pretty_name=pretty,
         detection_confidence=confidence,
+    )
+
+
+def detect_windows(*, get_ciminstance_json: str) -> OSProfile:
+    """Build an ``OSProfile`` from ``Get-CimInstance Win32_OperatingSystem``.
+
+    Expected input is the stdout of:
+
+        powershell -Command "Get-CimInstance Win32_OperatingSystem |
+          ConvertTo-Json -Compress"
+
+    On Server 2019/2022 the relevant fields are ``Caption``, ``Version``
+    (e.g. "10.0.20348"), ``BuildNumber``, and ``OSArchitecture``. We're
+    deliberately tolerant of missing fields — Windows occasionally
+    surfaces partial CIM output, especially under hardened SCCM
+    configurations.
+    """
+    try:
+        body = json.loads(get_ciminstance_json or "")
+    except (json.JSONDecodeError, TypeError):
+        return _windows_unknown_profile("Win32_OperatingSystem returned non-JSON")
+
+    if isinstance(body, list) and body:
+        body = body[0]
+    if not isinstance(body, dict):
+        return _windows_unknown_profile("Win32_OperatingSystem JSON not an object")
+
+    version = str(body.get("Version") or "").strip()
+    build_raw = body.get("BuildNumber") or body.get("Build")
+    try:
+        build = int(build_raw) if build_raw is not None else 0
+    except (ValueError, TypeError):
+        build = 0
+    if build == 0 and version:
+        # Fall back to parsing build out of "10.0.20348".
+        parts = version.split(".")
+        if len(parts) >= 3:
+            try:
+                build = int(parts[2])
+            except ValueError:
+                build = 0
+
+    distro: DistroName = _WINDOWS_BUILD_TO_DISTRO.get(build, "windows-unknown")
+    caption = str(body.get("Caption") or "").strip()
+    arch = str(body.get("OSArchitecture") or "").strip()
+
+    # Windows uses Major.Minor.Build.Revision. We surface major separately
+    # (10 for Server 2019/2022, 11 for Server 2025) and store build in
+    # minor_version so the existing UI string "<distro> <major>.<minor>"
+    # produces "windows-server-2022 10.20348" — readable and unambiguous.
+    major = 10
+    if version:
+        try:
+            major = int(version.split(".")[0])
+        except (ValueError, IndexError):
+            major = 10
+
+    if distro == "windows-unknown":
+        confidence: Confidence = "low" if not caption else "medium"
+    else:
+        confidence = "high" if caption else "medium"
+
+    return OSProfile(
+        distro=distro,
+        distro_family="windows",
+        major_version=major,
+        minor_version=build,
+        kernel_version=version,  # full Major.Minor.Build.Revision
+        architecture=arch,
+        # Windows has no systemd. Downstream code uses this to decide
+        # whether to issue systemctl-style commands; for Windows the
+        # CommandSet routes through PowerShell instead.
+        is_systemd=False,
+        pretty_name=caption,
+        detection_confidence=confidence,
+    )
+
+
+def _windows_unknown_profile(reason: str) -> OSProfile:
+    """Windows-shaped fallback when the CIM probe ran but we couldn't make
+    sense of it — keeps ``distro_family="windows"`` so the CommandSet
+    factory still routes to the PowerShell branch."""
+    return OSProfile(
+        distro="windows-unknown",
+        distro_family="windows",
+        major_version=0,
+        minor_version=0,
+        kernel_version="",
+        architecture="",
+        is_systemd=False,
+        pretty_name=reason,
+        detection_confidence="low",
     )
 
 
