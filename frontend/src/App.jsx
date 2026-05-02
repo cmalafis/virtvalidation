@@ -4,6 +4,7 @@ import NetworkReviewDetail from "./components/NetworkReviewDetail";
 import NetworkReviewNew from "./components/NetworkReviewNew";
 import ReportView from "./components/ReportView";
 import Settings from "./components/Settings";
+import VCenterSources from "./components/VCenterSources";
 import VirtValidate from "./components/VirtValidate";
 import VMDetail from "./components/VMDetail";
 
@@ -16,6 +17,7 @@ export default function App() {
         <Route path="/reports/:type" element={<ReportView />} />
         <Route path="/design-reviews/new" element={<NetworkReviewNew />} />
         <Route path="/design-reviews/:id" element={<NetworkReviewDetail />} />
+        <Route path="/sources/vcenters" element={<VCenterSources />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

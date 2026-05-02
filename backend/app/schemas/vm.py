@@ -24,6 +24,12 @@ class VMBase(BaseModel):
     target_namespace: str | None = Field(default=None, max_length=253)
     target_storage_class: str | None = Field(default=None, max_length=253)
     target_network_attachment: str | None = Field(default=None, max_length=253)
+    # Multi-vCenter scope. NULL when the operator hasn't tagged the VM
+    # to a vCenter (legacy enrollments or manual single-VM adds).
+    source_vcenter_id: int | None = Field(default=None)
+    # Optional pre-categorization hint — if set at enrollment time,
+    # Level 1 will use it as a seed instead of inferring from name patterns.
+    application_hint: str | None = Field(default=None, max_length=128)
 
 
 class VMCreate(VMBase):
@@ -48,6 +54,8 @@ class VMUpdate(BaseModel):
     target_namespace: str | None = Field(default=None, max_length=253)
     target_storage_class: str | None = Field(default=None, max_length=253)
     target_network_attachment: str | None = Field(default=None, max_length=253)
+    source_vcenter_id: int | None = Field(default=None)
+    application_hint: str | None = Field(default=None, max_length=128)
 
 
 class VMRead(VMBase):

@@ -48,6 +48,22 @@ class VM(Base):
     target_storage_class: Mapped[str | None] = mapped_column(String(253), nullable=True)
     target_network_attachment: Mapped[str | None] = mapped_column(String(253), nullable=True)
 
+    # Multi-vCenter boundary. NULL is allowed for back-compat — VMs
+    # enrolled before vCenter source registration was added stay
+    # ungrouped until an operator backfills. SET NULL on delete so
+    # removing a vCenter source doesn't cascade-delete its VMs (federal
+    # operators want a confirmation step, not a silent purge).
+    source_vcenter_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vcenter_sources.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Free-form application hint used by Level 1 categorization to seed
+    # group inference. The LLM may overwrite this with what it deduces
+    # from naming patterns + role + custom attributes. Operators can
+    # also fill it manually when they know the application boundary
+    # ahead of time (e.g., "epic-emr-prod", "athena-billing").
+    application_hint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -56,6 +72,17 @@ class VM(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+    # Hot query paths for scale-aware planning. These match the access
+    # patterns the scope-selection wizard and Level 1 categorizer drive:
+    #   - "VMs in vCenter X with status Y" — inventory pages
+    #   - "VMs in target cluster N" — campaign/wave assignment views
+    #   - "VMs by app + env" — Level 1 grouping aggregator
+    __table_args__ = (
+        Index("ix_vms_source_vcenter_status", "source_vcenter_id", "status"),
+        Index("ix_vms_target_namespace", "target_namespace"),
+        Index("ix_vms_app_env", "application_hint", "environment"),
     )
 
     snapshots: Mapped[list["BaselineSnapshot"]] = relationship(

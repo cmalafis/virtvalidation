@@ -2450,6 +2450,16 @@ export default function VirtValidate() {
             >
               + Add VMs
             </button>
+            <Link to="/sources/vcenters" title="Manage vCenter source registry" style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              background: "transparent", border: "1px solid #3a3a55",
+              color: "#aaaacc", textDecoration: "none",
+              padding: "10px 16px", fontSize: 12,
+              fontFamily: "'Barlow', sans-serif",
+              letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+            }}>
+              ◎ vCenters
+            </Link>
             <Link to="/settings" title="System configuration" style={{
               display: "inline-flex", alignItems: "center", gap: 8,
               background: "transparent", border: "1px solid #3a3a55",
