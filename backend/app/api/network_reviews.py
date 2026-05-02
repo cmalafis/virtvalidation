@@ -105,7 +105,8 @@ def _run_analysis(review_id: int) -> None:
 
         review.analysis_results = {
             "executive_summary": result["executive_summary"],
-            "model": reviewer.model,
+            "model": reviewer.backend.default_model,
+            "backend": reviewer.backend.backend_type,
             "source_summary": source_summary,
         }
         review.status = NetworkReviewStatus.completed

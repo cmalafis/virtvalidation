@@ -302,19 +302,26 @@ function SSHKeyViewer() {
 
 // ---------- Connection status section ----------
 
+// Friendly labels for the backend types the API returns.
+const BACKEND_LABELS = {
+  ollama: "Ollama (local)",
+  kserve: "KServe (RHOAI / OpenShift)",
+  vllm: "vLLM (planned for v1.0.0)",
+};
+
 function ConnectionStatus() {
   const [pg, setPg] = useState(undefined);
-  const [ollama, setOllama] = useState(undefined);
+  const [llm, setLlm] = useState(undefined);
   const [refreshing, setRefreshing] = useState(false);
 
   const probe = useCallback(async () => {
     setRefreshing(true);
-    const [pgRes, olRes] = await Promise.all([
+    const [pgRes, llmRes] = await Promise.all([
       fetchJSON("/api/health/postgres").catch((e) => ({ status: "offline", error: e.message })),
-      fetchJSON("/api/health/ollama").catch((e) => ({ status: "offline", error: e.message })),
+      fetchJSON("/api/health/llm").catch((e) => ({ status: "offline", error: e.message })),
     ]);
     setPg(pgRes);
-    setOllama(olRes);
+    setLlm(llmRes);
     setRefreshing(false);
   }, []);
 
@@ -335,6 +342,7 @@ function ConnectionStatus() {
           <div style={{
             fontSize: 13, color: "#aaaacc", marginTop: 4,
             fontFamily: "'Share Tech Mono', monospace",
+            wordBreak: "break-all",
           }}>{hostLine}</div>
         )}
       </div>
@@ -342,32 +350,37 @@ function ConnectionStatus() {
     </div>
   );
 
+  // Backend label: prefer the friendly name; fall back to whatever the API
+  // returned so brand-new backend types still render something sensible.
+  const backendLabel = llm?.backend ? (BACKEND_LABELS[llm.backend] || llm.backend) : "LLM";
+  const llmError = llm?.details?.error || llm?.error;
+
   return (
     <Section
       title="Connection Status"
-      subtitle="Live status of the local Ollama LLM and PostgreSQL backends."
+      subtitle="Live status of the configured LLM backend and PostgreSQL."
       action={<SecondaryButton onClick={probe} disabled={refreshing}>{refreshing ? <Spinner size={12}/> : "↻"} Refresh</SecondaryButton>}
     >
       <Row
-        label="Ollama"
-        hostLine={ollama?.host || "—"}
+        label={backendLabel}
+        hostLine={llm?.endpoint || "—"}
         info={
           <div style={{ textAlign: "right" }}>
-            <StatusDot status={ollama?.status} latencyMs={ollama?.latency_ms}/>
-            {ollama?.version && (
+            <StatusDot status={llm?.status} latencyMs={llm?.latency_ms >= 0 ? llm.latency_ms : undefined}/>
+            {llm?.model && (
               <div style={{
                 fontSize: 13, color: "#ccccee", marginTop: 6,
                 fontFamily: "'Share Tech Mono', monospace",
               }}>
-                v{ollama.version}
+                {llm.model}
               </div>
             )}
-            {ollama?.status === "offline" && ollama?.error && (
+            {llm?.status === "offline" && llmError && (
               <div style={{
                 fontSize: 13, color: "#ccaaaa", marginTop: 6, maxWidth: 320,
                 fontFamily: "'Barlow', sans-serif", lineHeight: 1.5,
               }}>
-                {ollama.error}
+                {llmError}
               </div>
             )}
           </div>
@@ -390,6 +403,119 @@ function ConnectionStatus() {
           </div>
         }
       />
+    </Section>
+  );
+}
+
+
+// Read-only backend identification panel. Surfaces the configured
+// backend type, model, endpoint, and live status so operators can see
+// what their deployment is wired up against. Switching backends is a
+// deployment decision (env var) — there is no edit affordance here.
+function LLMBackendPanel() {
+  const [info, setInfo] = useState(undefined);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const body = await fetchJSON("/api/system/llm-info");
+      setInfo(body);
+    } catch (e) {
+      setError(e.message || "Failed to load LLM backend info");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) {
+    return (
+      <Section title="LLM Backend" subtitle="Read-only — configured at deployment time via environment variables.">
+        <Shimmer width="100%" height={64}/>
+      </Section>
+    );
+  }
+  if (error || !info) {
+    return (
+      <Section title="LLM Backend" subtitle="Read-only — configured at deployment time via environment variables.">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+          <div style={{ fontSize: 14, color: "#ccaaaa", fontFamily: "'Barlow', sans-serif", lineHeight: 1.5 }}>
+            {error || "No backend info available."}
+          </div>
+          <SecondaryButton onClick={load}>↻ Retry</SecondaryButton>
+        </div>
+      </Section>
+    );
+  }
+
+  const cfg = info.config || {};
+  const health = info.health || {};
+  const backendLabel = BACKEND_LABELS[cfg.backend] || cfg.backend || "—";
+  const detailsErr = health.details?.error;
+
+  const KV = ({ label, value, mono = true }) => (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{
+        fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
+        fontFamily: "'Barlow', sans-serif", textTransform: "uppercase", fontWeight: 700,
+        marginBottom: 4,
+      }}>{label}</div>
+      <div style={{
+        fontSize: 14, color: "#ccccee",
+        fontFamily: mono ? "'Share Tech Mono', monospace" : "'Barlow', sans-serif",
+        wordBreak: "break-all",
+      }}>{value || "—"}</div>
+    </div>
+  );
+
+  return (
+    <Section
+      title="LLM Backend"
+      subtitle="Read-only — configured at deployment time via environment variables."
+      action={<SecondaryButton onClick={load}>↻ Refresh</SecondaryButton>}
+    >
+      <div style={{
+        padding: "16px 18px", border: "1px solid #1a1a2e", background: "#07070f", marginBottom: 12,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 14 }}>
+          <div style={{
+            fontSize: 15, color: "#eeeeff", fontWeight: 700,
+            fontFamily: "'Barlow', sans-serif", letterSpacing: "0.04em",
+          }}>{backendLabel}</div>
+          <StatusDot status={health.status} latencyMs={health.latency_ms >= 0 ? health.latency_ms : undefined}/>
+        </div>
+        <KV label="Model" value={cfg.model}/>
+        <KV label="Endpoint" value={cfg.endpoint}/>
+        {Array.isArray(health.details?.available_models) && health.details.available_models.length > 0 && (
+          <KV
+            label="Available Models"
+            value={health.details.available_models.join(", ")}
+          />
+        )}
+        {health.status === "offline" && detailsErr && (
+          <div style={{
+            marginTop: 4, padding: "10px 12px", background: "#0a0a18",
+            border: "1px solid #ff557755", color: "#ccaaaa",
+            fontSize: 13, lineHeight: 1.5, fontFamily: "'Barlow', sans-serif",
+          }}>
+            {detailsErr}
+          </div>
+        )}
+      </div>
+      <div style={{
+        fontSize: 13, color: "#aaaacc", fontFamily: "'Barlow', sans-serif",
+        lineHeight: 1.6, marginTop: 4,
+      }}>
+        Backend selection is set by <code style={{
+          fontFamily: "'Share Tech Mono', monospace", color: "#ccccee",
+        }}>LLM_BACKEND_TYPE</code> in the deployment&apos;s environment.
+        See <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>docs/CONFIGURATION.md</code> for
+        the full list of supported backends and their required variables.
+      </div>
     </Section>
   );
 }
@@ -738,6 +864,7 @@ export default function Settings() {
       <div style={{ maxWidth: 960, margin: "0 auto", padding: 32 }} className="fade-in">
         <SSHKeyViewer />
         <ConnectionStatus />
+        <LLMBackendPanel />
         <ConfigurationForm />
       </div>
     </div>

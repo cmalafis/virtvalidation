@@ -1,46 +1,46 @@
 """Health-check endpoints for the system tab on the settings page.
 
-Air-gapped by design: every probe targets a service inside the local
-podman network (Ollama, Postgres) — never the public internet.
+LLM probe is delegated to the configured backend so the report
+reflects whichever inference engine is wired up (Ollama by default,
+KServe in RHOAI deployments, vLLM in v1.0.0). Postgres still has its
+own probe — same connection pool the API uses anyway.
 """
 
 from __future__ import annotations
 
-import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.db import get_db
+from app.core.llm.factory import get_llm_backend
 
 router = APIRouter(tags=["health"])
 
-_OLLAMA_TIMEOUT_SECONDS = 5.0
 _API_VERSION = "0.1.0"
+
+
+@router.get("/llm")
+def llm_health() -> dict:
+    """Probe the configured LLM backend.
+
+    Routes through :meth:`LLMBackend.health_check_sync` so Ollama,
+    KServe, and vLLM all report through the same shape.
+    """
+    backend = get_llm_backend()
+    return backend.health_check_sync()
 
 
 @router.get("/ollama")
 def ollama_health() -> dict:
-    """Probe the local Ollama server via /api/tags."""
-    host = settings.ollama_host.rstrip("/")
-    try:
-        with httpx.Client(timeout=_OLLAMA_TIMEOUT_SECONDS) as c:
-            r = c.get(f"{host}/api/tags")
-            r.raise_for_status()
-            data = r.json()
-    except (httpx.HTTPError, ValueError) as e:
-        return {"status": "offline", "error": str(e)}
+    """Back-compat alias for ``/health/llm``.
 
-    available = [
-        m["name"] for m in (data.get("models") or []) if isinstance(m, dict) and m.get("name")
-    ]
-    return {
-        "status": "online",
-        "model": settings.ollama_model,
-        "available_models": available,
-    }
+    Pre-refactor clients (older Settings UI builds) hit this path. The
+    response is the same backend-agnostic envelope so they degrade
+    gracefully when the deployment isn't actually using Ollama.
+    """
+    return llm_health()
 
 
 @router.get("/postgres")
@@ -55,9 +55,21 @@ def postgres_health(db: Session = Depends(get_db)) -> dict:
 
 @router.get("/full")
 def full_health(db: Session = Depends(get_db)) -> dict:
-    """Combined status across the API and every backing dependency."""
+    """Combined status across the API and every backing dependency.
+
+    The new ``components`` block is the canonical shape going forward;
+    the top-level ``ollama`` / ``postgres`` keys are kept temporarily
+    for the old UI build that still reads them directly.
+    """
+    pg = postgres_health(db)
+    llm = llm_health()
     return {
         "api": {"status": "online", "version": _API_VERSION},
-        "ollama": ollama_health(),
-        "postgres": postgres_health(db),
+        "components": {
+            "database": pg,
+            "llm": llm,
+        },
+        # Deprecated — remove once the dashboard build catches up.
+        "ollama": llm,
+        "postgres": pg,
     }

@@ -6,18 +6,19 @@ import hashlib
 from base64 import b64decode
 from pathlib import Path
 
-import httpx
 import paramiko
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings as app_config
 from app.core.db import get_db
+from app.core.llm.factory import get_llm_backend
 from app.core.scheduler import next_run_time, reschedule_baseline_job
 from app.models.settings import AppSettings
 from app.schemas.settings import (
     AppSettingsRead,
     AppSettingsUpdate,
+    LLMBackendInfo,
     OllamaModelsResponse,
     SSHPublicKey,
 )
@@ -109,16 +110,30 @@ def ssh_public_key() -> dict:
 
 @system_router.get("/ollama-models", response_model=OllamaModelsResponse)
 def ollama_models() -> dict:
-    """List models currently pulled in the local Ollama instance."""
-    host = app_config.ollama_host.rstrip("/")
-    try:
-        with httpx.Client(timeout=5.0) as c:
-            r = c.get(f"{host}/api/tags")
-            r.raise_for_status()
-            body = r.json()
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Ollama unavailable at {host}: {e}") from e
-    except ValueError as e:
-        raise HTTPException(status_code=502, detail=f"Ollama returned non-JSON: {e}") from e
+    """List models available on the active LLM backend.
 
-    return {"models": body.get("models", [])}
+    Endpoint name predates the multi-backend refactor; the response now
+    routes through the backend's ``list_models()`` so KServe deployments
+    return their model and Ollama deployments return everything pulled.
+    Each entry carries just the ``name`` so the UI's existing dropdown
+    works without changes.
+    """
+    backend = get_llm_backend()
+    names = backend.list_models() or []
+    return {"models": [{"name": n} for n in names]}
+
+
+@system_router.get("/llm-info", response_model=LLMBackendInfo)
+def llm_info() -> dict:
+    """Active LLM backend snapshot — what's wired up + live status.
+
+    The Settings UI uses this to render a read-only backend panel.
+    Switching backends is a deployment decision (env var); the UI must
+    not allow editing it. ``health.status`` reflects a live probe so
+    operators see whether the configured endpoint is actually reachable.
+    """
+    backend = get_llm_backend()
+    return {
+        "config": backend.info(),
+        "health": backend.health_check_sync(),
+    }

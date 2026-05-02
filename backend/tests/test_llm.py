@@ -1,9 +1,13 @@
-"""Unit tests for app.core.llm — prompt construction, parsing, diffing."""
+"""Unit tests for app.core.llm — prompt construction, parsing, diffing.
+
+The LLMClient now delegates transport to an LLMBackend instance, so the
+end-to-end tests inject a stub backend instead of patching httpx. Per-
+backend HTTP behavior lives in test_llm_backends.py.
+"""
 
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,6 +20,50 @@ from app.core.llm import (
     _diff_ports,
     _diff_services,
 )
+from app.core.llm.base import LLMBackend, LLMBackendError
+
+
+# ---------------------------------------------------------------------------
+# Stub backend — captures the messages LLMClient sends and returns canned
+# responses. Tests assert on what the orchestrator asked for and what it
+# made of the response.
+# ---------------------------------------------------------------------------
+class StubBackend(LLMBackend):
+    backend_type = "stub"
+
+    def __init__(self, response: dict | None = None, raise_on_call: Exception | None = None):
+        self.default_model = "stub-model"
+        self.endpoint = "stub://"
+        self._response = response or {}
+        self._raise = raise_on_call
+        self.calls: list[dict] = []
+
+    async def chat(
+        self, messages, model=None, temperature=0.1, max_tokens=None
+    ):
+        self.calls.append(
+            {
+                "messages": messages,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+        )
+        if self._raise is not None:
+            raise self._raise
+        return self._response
+
+    async def chat_stream(self, messages, model=None, temperature=0.1):  # pragma: no cover
+        raise NotImplementedError
+        if False:
+            yield ""
+
+    async def health_check(self):  # pragma: no cover
+        return {"status": "online", "backend": self.backend_type, "latency_ms": 0}
+
+    def list_models(self):  # pragma: no cover
+        return [self.default_model]
+
 
 # ---------- verdict parsing ----------
 
@@ -125,72 +173,46 @@ def test_diff_cron_captures_user_and_system_changes():
     assert diff["system"]["/etc/cron.d/a"]["added"] == ["line2"]
 
 
-# ---------- end-to-end validate() with mocked httpx ----------
+# ---------- end-to-end validate() with stub backend ----------
 
 
-def _build_mock_httpx_client(response_body: dict) -> MagicMock:
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json = MagicMock(return_value=response_body)
-    mock_client = MagicMock()
-    mock_client.post = MagicMock(return_value=resp)
-    mock_client.__enter__ = MagicMock(return_value=mock_client)
-    mock_client.__exit__ = MagicMock(return_value=False)
-    return mock_client
+def test_validate_sends_correct_messages_and_parses_verdict(mock_ollama_verdict):
+    stub = StubBackend(response={"content": json.dumps(mock_ollama_verdict), "model": "stub-model"})
+    client = LLMClient(backend=stub)
 
+    result = client.validate(
+        baseline={"services": [{"unit": "sshd.service"}], "ports": []},
+        current_state={"services": [{"unit": "sshd.service"}], "ports": []},
+        vm_role="web",
+    )
 
-def test_validate_sends_correct_payload_and_parses_verdict(mock_ollama_verdict):
-    canned = {"message": {"content": json.dumps(mock_ollama_verdict)}}
-    mock_client = _build_mock_httpx_client(canned)
+    # The orchestrator sent system + user messages with the right shape.
+    assert len(stub.calls) == 1
+    sent = stub.calls[0]
+    assert sent["temperature"] == 0.1
+    assert len(sent["messages"]) == 2
+    assert sent["messages"][0]["role"] == "system"
+    assert "VirtValidate" in sent["messages"][0]["content"]
+    assert sent["messages"][1]["role"] == "user"
+    assert "web" in sent["messages"][1]["content"]
 
-    with patch("app.core.llm.httpx.Client", return_value=mock_client):
-        client = LLMClient(host="http://mock:11434", model="test-model")
-        result = client.validate(
-            baseline={"services": [{"unit": "sshd.service"}], "ports": []},
-            current_state={"services": [{"unit": "sshd.service"}], "ports": []},
-            vm_role="web",
-        )
-
-    # Correct URL
-    call = mock_client.post.call_args
-    assert call.args[0] == "http://mock:11434/api/chat"
-
-    payload = call.kwargs["json"]
-    assert payload["model"] == "test-model"
-    assert payload["stream"] is False
-    assert payload["format"] == "json"
-    assert payload["options"]["temperature"] == 0.1
-    assert len(payload["messages"]) == 2
-    assert payload["messages"][0]["role"] == "system"
-    assert "VirtValidate" in payload["messages"][0]["content"]
-    assert payload["messages"][1]["role"] == "user"
-    assert "web" in payload["messages"][1]["content"]
-
-    # The verdict is enriched with a computed diff
+    # The verdict is enriched with a computed diff.
     assert result["status"] == "pass"
     assert "diff" in result
     assert "services" in result["diff"]
 
 
-def test_validate_raises_on_http_error():
-    import httpx
+def test_validate_raises_on_backend_error():
+    stub = StubBackend(raise_on_call=LLMBackendError("backend offline"))
+    client = LLMClient(backend=stub)
 
-    mock_client = MagicMock()
-    mock_client.__enter__ = MagicMock(return_value=mock_client)
-    mock_client.__exit__ = MagicMock(return_value=False)
-    mock_client.post = MagicMock(side_effect=httpx.ConnectError("refused"))
-
-    with patch("app.core.llm.httpx.Client", return_value=mock_client):
-        client = LLMClient()
-        with pytest.raises(LLMError, match="Ollama request failed"):
-            client.validate({}, {}, "web")
+    with pytest.raises(LLMError, match="backend offline"):
+        client.validate({}, {}, "web")
 
 
 def test_validate_raises_when_response_content_empty():
-    canned = {"message": {"content": ""}}
-    mock_client = _build_mock_httpx_client(canned)
+    stub = StubBackend(response={"content": "", "model": "stub-model"})
+    client = LLMClient(backend=stub)
 
-    with patch("app.core.llm.httpx.Client", return_value=mock_client):
-        client = LLMClient()
-        with pytest.raises(LLMError, match="empty message"):
-            client.validate({}, {}, "web")
+    with pytest.raises(LLMError, match="not valid JSON"):
+        client.validate({}, {}, "web")

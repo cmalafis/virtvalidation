@@ -30,7 +30,45 @@ external host.
 DATABASE_URL=postgresql+psycopg2://vv:hunter2@db.internal:5432/virtvalidate?sslmode=require
 ```
 
-### `OLLAMA_HOST`
+## LLM Backend Configuration
+
+VirtValidate supports multiple LLM inference backends behind a single
+abstract interface. The active backend is chosen at deployment time via
+`LLM_BACKEND_TYPE` and **cannot** be switched at runtime — that's a
+deployment decision, not an operator decision. The Settings page surfaces
+the active backend read-only so operators can see what they're talking to.
+
+### `LLM_BACKEND_TYPE`
+
+| | |
+|---|---|
+| Default | `ollama` |
+| Allowed | `ollama`, `kserve`, `vllm` |
+| Editable in UI | no — deploy-time only |
+
+Selects which inference engine the validation, planner, and network-review
+flows route through. Pick based on your deployment infrastructure:
+
+| Backend | When to use |
+|---------|-------------|
+| `ollama` | Air-gapped appliances, single-host deployments, dev/test |
+| `kserve` | OpenShift with RHOAI, multi-tenant inference, model serving at scale |
+| `vllm`   | Direct vLLM deployments (planned for v1.0.0 — placeholder today) |
+
+---
+
+### Ollama backend (default — standalone deployments)
+
+Best for the air-gapped appliance shape that ships with `podman-compose`:
+one Ollama container, one model, one validator.
+
+```bash
+LLM_BACKEND_TYPE=ollama
+OLLAMA_HOST=http://ollama:11434
+OLLAMA_MODEL=llama3:8b
+```
+
+#### `OLLAMA_HOST`
 
 | | |
 |---|---|
@@ -38,10 +76,9 @@ DATABASE_URL=postgresql+psycopg2://vv:hunter2@db.internal:5432/virtvalidate?sslm
 | Type | URL |
 
 Where the validation engine, planner, and reporter post chat completions.
-Must be the local Ollama instance — VirtValidate is air-gapped and refuses
-to call external LLM APIs by design.
+VirtValidate is air-gapped — point this at the local Ollama only.
 
-### `OLLAMA_MODEL`
+#### `OLLAMA_MODEL`
 
 | | |
 |---|---|
@@ -52,6 +89,84 @@ Model tag passed to Ollama. Anything pulled into the local instance works
 (`llama3:8b`, `llama3:70b`, `mistral:latest`, `qwen2.5:14b`, …). The
 Settings page lists everything currently pulled and warns if the saved
 model isn't loaded.
+
+---
+
+### KServe backend (RHOAI / OpenShift inference)
+
+Best for OpenShift clusters with Red Hat OpenShift AI standing up
+InferenceServices. VirtValidate talks to the OpenAI-compatible
+`/v1/chat/completions` endpoint that vLLM and TGIS predictors expose.
+
+```bash
+LLM_BACKEND_TYPE=kserve
+KSERVE_ENDPOINT=https://my-model.namespace.svc.cluster.local
+KSERVE_MODEL_NAME=granite-3-8b-instruct
+```
+
+#### `KSERVE_ENDPOINT`
+
+| | |
+|---|---|
+| Default | unset (required when `LLM_BACKEND_TYPE=kserve`) |
+| Type | URL |
+
+The InferenceService's predictor route. Internal cluster DNS works
+(`*.svc.cluster.local`); external `*.apps.<cluster>.com` URLs work too
+when VirtValidate runs outside the cluster.
+
+#### `KSERVE_MODEL_NAME`
+
+| | |
+|---|---|
+| Default | unset (required when `LLM_BACKEND_TYPE=kserve`) |
+
+The model identifier vLLM/TGIS expects in the `model` field of the
+chat-completions request. For RHOAI granite serving, this is typically
+`granite-3-8b-instruct`.
+
+#### Authentication
+
+VirtValidate uses the in-pod service account token automatically when
+deployed in OpenShift — `KSERVE_TOKEN_FILE` defaults to
+`/var/run/secrets/kubernetes.io/serviceaccount/token`, which OpenShift
+mounts on every pod. The token is re-read on every request so SA token
+rotations apply without a restart.
+
+For external KServe endpoints (off-cluster VirtValidate, dev clusters),
+provide `KSERVE_TOKEN` explicitly:
+
+```bash
+KSERVE_TOKEN=eyJhbGciOiJSUzI1NiIs…
+```
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `KSERVE_TOKEN` | unset | Bearer token; takes precedence over the file. |
+| `KSERVE_TOKEN_FILE` | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Path read fresh on every call. |
+| `KSERVE_VERIFY_SSL` | `true` | Set to `false` only for dev clusters with self-signed certs. |
+| `KSERVE_TIMEOUT_SECONDS` | `120` | Per-request timeout. |
+
+When neither token nor token file resolves, the request goes out without
+an `Authorization` header (only meaningful for dev clusters that disabled
+auth).
+
+---
+
+### vLLM backend (planned — v1.0.0)
+
+Direct vLLM connection without the KServe wrapper. Best for high-scale
+concurrent inference where the KServe layer is overhead. Settings live
+in `app/core/config.py` today so deployments don't need a config
+migration when v1.0.0 lands; the implementation raises
+`NotImplementedError`.
+
+```bash
+# Future:
+LLM_BACKEND_TYPE=vllm
+VLLM_ENDPOINT=https://vllm.namespace.svc.cluster.local
+VLLM_MODEL_NAME=granite-3-8b-instruct
+```
 
 ### `SSH_KEY_PATH`
 
@@ -140,9 +255,16 @@ The `/api/settings` endpoint returns the runtime-editable settings:
 curl -s http://localhost:8000/api/settings | jq
 ```
 
-The static `.env` values aren't exposed via API by design (they include
-secrets); inspect them with:
+The active LLM backend (type, model, endpoint, live health) is exposed
+read-only at `/api/system/llm-info`:
 
 ```bash
-podman-compose exec backend env | grep -E '^(DATABASE_URL|OLLAMA_|CLUSTER_|SSH_)'
+curl -s http://localhost:8000/api/system/llm-info | jq
+```
+
+The static `.env` values aren't exposed via API by design (they include
+secrets and tokens); inspect them with:
+
+```bash
+podman-compose exec backend env | grep -E '^(DATABASE_URL|OLLAMA_|KSERVE_|VLLM_|LLM_|CLUSTER_|SSH_)'
 ```

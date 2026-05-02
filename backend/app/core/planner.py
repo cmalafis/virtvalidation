@@ -12,9 +12,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import httpx
-
-from app.core.config import settings
+from app.core.llm.base import LLMBackend, LLMBackendError
+from app.core.llm.factory import get_llm_backend
 
 _ALLOWED_RISK = {"low", "medium", "high"}
 
@@ -86,13 +85,9 @@ class PlannerError(RuntimeError):
 class MigrationPlanner:
     def __init__(
         self,
-        host: str | None = None,
-        model: str | None = None,
-        timeout: float = 180.0,
+        backend: LLMBackend | None = None,
     ):
-        self.host = (host or settings.ollama_host).rstrip("/")
-        self.model = model or settings.ollama_model
-        self.timeout = timeout
+        self.backend = backend or get_llm_backend()
 
     def plan(self, vm_profiles: list[dict]) -> dict:
         """Generate a wave plan for the given VMs.
@@ -109,31 +104,19 @@ class MigrationPlanner:
         return self._parse_plan(raw, provided_ids)
 
     def _chat(self, system: str, user: str) -> str:
-        payload = {
-            "model": self.model,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.1},
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(f"{self.host}/api/chat", json=payload)
-                resp.raise_for_status()
-        except httpx.HTTPError as e:
-            raise PlannerError(f"Ollama request failed: {e}") from e
-
-        try:
-            body = resp.json()
-        except ValueError as e:
-            raise PlannerError(f"Ollama returned non-JSON envelope: {e}") from e
-
-        content = (body.get("message") or {}).get("content", "")
+            response = self.backend.chat_sync(
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.1,
+            )
+        except LLMBackendError as e:
+            raise PlannerError(str(e)) from e
+        content = response.get("content", "")
         if not content:
-            raise PlannerError("Ollama returned an empty message")
+            raise PlannerError("LLM backend returned an empty message")
         return content
 
     @staticmethod

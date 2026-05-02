@@ -66,7 +66,7 @@ def create_plan(payload: PlanCreate, db: Session = Depends(get_db)) -> Migration
         vm_ids=[p["vm_id"] for p in profiles],
         waves=result["waves"],
         summary=result.get("summary") or None,
-        model=planner.model,
+        model=planner.backend.default_model or "",
     )
     db.add(plan)
     db.commit()

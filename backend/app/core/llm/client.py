@@ -1,6 +1,9 @@
-"""
-LLM Client — Ollama (local, air-gapped)
-Sends VM state diffs to local Llama 3 for reasoning and verdict generation.
+"""Validation orchestrator — owns the prompt + verdict schema + diff engine.
+
+Transport is delegated to an ``LLMBackend`` instance so the same
+prompt works against Ollama, KServe, or any future backend. The
+public surface (``LLMClient.validate``) is unchanged from the
+pre-refactor module so existing call sites keep working.
 """
 
 from __future__ import annotations
@@ -8,13 +11,18 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import httpx
-
-from app.core.config import settings
+from app.core.llm.base import LLMBackend, LLMBackendError
+from app.core.llm.factory import get_llm_backend
 
 
 class LLMError(RuntimeError):
-    """Raised when the Ollama call fails or returns unparseable output."""
+    """Raised when the LLM call fails or returns unparseable output.
+
+    Subclasses ``RuntimeError`` so existing ``except LLMError`` clauses
+    don't change. ``LLMBackendError`` from the transport layer is
+    re-raised as ``LLMError`` to keep the validation flow's error
+    surface stable.
+    """
 
 
 SYSTEM_PROMPT = """You are VirtValidate, an expert Linux systems engineer validating a VM
@@ -91,53 +99,32 @@ commentary outside the JSON."""
 
 
 class LLMClient:
-    def __init__(
-        self,
-        host: str | None = None,
-        model: str | None = None,
-        timeout: float = 120.0,
-    ):
-        self.host = (host or settings.ollama_host).rstrip("/")
-        self.model = model or settings.ollama_model
-        self.timeout = timeout
+    """Validation orchestrator.
+
+    Construct without arguments to use the configured backend (factory
+    pattern). Tests pass an explicit ``backend`` to inject a stub.
+    """
+
+    def __init__(self, backend: LLMBackend | None = None) -> None:
+        self.backend = backend or get_llm_backend()
 
     def validate(self, baseline: dict, current_state: dict, vm_role: str) -> dict:
         """Reason over pre/post migration diff and return a structured verdict."""
         diff = self._diff_state(baseline, current_state)
         user_prompt = self._render_prompt(vm_role, diff)
-        raw = self._chat(SYSTEM_PROMPT, user_prompt)
-        verdict = self._parse_verdict(raw)
+        try:
+            response = self.backend.chat_sync(
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+            )
+        except LLMBackendError as e:
+            raise LLMError(str(e)) from e
+        verdict = self._parse_verdict(response.get("content", ""))
         verdict["diff"] = diff
         return verdict
-
-    def _chat(self, system: str, user: str) -> str:
-        payload = {
-            "model": self.model,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.1},
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
-        try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(f"{self.host}/api/chat", json=payload)
-                resp.raise_for_status()
-        except httpx.HTTPError as e:
-            raise LLMError(f"Ollama request failed: {e}") from e
-
-        try:
-            body = resp.json()
-        except ValueError as e:
-            raise LLMError(f"Ollama returned non-JSON envelope: {e}") from e
-
-        message = body.get("message") or {}
-        content = message.get("content", "")
-        if not content:
-            raise LLMError("Ollama returned an empty message")
-        return content
 
     @staticmethod
     def _parse_verdict(raw: str) -> dict:
@@ -175,7 +162,9 @@ class LLMClient:
     @staticmethod
     def _diff_state(baseline: dict, current: dict) -> dict:
         return {
-            "services": _diff_services(baseline.get("services", []), current.get("services", [])),
+            "services": _diff_services(
+                baseline.get("services", []), current.get("services", [])
+            ),
             "ports": _diff_ports(baseline.get("ports", []), current.get("ports", [])),
             "mounts": _diff_mounts(baseline.get("mounts", []), current.get("mounts", [])),
             "network": _diff_network(baseline.get("network", {}), current.get("network", {})),
@@ -183,6 +172,9 @@ class LLMClient:
         }
 
 
+# ---------------------------------------------------------------------------
+# Diff helpers — pure functions kept here so test_llm.py can import them.
+# ---------------------------------------------------------------------------
 def _diff_services(before: list[dict], after: list[dict]) -> dict:
     before_units = {s.get("unit") for s in before if s.get("unit")}
     after_units = {s.get("unit") for s in after if s.get("unit")}

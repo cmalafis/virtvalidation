@@ -47,3 +47,27 @@ class SSHPublicKey(BaseModel):
     public_key: str
     fingerprint: str | None = None
     type: str = "ssh-ed25519"
+
+
+# ---------------------------------------------------------------------------
+# LLM backend info — surfaced read-only on the Settings page so operators
+# can see which inference engine the deployment is wired up against.
+# ---------------------------------------------------------------------------
+class LLMBackendConfig(BaseModel):
+    backend: str  # "ollama" | "kserve" | "vllm"
+    model: str | None = None
+    endpoint: str | None = None
+
+
+class LLMBackendHealth(BaseModel):
+    status: str  # "online" | "offline"
+    backend: str
+    model: str | None = None
+    endpoint: str | None = None
+    latency_ms: int | None = None
+    details: dict | None = None
+
+
+class LLMBackendInfo(BaseModel):
+    config: LLMBackendConfig
+    health: LLMBackendHealth

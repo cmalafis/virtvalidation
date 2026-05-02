@@ -24,11 +24,11 @@ import logging
 from collections import Counter
 from typing import Any, Iterable
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.core.llm.base import LLMBackend, LLMBackendError
+from app.core.llm.factory import get_llm_backend
 from app.models.vm import VM
 
 logger = logging.getLogger(__name__)
@@ -172,13 +172,9 @@ class NetworkReviewer:
 
     def __init__(
         self,
-        host: str | None = None,
-        model: str | None = None,
-        timeout: float = 240.0,
+        backend: LLMBackend | None = None,
     ) -> None:
-        self.host = (host or settings.ollama_host).rstrip("/")
-        self.model = model or settings.ollama_model
-        self.timeout = timeout
+        self.backend = backend or get_llm_backend()
 
     def analyze(
         self,
@@ -192,31 +188,19 @@ class NetworkReviewer:
         return self._parse(raw)
 
     def _chat(self, system: str, user: str) -> str:
-        payload = {
-            "model": self.model,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.15},
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(f"{self.host}/api/chat", json=payload)
-                resp.raise_for_status()
-        except httpx.HTTPError as e:
-            raise NetworkReviewError(f"Ollama request failed: {e}") from e
-
-        try:
-            body = resp.json()
-        except ValueError as e:
-            raise NetworkReviewError(f"Ollama returned non-JSON envelope: {e}") from e
-
-        content = (body.get("message") or {}).get("content", "")
+            response = self.backend.chat_sync(
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.15,
+            )
+        except LLMBackendError as e:
+            raise NetworkReviewError(str(e)) from e
+        content = response.get("content", "")
         if not content:
-            raise NetworkReviewError("Ollama returned an empty message")
+            raise NetworkReviewError("LLM backend returned an empty message")
         return content
 
     @staticmethod
