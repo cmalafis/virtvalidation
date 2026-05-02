@@ -1,0 +1,30 @@
+# Strategic merge patch — replaces Ollama-shaped env entries with KServe
+# ones on the backend container. Update the values below to match your
+# RHOAI InferenceService.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: virtvalidate-backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: KSERVE_ENDPOINT
+              value: https://CHANGEME-INFERENCESERVICE.namespace.svc.cluster.local
+            - name: KSERVE_MODEL_NAME
+              value: granite-3-8b-instruct
+            # SA token mount — VirtValidate reads this freshly on every
+            # request so OpenShift's SA-token rotations are picked up
+            # without a pod restart. The path is the standard projected
+            # volume location.
+            - name: KSERVE_TOKEN_FILE
+              value: /var/run/secrets/kubernetes.io/serviceaccount/token
+            # Removes the Ollama vars from base — strategic merge sets
+            # the value to null which Kustomize translates to a removal
+            # at the JSON-patch layer.
+            - name: OLLAMA_HOST
+              $patch: delete
+            - name: OLLAMA_MODEL
+              $patch: delete

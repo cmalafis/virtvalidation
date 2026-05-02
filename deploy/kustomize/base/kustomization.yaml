@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base manifests — every overlay starts here. Resources are intentionally
+# generic (no namespace, no environment-specific values) so overlays can
+# patch freely. Set the namespace and image tags in your overlay.
+#
+# The Helm chart in deploy/helm/virtvalidate/ is the canonical source of
+# truth for the deployment shape. These manifests are the equivalent
+# rendered output kept in version control for ArgoCD-style GitOps and
+# audit-by-diff workflows.
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: virtvalidate
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
+
+resources:
+  - serviceaccount.yaml
+  - configmap.yaml
+  - secret-postgres.yaml
+  - pvc-ssh.yaml
+  - service-backend.yaml
+  - service-frontend.yaml
+  - service-postgres.yaml
+  - deployment-backend.yaml
+  - deployment-frontend.yaml
+  - statefulset-postgres.yaml
+
+# Image references — overlays override these with their actual registry
+# + tag. Pin to specific tags in production overlays; `dev` and
+# `standalone-ollama` are free to track latest.
+images:
+  - name: virtvalidate-backend
+    newName: ghcr.io/virtvalidate/virtvalidate-backend
+    newTag: "0.1.0-alpha"
+  - name: virtvalidate-frontend
+    newName: ghcr.io/virtvalidate/virtvalidate-frontend
+    newTag: "0.1.0-alpha"

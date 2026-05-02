@@ -1,0 +1,13 @@
+{{- if .Values.podDisruptionBudget.enabled -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-backend
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "backend") | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "backend") | nindent 6 }}
+{{- end }}

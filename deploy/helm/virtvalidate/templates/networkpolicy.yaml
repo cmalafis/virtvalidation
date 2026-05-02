@@ -1,0 +1,129 @@
+{{- if .Values.networkPolicies.enabled -}}
+{{/*
+Tightens pod-to-pod traffic. Three policies:
+
+  1. Frontend pods accept ingress only from the cluster ingress
+     controller (or anywhere on routes/ingress passthrough — that's
+     the cluster's job to gate).
+
+  2. Backend pods accept ingress only from the frontend pods (the
+     dashboard is the only legitimate caller).
+
+  3. Postgres + Ollama accept ingress only from the backend.
+
+Egress rules are deliberately loose by default — the SSH collector
+needs to reach managed VMs in arbitrary subnets, and the LLM call
+might land on an external KServe endpoint. Operators with stricter
+needs flip defaultDenyEgress and add explicit allows in their overlay.
+*/}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-frontend
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "frontend") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "frontend") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from anywhere — Routes/Ingress already mediate external
+    # access. Tightening here would block intra-cluster probing tools
+    # too. Operators wanting stricter rules add a NetworkPolicy in
+    # their overlay matching only the router namespace.
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-backend
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "backend") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "backend") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if .Values.networkPolicies.defaultDenyEgress }}
+    - Egress
+    {{- end }}
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "frontend") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.backend.service.port }}
+  {{- if .Values.networkPolicies.defaultDenyEgress }}
+  egress:
+    # Cluster DNS — non-negotiable for any service-name resolution.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # In-namespace services (Postgres, Ollama).
+    - to:
+        - podSelector: {}
+    # SSH to managed VMs is operator-specific. When defaultDenyEgress
+    # is on, the operator MUST add a per-overlay NetworkPolicy
+    # allowlisting the management network CIDRs — without it, the
+    # SSH collector can't reach a single VM.
+  {{- end }}
+{{- if .Values.postgres.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-postgres
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "postgres") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "backend") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+{{- end }}
+{{- if and (eq .Values.llm.backend "ollama") .Values.llm.ollama.deploy }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-ollama
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "ollama") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "ollama") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "backend") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.llm.ollama.service.port }}
+{{- end }}
+{{- end }}

@@ -1,3 +1,4 @@
+# --- build stage -----------------------------------------------------------
 FROM docker.io/node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
@@ -5,8 +6,39 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM docker.io/nginx:alpine
+# --- runtime stage ---------------------------------------------------------
+# nginxinc/nginx-unprivileged is the upstream nginx image rebuilt to run
+# as a non-root user (UID 101) and listen on a non-privileged port. This
+# matches OpenShift's restricted-v2 SCC requirements without us having
+# to template chmod gymnastics on top of the stock nginx image.
+FROM docker.io/nginxinc/nginx-unprivileged:1.27-alpine
+
+ARG VERSION=0.1.0-dev
+ARG VCS_REF=unknown
+
+LABEL org.opencontainers.image.title="virtvalidate-frontend" \
+      org.opencontainers.image.description="VirtValidate React dashboard" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="https://github.com/virtvalidate/virtvalidate" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+# Switch to root only for the file-copy step, then drop back to nginx
+# user (UID 101) for runtime. arbitrary-UID compatibility comes from
+# /etc/passwd permissions in nginx-unprivileged + group 0 ownership
+# on /usr/share/nginx/html.
+USER 0
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+RUN chgrp -R 0 /usr/share/nginx/html /var/cache/nginx /etc/nginx/conf.d \
+    && chmod -R g=u /usr/share/nginx/html /var/cache/nginx /etc/nginx/conf.d
+USER 101
+
+# nginx-unprivileged listens on 8080 by default; overridden in nginx.conf
+# to 3000 so existing podman-compose port mappings keep working.
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:3000/ > /dev/null || exit 1
+
 CMD ["nginx", "-g", "daemon off;"]

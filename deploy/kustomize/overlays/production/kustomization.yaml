@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Production hardening overlay — builds on standalone-ollama with:
+#   - Stricter resource limits + CPU/memory requests
+#   - Explicit replica counts (frontend 2, backend 1 because SSH key PVC
+#     is RWO; operators with RWX storage can bump backend)
+#   - PodDisruptionBudget on the backend
+#   - NetworkPolicies restricting pod-to-pod traffic
+#   - Pinned image tags (no :latest in production)
+#
+# Operators using KServe instead of Ollama: swap base from
+# ../standalone-ollama to ../rhoai-kserve and re-apply this overlay's
+# patches; they're shape-agnostic.
+
+namespace: virtvalidate-prod
+
+resources:
+  - ../standalone-ollama
+  - networkpolicies.yaml
+  - pdb-backend.yaml
+
+# Pin to specific tags. Production deployments must NOT track latest.
+images:
+  - name: ghcr.io/virtvalidate/virtvalidate-backend
+    newTag: "0.1.0-alpha"
+  - name: ghcr.io/virtvalidate/virtvalidate-frontend
+    newTag: "0.1.0-alpha"
+
+patches:
+  - path: deployment-backend-prod.yaml
+    target:
+      kind: Deployment
+      name: virtvalidate-backend
+  - path: deployment-frontend-prod.yaml
+    target:
+      kind: Deployment
+      name: virtvalidate-frontend

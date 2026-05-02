@@ -1,0 +1,35 @@
+{{- if and .Values.persistence.ssh.enabled (not .Values.persistence.ssh.existingClaim) -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-ssh-keys
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "backend") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.persistence.ssh.size }}
+  {{- with .Values.persistence.ssh.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}
+{{- if and .Values.llm.ollama.persistence.enabled (eq .Values.llm.backend "ollama") (.Values.llm.ollama.deploy) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-ollama-models
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "ollama") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.llm.ollama.persistence.size }}
+  {{- with .Values.llm.ollama.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

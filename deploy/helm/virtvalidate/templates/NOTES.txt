@@ -1,0 +1,60 @@
+VirtValidate {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
+
+LLM backend: {{ .Values.llm.backend }}
+{{- if eq .Values.llm.backend "ollama" }}
+{{- if .Values.llm.ollama.deploy }}
+Ollama deployed in-namespace; model: {{ .Values.llm.ollama.model }}
+On first start, the model is downloaded to the persistent volume — this
+takes a few minutes. Watch the Ollama pod's logs:
+
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=ollama -f
+
+{{- end }}
+{{- else if eq .Values.llm.backend "kserve" }}
+KServe endpoint: {{ .Values.llm.kserve.endpoint }}
+Model: {{ .Values.llm.kserve.modelName }}
+
+The backend pod expects to reach the InferenceService at the URL above.
+Check connectivity after install:
+
+  kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "virtvalidate.fullname" . }}-backend -- curl -fsS {{ .Values.llm.kserve.endpoint }}/v1/models | head
+
+{{- end }}
+
+How to access the dashboard:
+
+{{- if .Values.route.enabled }}
+1. OpenShift Route created. Get the host:
+
+     oc get route {{ include "virtvalidate.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}'
+
+{{- else if .Values.ingress.enabled }}
+1. Ingress created. Configure DNS for {{ .Values.ingress.host }}, then visit:
+
+     https://{{ .Values.ingress.host }}/
+
+{{- else }}
+1. No Route or Ingress configured. Port-forward for local access:
+
+     kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "virtvalidate.fullname" . }}-frontend 3000:{{ .Values.frontend.service.port }}
+
+   Then open http://localhost:3000/.
+
+{{- end }}
+
+2. Verify the FIPS posture (federal deployments):
+
+     kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "virtvalidate.fullname" . }}-backend -- curl -fsS http://localhost:8000/api/system/fips-status
+
+3. The SSH public key for managed VMs lives in Settings → SSH Public Key.
+   Distribute it to every VM you want to validate before triggering the
+   first capture.
+
+For full deployment guidance, see deploy/README.md.
+{{- if .Values.security.fipsMode }}
+
+⚠  FIPS_MODE=true is enabled. Confirm the host OS is also in FIPS mode:
+
+     kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.osImage}'
+     # And on the node itself: cat /proc/sys/crypto/fips_enabled
+{{- end }}

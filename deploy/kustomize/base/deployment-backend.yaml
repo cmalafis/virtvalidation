@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: virtvalidate-backend
+  labels:
+    app.kubernetes.io/name: virtvalidate
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: virtvalidate
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: virtvalidate
+        app.kubernetes.io/component: backend
+    spec:
+      serviceAccountName: virtvalidate
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: virtvalidate-backend
+          args:
+            - uvicorn
+            - app.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: DATABASE_URL
+              value: "postgresql+psycopg2://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@virtvalidate-postgres:5432/$(POSTGRES_DB)"
+            - name: SSH_KEY_PATH
+              value: /app/keys/id_ed25519
+            - name: OLLAMA_HOST
+              value: http://virtvalidate-ollama:11434
+            - name: OLLAMA_MODEL
+              value: llama3:8b
+          envFrom:
+            - configMapRef:
+                name: virtvalidate-config
+            - secretRef:
+                name: virtvalidate-postgres
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /api/health/full
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health/postgres
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          volumeMounts:
+            - name: ssh-keys
+              mountPath: /app/keys
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: ssh-keys
+          persistentVolumeClaim:
+            claimName: virtvalidate-ssh-keys
+        - name: tmp
+          emptyDir: {}

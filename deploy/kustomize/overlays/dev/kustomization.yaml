@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Development overlay — minimal footprint for local k3d / kind / OCP-CRC
+# clusters. Removes resource limits, single replica, lower memory.
+# Image policy is Always so pulling a freshly-pushed dev image works
+# without a manual rollout-restart.
+
+namespace: virtvalidate-dev
+
+resources:
+  - ../standalone-ollama
+
+patches:
+  - path: deployment-backend-dev.yaml
+    target:
+      kind: Deployment
+      name: virtvalidate-backend
+  - path: deployment-frontend-dev.yaml
+    target:
+      kind: Deployment
+      name: virtvalidate-frontend
+  - path: deployment-ollama-dev.yaml
+    target:
+      kind: Deployment
+      name: virtvalidate-ollama

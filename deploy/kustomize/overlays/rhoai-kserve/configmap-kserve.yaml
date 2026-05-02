@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: virtvalidate-config
+data:
+  LLM_BACKEND_TYPE: kserve
+  KSERVE_VERIFY_SSL: "true"
+  KSERVE_TIMEOUT_SECONDS: "120"

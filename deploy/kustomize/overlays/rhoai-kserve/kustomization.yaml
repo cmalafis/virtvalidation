@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# RHOAI / KServe overlay — backend talks to an InferenceService instead
+# of an in-namespace Ollama. The Ollama Deployment is intentionally NOT
+# in the resource list (base doesn't include it; this overlay doesn't
+# add it).
+#
+# Required customization before apply:
+#   - kserve-endpoint.yaml — set the actual InferenceService URL
+#   - kserve-model-name.yaml — set the model identifier
+#   - (optional) replace POSTGRES_PASSWORD in base/secret-postgres.yaml
+#     with a sealed-secret / external secret manager reference
+
+namespace: virtvalidate
+
+resources:
+  - ../../base
+  - rbac-kserve.yaml
+
+# Patches override the base ConfigMap to flip LLM_BACKEND_TYPE and
+# the backend Deployment env to point at the KServe endpoint.
+patches:
+  - path: configmap-kserve.yaml
+    target:
+      kind: ConfigMap
+      name: virtvalidate-config
+  - path: deployment-backend-kserve.yaml
+    target:
+      kind: Deployment
+      name: virtvalidate-backend

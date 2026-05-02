@@ -1,0 +1,20 @@
+{{- if .Values.postgres.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-postgres
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+spec:
+  # Headless — Postgres lives in a StatefulSet and the backend connects
+  # by service name. ClusterIP is fine since we don't need DNS-SRV-style
+  # resolution for a single replica.
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.postgres.service.port }}
+      targetPort: postgres
+      protocol: TCP
+      name: postgres
+  selector:
+    {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+{{- end }}

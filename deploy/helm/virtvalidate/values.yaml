@@ -1,0 +1,269 @@
+# Default values for virtvalidate.
+# Override per-environment via -f values-<env>.yaml or --set.
+
+# -----------------------------------------------------------------------------
+# Image references — override .repository and .tag at install time to point
+# at your registry. The build-images.sh script produces these tags.
+# -----------------------------------------------------------------------------
+image:
+  registry: ghcr.io/virtvalidate
+  pullPolicy: IfNotPresent
+  # Overrides applied to all four components when set non-empty.
+  tag: ""
+
+backend:
+  replicaCount: 1
+  image:
+    repository: virtvalidate-backend
+    # Falls back to .Chart.AppVersion when empty.
+    tag: ""
+  # uvicorn args. The Containerfile defaults to --reload (dev convenience);
+  # production runs without the file watcher. Override here if you need
+  # multiple workers (one per CPU is a sensible starting point).
+  args:
+    - uvicorn
+    - app.main:app
+    - --host
+    - 0.0.0.0
+    - --port
+    - "8000"
+  service:
+    port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  # Pod-level overrides. Empty by default; set in production overlay.
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+frontend:
+  replicaCount: 1
+  image:
+    repository: virtvalidate-frontend
+    tag: ""
+  service:
+    port: 3000
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    registry: docker.io
+    tag: "16-alpine"
+  service:
+    port: 5432
+  auth:
+    # database / username / existingSecret are required; password is
+    # only consulted when existingSecret is unset (the chart generates
+    # the secret in that case).
+    database: virtvalidate
+    username: virtvalidate
+    password: changeme
+    # When non-empty, the chart references this Secret (must contain
+    # POSTGRES_USER + POSTGRES_PASSWORD + POSTGRES_DB) instead of
+    # creating its own. Production deployments should externalize this
+    # secret (Vault, ESO, sealed-secrets) and set this field.
+    existingSecret: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# -----------------------------------------------------------------------------
+# LLM backend — the multi-backend abstraction in app/core/llm/. Switch this
+# value to KServe for RHOAI deployments; the Ollama Deployment template is
+# only rendered when backend == "ollama" so other choices don't waste pods.
+# -----------------------------------------------------------------------------
+llm:
+  # ollama | kserve | vllm
+  backend: ollama
+  ollama:
+    # Render the Ollama Deployment alongside the rest of the chart.
+    # Set to false when an external Ollama instance is reachable from
+    # the cluster and you only want the Service stub.
+    deploy: true
+    image:
+      repository: ollama/ollama
+      registry: docker.io
+      tag: "latest"
+    service:
+      port: 11434
+    model: "llama3:8b"
+    # Persistent volume for downloaded model weights. Without this,
+    # every pod restart re-downloads the model.
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 4Gi
+      limits:
+        cpu: 4000m
+        memory: 16Gi
+  kserve:
+    # Required when backend == "kserve". Points at the InferenceService's
+    # OpenAI-compatible /v1/chat/completions endpoint.
+    endpoint: ""
+    modelName: ""
+    # Token resolution: explicit token in a Secret, else the SA token
+    # mounted at /var/run/secrets/kubernetes.io/serviceaccount/token.
+    tokenSecret: ""
+    # Key inside tokenSecret holding the bearer token.
+    tokenSecretKey: "token"
+    verifySsl: true
+    timeoutSeconds: 120
+  vllm:
+    # Placeholder — backend is "not implemented" today; settings exposed
+    # so deployments don't need a config migration when v1.0.0 lands.
+    endpoint: ""
+    modelName: ""
+
+# -----------------------------------------------------------------------------
+# Persistence for SSH keys (the appliance Ed25519 / RSA-3072 / ECDSA P-384
+# private key + persistent known_hosts). The keys MUST persist across pod
+# restarts — losing them invalidates every authorized_keys entry on the
+# managed VMs.
+# -----------------------------------------------------------------------------
+persistence:
+  ssh:
+    enabled: true
+    size: 64Mi
+    storageClass: ""
+    # When set, the chart skips creating the PVC and uses this one
+    # instead. Use this when the operator pre-creates the PVC with
+    # a specific encryption / access-mode policy.
+    existingClaim: ""
+  postgres:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+    existingClaim: ""
+
+# -----------------------------------------------------------------------------
+# Network exposure
+# -----------------------------------------------------------------------------
+service:
+  type: ClusterIP
+
+# OpenShift Route — preferred on OCP because it integrates with the
+# router's TLS edge termination and the cluster's wildcard cert.
+route:
+  enabled: false
+  host: ""
+  tls:
+    # edge | passthrough | reencrypt — edge is the right choice for
+    # most deployments since the application itself doesn't terminate TLS.
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+# Vanilla Kubernetes Ingress — use this on non-OCP clusters or when an
+# nginx-ingress / Traefik / ALB controller is preferred.
+ingress:
+  enabled: false
+  className: ""
+  host: virtvalidate.example.com
+  tls:
+    enabled: false
+    secretName: virtvalidate-tls
+  annotations: {}
+
+# -----------------------------------------------------------------------------
+# Security
+# -----------------------------------------------------------------------------
+security:
+  # Activates application-level FIPS gates (rejects Ed25519 SSH keys,
+  # surfaces compliance posture via /api/system/fips-status). The HOST
+  # OS must also be in FIPS mode for actual compliance — see
+  # docs/FIPS_DEPLOYMENT.md.
+  fipsMode: false
+  sshKeyAlgorithm: ed25519
+  # Kubernetes pod-level securityContext. Defaults are safe for
+  # OpenShift's restricted-v2 SCC: arbitrary high UID, group 0,
+  # no capabilities. Override only when integrating with a custom SCC.
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false
+  # secret holding pre-existing SSH keys; when unset, the operator
+  # generates them via system/ssh-public-key after first launch.
+  existingSshSecret: ""
+
+networkPolicies:
+  # Ingress / egress restrictions. Recommended for production.
+  enabled: false
+  # When true, the policy denies all egress except to within-namespace
+  # services + DNS. Production workloads in regulated environments
+  # set this to true and add explicit egress rules in their overlay.
+  defaultDenyEgress: false
+
+# -----------------------------------------------------------------------------
+# RBAC — the chart creates a ServiceAccount + minimal Role for the
+# backend pod. KServe deployments need additional permissions to read
+# the InferenceService status; the rolebinding is conditionally
+# rendered when llm.backend == "kserve".
+# -----------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+# -----------------------------------------------------------------------------
+# Observability — bare hooks, the operator wires up Prometheus / Grafana
+# in their overlay. ServiceMonitor is rendered only when servicemonitor.enabled.
+# -----------------------------------------------------------------------------
+servicemonitor:
+  enabled: false
+  interval: 30s
+
+# Pod disruption budget — applied to the backend Deployment. Set
+# .minAvailable to a value that matches your replica count (e.g. 1 of 2).
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# -----------------------------------------------------------------------------
+# Application config (env vars surfaced into the backend pod via the
+# rendered ConfigMap). Operators with non-default cluster names or MTV
+# providers override here.
+# -----------------------------------------------------------------------------
+config:
+  clusterName: ocp-virt-prod-01
+  mtvNamespace: openshift-mtv
+  mtvSourceProvider: vmware
+  mtvDestinationProvider: host
+  mtvDefaultTargetNamespace: openshift-mtv
+
+# Extra env vars — escape hatch for fields not surfaced above. Each entry
+# matches the standard `name`/`value` (or `valueFrom`) shape so secrets
+# and downward-API references work the same as a hand-written Deployment.
+extraEnv: []

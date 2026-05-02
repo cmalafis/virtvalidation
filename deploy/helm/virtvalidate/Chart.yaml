@@ -1,0 +1,26 @@
+apiVersion: v2
+name: virtvalidate
+description: AI-powered VM migration validation platform — air-gapped, local LLM
+type: application
+version: 0.1.0
+appVersion: "0.1.0-alpha"
+keywords:
+  - migration
+  - vmware
+  - openshift
+  - kubevirt
+  - mtv
+  - forklift
+  - validation
+  - ai
+home: https://github.com/virtvalidate/virtvalidate
+sources:
+  - https://github.com/virtvalidate/virtvalidate
+maintainers:
+  - name: VirtValidate maintainers
+    url: https://github.com/virtvalidate/virtvalidate
+icon: https://raw.githubusercontent.com/virtvalidate/virtvalidate/main/docs/assets/logo.png
+annotations:
+  # Surfaces in OpenShift's OperatorHub-style chart pickers.
+  category: Migration
+  capabilities: Seamless Upgrades

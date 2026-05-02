@@ -1,0 +1,38 @@
+{{- if and .Values.rbac.create (eq .Values.llm.backend "kserve") -}}
+{{/*
+KServe deployments need to read InferenceService resources to surface
+which model is active in the Settings UI. The backend doesn't write to
+KServe — read-only is sufficient. We bind to a Role rather than a
+ClusterRole so the permissions stay scoped to the chart's namespace.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-kserve-reader
+  labels:
+    {{- include "virtvalidate.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - serving.kserve.io
+    resources:
+      - inferenceservices
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-kserve-reader
+  labels:
+    {{- include "virtvalidate.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "virtvalidate.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "virtvalidate.fullname" . }}-kserve-reader
+{{- end }}

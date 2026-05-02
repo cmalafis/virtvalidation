@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: virtvalidate-ollama
+spec:
+  template:
+    spec:
+      containers:
+        - name: ollama
+          resources:
+            requests:
+              cpu: 200m
+              memory: 2Gi
+            # No limits — dev clusters frequently burst above the prod
+            # ceiling for ad-hoc experiments.

@@ -1,0 +1,22 @@
+{{- if .Values.servicemonitor.enabled -}}
+{{/*
+Hooks the backend Service into a Prometheus scraper. Operator must
+have the Prometheus Operator (or compatible CRD) installed in the
+cluster — we deliberately don't bring it in as a dependency since
+most clusters already have one or use OpenShift's bundled monitoring.
+*/}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-backend
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "backend") | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "backend") | nindent 6 }}
+  endpoints:
+    - port: http
+      interval: {{ .Values.servicemonitor.interval }}
+      path: /api/health/full
+{{- end }}

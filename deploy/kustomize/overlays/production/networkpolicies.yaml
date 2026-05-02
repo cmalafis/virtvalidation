@@ -1,0 +1,80 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: virtvalidate-frontend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: virtvalidate
+      app.kubernetes.io/component: frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    # Routes/Ingress mediate external access; intra-cluster probes are
+    # allowed so platform tooling (oc debug, observability sidecars) keep
+    # working.
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: virtvalidate-backend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: virtvalidate
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: virtvalidate
+              app.kubernetes.io/component: frontend
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: virtvalidate-postgres
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: virtvalidate
+      app.kubernetes.io/component: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: virtvalidate
+              app.kubernetes.io/component: backend
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: virtvalidate-ollama
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: virtvalidate
+      app.kubernetes.io/component: ollama
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: virtvalidate
+              app.kubernetes.io/component: backend
+      ports:
+        - protocol: TCP
+          port: 11434

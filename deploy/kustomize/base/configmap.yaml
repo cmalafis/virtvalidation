@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: virtvalidate-config
+data:
+  CLUSTER_NAME: ocp-virt-prod-01
+  MTV_NAMESPACE: openshift-mtv
+  MTV_SOURCE_PROVIDER: vmware
+  MTV_DESTINATION_PROVIDER: host
+  MTV_DEFAULT_TARGET_NAMESPACE: openshift-mtv
+  FIPS_MODE: "false"
+  SSH_KEY_ALGORITHM: ed25519
+  # LLM backend type — overlays patch this. ConfigMap value rather than
+  # a separate Deployment env entry so backend pods pick up changes via
+  # the standard ConfigMap-restart annotation pattern.
+  LLM_BACKEND_TYPE: ollama

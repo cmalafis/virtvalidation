@@ -1,0 +1,28 @@
+# Read-only access to InferenceService resources so the Settings UI can
+# surface which model is active. Scoped to a Role (not ClusterRole) so
+# permissions stay confined to the VirtValidate namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: virtvalidate-kserve-reader
+rules:
+  - apiGroups:
+      - serving.kserve.io
+    resources:
+      - inferenceservices
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: virtvalidate-kserve-reader
+subjects:
+  - kind: ServiceAccount
+    name: virtvalidate
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: virtvalidate-kserve-reader

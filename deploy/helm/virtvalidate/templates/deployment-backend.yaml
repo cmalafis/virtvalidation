@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-backend
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "backend") | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  # Recreate strategy because the SSH key PVC is RWO — two pods can't
+  # mount it concurrently. Operators with RWX storage can override to
+  # RollingUpdate via a strategic merge patch.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "backend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "virtvalidate.componentLabels" (dict "root" . "component" "backend") | nindent 8 }}
+      annotations:
+        # Restart pods when ConfigMap content changes — Helm doesn't
+        # do this automatically. The checksum hash means edits to
+        # values.yaml that flow into the ConfigMap trigger a rollout
+        # without operator intervention.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "virtvalidate.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
+      containers:
+        - name: backend
+          image: {{ include "virtvalidate.image" (dict "root" . "imageRepo" .Values.backend.image.repository "imageTag" .Values.backend.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            {{- toYaml .Values.backend.args | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: DATABASE_URL
+              value: {{ include "virtvalidate.databaseUrl" . | quote }}
+            - name: SSH_KEY_PATH
+              value: /app/keys/id_ed25519
+            {{- include "virtvalidate.llmEnv" . | nindent 12 }}
+            # Postgres credentials sourced from the chart-managed or
+            # operator-supplied secret. The DATABASE_URL above embeds
+            # $(POSTGRES_USER) and $(POSTGRES_PASSWORD) so kubelet
+            # interpolates them at pod-start without ever materializing
+            # the password in the manifest.
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "virtvalidate.postgresSecretName" . }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "virtvalidate.postgresSecretName" . }}
+                  key: POSTGRES_PASSWORD
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "virtvalidate.fullname" . }}-config
+          securityContext:
+            {{- toYaml .Values.security.containerSecurityContext | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/health/full
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health/postgres
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          volumeMounts:
+            - name: ssh-keys
+              mountPath: /app/keys
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: ssh-keys
+          {{- if .Values.persistence.ssh.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-ssh-keys" (include "virtvalidate.fullname" .)) .Values.persistence.ssh.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        # /tmp emptyDir gives the pod a writable scratch surface even
+        # when readOnlyRootFilesystem is set, which OCP recommends for
+        # restricted-v2 pods.
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.backend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

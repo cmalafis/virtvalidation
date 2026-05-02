@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: virtvalidate-backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            # Limits intentionally omitted for dev — uvicorn --reload
+            # plus weasyprint can spike memory transiently.
+          env:
+            - name: LOG_LEVEL
+              value: debug

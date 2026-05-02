@@ -9,11 +9,29 @@
 # (RHEL 8/9 with `fips-mode-setup --enable`, or RHCOS deployed with
 # `fips: true`) is what activates the FIPS-validated cryptography.
 # See docs/FIPS_DEPLOYMENT.md for the full requirements.
-FROM docker.io/python:3.12-slim
+FROM docker.io/python:3.12-slim AS runtime
+
+# Build args allow CI to inject version and SHA without rebuilding the
+# whole image on every commit (BuildKit layer caching keeps the apt and
+# pip layers warm).
+ARG VERSION=0.1.0-dev
+ARG VCS_REF=unknown
+
+LABEL org.opencontainers.image.title="virtvalidate-backend" \
+      org.opencontainers.image.description="VirtValidate FastAPI backend" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="https://github.com/virtvalidate/virtvalidate" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
 WORKDIR /app
+
 # weasyprint runtime needs Pango / Cairo / GDK-Pixbuf to render PDF.
+# curl is used by the Kubernetes liveness/readiness probes the Helm
+# chart configures; openssh-client is used by the SSH collector.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-client \
+        curl \
         libpango-1.0-0 \
         libpangoft2-1.0-0 \
         libcairo2 \
@@ -31,9 +49,32 @@ COPY backend/migrations/ ./migrations/
 COPY backend/alembic.ini ./alembic.ini
 
 # Static assets the API serves directly (CSV inventory template, etc.).
-# CSV_TEMPLATE_PATH defaults to /app/templates/vm-inventory-template.csv.
 COPY docs/vm-inventory-template.csv /app/templates/vm-inventory-template.csv
 
-RUN mkdir -p /app/keys && chmod 700 /app/keys
+# OpenShift's default `restricted-v2` SCC assigns each pod an arbitrary
+# high UID with primary GID 0. To work under that constraint:
+#   1. Create a non-root user with a fixed UID for non-OCP runtimes.
+#   2. chgrp 0 + chmod g=u every directory the runtime writes to so
+#      the assigned UID still has access via group 0.
+# /app/keys holds Ed25519 private keys; /app/templates is read-only.
+RUN useradd --uid 1001 --gid 0 --no-create-home --shell /sbin/nologin virtvalidate \
+    && mkdir -p /app/keys \
+    && chgrp -R 0 /app /app/keys \
+    && chmod -R g=u /app /app/keys \
+    && chmod 700 /app/keys
+
+USER 1001
+
 EXPOSE 8000
+
+# Lightweight health probe — Kubernetes liveness/readiness use this same
+# endpoint via the Helm chart. Falls under the in-pod boundary so it's
+# always reachable without DNS or service mesh hops.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/api/health/full > /dev/null || exit 1
+
+# `--reload` is appropriate for the dev-mode podman-compose target (the
+# bind-mounted source tree triggers reloads). The Helm chart deployment
+# overrides this CMD via the container args so production runs without
+# the file-watcher overhead.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

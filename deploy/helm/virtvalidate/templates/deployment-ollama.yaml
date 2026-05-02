@@ -1,0 +1,53 @@
+{{- if and (eq .Values.llm.backend "ollama") .Values.llm.ollama.deploy -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-ollama
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "ollama") | nindent 4 }}
+spec:
+  replicas: 1
+  # Recreate — Ollama's model cache PVC is RWO. The model is the heavy
+  # asset; we'd rather take a brief downtime on upgrade than re-download
+  # multiple gigabytes onto a second pod.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "ollama") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "virtvalidate.componentLabels" (dict "root" . "component" "ollama") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "virtvalidate.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
+      containers:
+        - name: ollama
+          image: "{{ .Values.llm.ollama.image.registry }}/{{ .Values.llm.ollama.image.repository }}:{{ .Values.llm.ollama.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: ollama
+              containerPort: 11434
+              protocol: TCP
+          env:
+            # OLLAMA_MODELS points at the persistent volume so model
+            # weights survive pod restarts. Without this, every restart
+            # re-downloads the model.
+            - name: OLLAMA_MODELS
+              value: /root/.ollama/models
+          resources:
+            {{- toYaml .Values.llm.ollama.resources | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+      volumes:
+        - name: models
+          {{- if .Values.llm.ollama.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "virtvalidate.fullname" . }}-ollama-models
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

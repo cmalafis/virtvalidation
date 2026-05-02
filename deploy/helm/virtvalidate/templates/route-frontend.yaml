@@ -1,0 +1,33 @@
+{{- if .Values.route.enabled -}}
+{{/*
+OpenShift Route — preferred on OCP. The router terminates TLS at the
+edge so the frontend pod doesn't need its own certificate. Path
+rewriting is unnecessary because the frontend serves the SPA at "/"
+and proxies "/api/*" to the backend via nginx.conf.
+
+Routes are an OpenShift-only resource. On vanilla Kubernetes use
+ingress.enabled instead.
+*/}}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "frontend") | nindent 4 }}
+spec:
+  {{- with .Values.route.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "virtvalidate.fullname" . }}-frontend
+    weight: 100
+  port:
+    targetPort: http
+  {{- with .Values.route.tls }}
+  tls:
+    termination: {{ .termination }}
+    insecureEdgeTerminationPolicy: {{ .insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+{{- end }}
