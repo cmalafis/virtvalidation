@@ -11,18 +11,36 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.core.config import settings
+from app.core.config import settings as app_settings
 from app.core.db import Base
 from app.models import (  # noqa: F401  (register models on Base)
     audit,
+    grouping,
     network_review,
     plan,
+    settings,
     validation,
+    vcenter,
     vm,
 )
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# DATABASE_URL resolution order (first non-empty wins):
+#   1. URL already set on the Config — lets test helpers and the
+#      lifespan migration runner inject a per-call URL without
+#      mutating env vars.
+#   2. ALEMBIC_DATABASE_URL env var — explicit override for one-off
+#      operator commands like ``alembic revision --autogenerate``
+#      against a temporary SQLite file.
+#   3. app.core.config.settings.database_url — the live deployment's
+#      DATABASE_URL, the steady-state path.
+import os as _os  # noqa: E402
+
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option(
+        "sqlalchemy.url",
+        _os.environ.get("ALEMBIC_DATABASE_URL") or app_settings.database_url,
+    )
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

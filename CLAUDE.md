@@ -37,6 +37,49 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
 - `docs/product-map.html` is hand-maintained — describes *what* the
   product does. The architecture diagram describes *how* it's built.
 
+## Schema change workflow (NON-NEGOTIABLE)
+
+The app applies Alembic migrations at startup via
+`app.core.migrations.apply_migrations`. There is **no fallback to
+`Base.metadata.create_all`** — schema changes that lack a migration
+will crash the app on next deployment.
+
+When you add or modify a SQLAlchemy model in `backend/app/models/`,
+you MUST also create an Alembic migration in the same change:
+
+1. Make the model change.
+2. Generate the migration:
+   ```bash
+   cd backend
+   ALEMBIC_DATABASE_URL=sqlite:////tmp/migration_gen.db \
+       alembic revision --autogenerate -m "describe the change"
+   ```
+3. **Always review the generated file before committing.**
+   - Check it matches your intent.
+   - Edit if autogenerate produced wrong output (it sometimes
+     misses enum changes, JSON columns, or index renames).
+   - Add data migrations if needed (autogenerate only does schema).
+4. Test the upgrade path against a fresh DB:
+   ```bash
+   ALEMBIC_DATABASE_URL=sqlite:////tmp/migration_test.db \
+       alembic upgrade head
+   ```
+5. Test the rollback path:
+   ```bash
+   ALEMBIC_DATABASE_URL=sqlite:////tmp/migration_test.db \
+       alembic downgrade -1
+   ALEMBIC_DATABASE_URL=sqlite:////tmp/migration_test.db \
+       alembic upgrade head
+   ```
+6. Commit BOTH the model change AND the migration file in the
+   same commit. CI runs `tests/test_migrations.py::test_models_match_migrations_no_drift`
+   which fails the build if a model field exists without a
+   corresponding migration.
+
+See `docs/DATABASE_MIGRATIONS.md` for the full workflow including
+data migrations, rollback recovery, and the legacy-`create_all`
+bridge for v0.1.x deployments.
+
 ## Repo structure
 virtvalidate/
 ├── frontend/          # React app

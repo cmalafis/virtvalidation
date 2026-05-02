@@ -13,9 +13,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.db import get_db
+from app.core.db import engine, get_db
 from app.core.fips import fips_status
 from app.core.llm.factory import get_llm_backend
+from app.core.migrations import schema_status
 
 router = APIRouter(tags=["health"])
 
@@ -54,6 +55,20 @@ def postgres_health(db: Session = Depends(get_db)) -> dict:
         return {"status": "offline", "error": str(e)}
 
 
+@router.get("/schema")
+def schema_health() -> dict:
+    """Report the database's Alembic migration state.
+
+    Returns ``current_revision`` (what the DB thinks it's at),
+    ``head_revision`` (what the migrations dir says is latest),
+    ``is_up_to_date``, and ``pending_migrations`` (revisions between
+    current → head). Helps debug "is the database current" without
+    shell access — particularly useful in OCP where ``kubectl exec``
+    isn't always available.
+    """
+    return schema_status(engine)
+
+
 @router.get("/full")
 def full_health(db: Session = Depends(get_db)) -> dict:
     """Combined status across the API and every backing dependency.
@@ -64,11 +79,16 @@ def full_health(db: Session = Depends(get_db)) -> dict:
     """
     pg = postgres_health(db)
     llm = llm_health()
+    schema = schema_status(engine)
     return {
         "api": {"status": "online", "version": _API_VERSION},
         "components": {
             "database": pg,
             "llm": llm,
+            # Schema migration posture — operators can see at a glance
+            # whether the running pod has applied every migration the
+            # codebase thinks it should have.
+            "schema": schema,
         },
         # FIPS posture — surfaced here so federal reviewers and load
         # balancer health probes both see the compliance status in

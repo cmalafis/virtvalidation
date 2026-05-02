@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,8 +15,9 @@ from app.api.templates import router as templates_router
 from app.api.validations import router as validations_router
 from app.api.vcenters import router as vcenters_router
 from app.api.vms import router as vms_router
-from app.core.db import Base, engine
+from app.core.db import engine
 from app.core.fips import log_startup_warning as _fips_startup_log
+from app.core.migrations import MigrationError, apply_migrations
 from app.core.scheduler import shutdown_scheduler, start_scheduler
 from app.middleware.audit import AuditMiddleware
 from app.models import audit as _audit_models  # noqa: F401  (register models on Base)
@@ -26,10 +28,27 @@ from app.models import validation as _validation_models  # noqa: F401  (register
 from app.models import vcenter as _vcenter_models  # noqa: F401  (register models on Base)
 from app.models import vm as _vm_models  # noqa: F401  (register models on Base)
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    # Apply database migrations BEFORE serving any traffic. We previously
+    # ran ``Base.metadata.create_all`` which only creates missing tables
+    # — column additions were silently dropped, leading to confused 500s
+    # at runtime. Now every schema change rides on Alembic; the bridge
+    # logic in apply_migrations handles legacy v0.1.x deployments by
+    # stamping head before the upgrade runs.
+    #
+    # Fail-fast on any migration error: a half-migrated DB is worse than
+    # not starting at all. ``SystemExit(1)`` triggers a container restart
+    # which surfaces the failure loudly in pod logs / podman ps.
+    try:
+        apply_migrations(engine)
+    except MigrationError as e:
+        logger.error("Migration failed: %s", e)
+        raise SystemExit(1) from e
+
     # Log the FIPS posture at boot so federal deployments leave a clear
     # breadcrumb in container logs about whether the application is
     # actually running in compliance mode.
