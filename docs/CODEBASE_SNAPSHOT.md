@@ -70,7 +70,7 @@ virtvalidation/
 │   ├── CONFIGURATION.md           # Every env var documented
 │   ├── FIPS_DEPLOYMENT.md         # Federal compliance guide
 │   ├── INSTALLATION.md
-│   ├── NETWORK_REVIEW.md
+│   ├── DESIGN_REVIEW.md
 │   ├── RVTOOLS_GUIDE.md
 │   ├── SCALE.md                   # Tested vs designed-for capacity
 │   ├── SSH_SETUP.md

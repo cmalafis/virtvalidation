@@ -1,17 +1,43 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
 from app.core.db import get_db
 from app.core.mtv import MTVGenerationError, WaveContext, generate_wave_yaml
+from app.core.plan_generation import (
+    PlanRevisionError,
+    apply_move_vm,
+    resolve_scope,
+    run_plan_generation,
+)
+from app.core.plan_generation import task_store as plan_task_store
 from app.core.planner import MigrationPlanner, PlannerError
 from app.core.reporter import ReporterError, WaveReporter, render_pdf
-from app.models.plan import MigrationPlan
+from app.models.plan import MigrationPlan, PlanningStrategy
 from app.models.validation import ValidationResult
 from app.models.vm import VM, BaselineSnapshot
-from app.schemas.plan import PlanCreate, PlanRead
+from app.schemas.plan import (
+    PlanCreate,
+    PlanGenerateRequest,
+    PlanGenerationTaskRead,
+    PlanningStrategyCreate,
+    PlanningStrategyRead,
+    PlanningStrategyUpdate,
+    PlanRead,
+    WaveMoveVMRequest,
+)
 from app.schemas.report import WaveReport
 
 router = APIRouter(tags=["plans"])
@@ -286,3 +312,276 @@ def wave_mtv_yaml(
         media_type="application/yaml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ===========================================================================
+# Strategy-driven planning (PlanningStrategy CRUD + async generation +
+# per-wave revisions). The legacy synchronous POST /api/plans path above
+# stays for back-compat with existing tests; new wizard-driven flow goes
+# through the endpoints below.
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# PlanningStrategy CRUD
+# ---------------------------------------------------------------------------
+strategies_router = APIRouter(tags=["planning-strategies"])
+
+
+@strategies_router.get("", response_model=list[PlanningStrategyRead])
+def list_strategies(db: Session = Depends(get_db)) -> list[PlanningStrategy]:
+    return list(
+        db.scalars(
+            select(PlanningStrategy).order_by(PlanningStrategy.created_at.desc())
+        ).all()
+    )
+
+
+@strategies_router.post(
+    "", response_model=PlanningStrategyRead, status_code=status.HTTP_201_CREATED
+)
+def create_strategy(
+    request: Request,
+    payload: PlanningStrategyCreate,
+    db: Session = Depends(get_db),
+) -> PlanningStrategy:
+    actor = request.headers.get("x-actor", "user")
+    strategy = PlanningStrategy(
+        **payload.model_dump(),
+        created_by_actor=actor,
+    )
+    db.add(strategy)
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Strategy named {payload.name!r} already exists",
+        ) from e
+    db.refresh(strategy)
+
+    record_audit(
+        db,
+        action="strategy.create",
+        actor=actor,
+        resource_type="strategy",
+        resource_id=strategy.id,
+        details={
+            "name": strategy.name,
+            "primary_grouping": strategy.primary_grouping.value,
+        },
+    )
+    db.commit()
+    request.state.skip_audit_log = True
+    return strategy
+
+
+@strategies_router.get("/{strategy_id}", response_model=PlanningStrategyRead)
+def get_strategy(strategy_id: int, db: Session = Depends(get_db)) -> PlanningStrategy:
+    strategy = db.get(PlanningStrategy, strategy_id)
+    if strategy is None:
+        raise HTTPException(
+            status_code=404, detail=f"Strategy {strategy_id} not found"
+        )
+    return strategy
+
+
+@strategies_router.patch("/{strategy_id}", response_model=PlanningStrategyRead)
+def update_strategy(
+    request: Request,
+    strategy_id: int,
+    payload: PlanningStrategyUpdate,
+    db: Session = Depends(get_db),
+) -> PlanningStrategy:
+    strategy = db.get(PlanningStrategy, strategy_id)
+    if strategy is None:
+        raise HTTPException(
+            status_code=404, detail=f"Strategy {strategy_id} not found"
+        )
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(strategy, field, value)
+    db.commit()
+    db.refresh(strategy)
+    request.state.skip_audit_log = True
+    return strategy
+
+
+@strategies_router.delete(
+    "/{strategy_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_strategy(
+    request: Request,
+    strategy_id: int,
+    db: Session = Depends(get_db),
+) -> None:
+    strategy = db.get(PlanningStrategy, strategy_id)
+    if strategy is None:
+        raise HTTPException(
+            status_code=404, detail=f"Strategy {strategy_id} not found"
+        )
+    record_audit(
+        db,
+        action="strategy.delete",
+        actor=request.headers.get("x-actor", "user"),
+        resource_type="strategy",
+        resource_id=strategy.id,
+        details={"name": strategy.name},
+    )
+    db.delete(strategy)
+    db.commit()
+    request.state.skip_audit_log = True
+
+
+# ---------------------------------------------------------------------------
+# Async plan generation
+# ---------------------------------------------------------------------------
+@router.post(
+    "/generate",
+    response_model=PlanGenerationTaskRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def trigger_plan_generation(
+    request: Request,
+    payload: PlanGenerateRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Spawn strategy-driven plan generation as a BackgroundTask.
+
+    The wizard either references a saved strategy (``strategy_id``)
+    or embeds an inline one (``inline_strategy``) for one-off
+    generation. Returns 202 with the task handle; poll
+    ``GET /api/plans/generate/{task_id}/status`` for progress.
+    """
+    actor = request.headers.get("x-actor", "user")
+
+    if payload.strategy_id is not None:
+        strategy = db.get(PlanningStrategy, payload.strategy_id)
+        if strategy is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Strategy {payload.strategy_id} not found",
+            )
+    elif payload.inline_strategy is not None:
+        strategy = PlanningStrategy(
+            **payload.inline_strategy.model_dump(),
+            created_by_actor=actor,
+        )
+        db.add(strategy)
+        try:
+            db.commit()
+        except IntegrityError as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Strategy named {payload.inline_strategy.name!r} "
+                    "already exists — reference it via strategy_id instead"
+                ),
+            ) from e
+        db.refresh(strategy)
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide either strategy_id or inline_strategy",
+        )
+
+    # Pre-flight scope check — fail fast if the scope filter would
+    # match zero VMs. Saves the operator a 30-second wait to find out
+    # they typo'd the environment filter.
+    scope_dict = payload.scope.model_dump()
+    matched = resolve_scope(db, scope_dict)
+    if not matched:
+        raise HTTPException(
+            status_code=422,
+            detail="Scope filter matched zero VMs — adjust your selection",
+        )
+
+    task = plan_task_store.create()
+    record_audit(
+        db,
+        action="plan.generation_triggered",
+        actor=actor,
+        resource_type="strategy",
+        resource_id=strategy.id,
+        details={
+            "task_id": task.task_id,
+            "plan_name": payload.name,
+            "scope": scope_dict,
+            "vm_count": len(matched),
+        },
+    )
+    db.commit()
+
+    background_tasks.add_task(
+        run_plan_generation,
+        task.task_id,
+        plan_name=payload.name,
+        strategy_id=strategy.id,
+        scope=scope_dict,
+        actor=actor,
+    )
+    request.state.skip_audit_log = True
+    return task.to_dict()
+
+
+@router.get(
+    "/generate/{task_id}/status",
+    response_model=PlanGenerationTaskRead,
+)
+def get_plan_generation_status(task_id: str) -> dict:
+    task = plan_task_store.get(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Plan generation task {task_id} not found. Tasks are kept "
+                "in memory only and may have been cleared by an appliance "
+                "restart — re-trigger if needed."
+            ),
+        )
+    return task.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Per-wave revision (move-vm)
+# ---------------------------------------------------------------------------
+@router.post("/{plan_id}/waves/{wave_number}/move-vm", response_model=PlanRead)
+def move_vm_between_waves(
+    request: Request,
+    plan_id: int,
+    wave_number: int,
+    payload: WaveMoveVMRequest,
+    db: Session = Depends(get_db),
+) -> MigrationPlan:
+    """Move one VM into a different wave, creating a new plan revision.
+
+    The original plan is preserved; the response is the **new** plan
+    (revision_number incremented, supersedes_plan_id pointing at the
+    previous revision). The ``wave_number`` in the URL is informational
+    — the new plan's wave membership is what counts.
+    """
+    plan = db.get(MigrationPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+    if payload.target_wave_number == wave_number:
+        # No-op — the URL's wave_number is the source. Nothing to do.
+        raise HTTPException(
+            status_code=422,
+            detail="target_wave_number equals the source wave_number",
+        )
+    try:
+        revision = apply_move_vm(
+            db,
+            plan,
+            vm_id=payload.vm_id,
+            target_wave_number=payload.target_wave_number,
+            actor=request.headers.get("x-actor", "user"),
+            note=payload.note,
+        )
+    except PlanRevisionError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    request.state.skip_audit_log = True
+    return revision

@@ -19,6 +19,7 @@ from app.models import (  # noqa: F401  (register models on Base)
     network_review,
     plan,
     settings,
+    storage_review,
     validation,
     vcenter,
     vm,

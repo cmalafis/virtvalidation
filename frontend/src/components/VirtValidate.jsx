@@ -566,7 +566,7 @@ const SecondaryButton = ({ children, onClick, disabled, type = "button" }) => (
   </button>
 );
 
-const EmptyState = ({ icon = "◌", title, description, ctaLabel, onCta }) => (
+const EmptyState = ({ icon = "◌", title, description, ctaLabel, onCta, secondaryLabel, onSecondaryCta }) => (
   <div style={{
     border: "1px dashed #2a2a44",
     background: "linear-gradient(180deg, #0a0a18 0%, #07070f 100%)",
@@ -582,9 +582,10 @@ const EmptyState = ({ icon = "◌", title, description, ctaLabel, onCta }) => (
       fontSize: 15, color: "#aaaacc", fontFamily: "'Barlow', sans-serif",
       maxWidth: 520, margin: "0 auto 24px", lineHeight: 1.6,
     }}>{description}</div>
-    {ctaLabel && (
-      <PrimaryButton onClick={onCta}>+ {ctaLabel}</PrimaryButton>
-    )}
+    <div style={{ display: "inline-flex", gap: 10 }}>
+      {ctaLabel && <PrimaryButton onClick={onCta}>+ {ctaLabel}</PrimaryButton>}
+      {secondaryLabel && <SecondaryButton onClick={onSecondaryCta}>+ {secondaryLabel}</SecondaryButton>}
+    </div>
   </div>
 );
 
@@ -1894,11 +1895,27 @@ export default function VirtValidate() {
   }, []);
 
   const loadNetworkReviews = useCallback(async () => {
+    // Now loads BOTH network and storage reviews in parallel and tags each
+    // row with its `kind` so the UI can render a single combined list
+    // with badges + correct detail-route prefixes. The state variable name
+    // stays for back-compat with the JSX below; rename later if churn allows.
     setNetworkReviewsLoading(true);
     try {
-      const { data } = await fetchJSON("/api/network-reviews");
-      setNetworkReviews(Array.isArray(data) ? data : []);
-      setNetworkReviewsError(null);
+      const [netRes, storRes] = await Promise.all([
+        fetchJSON("/api/network-reviews").catch((e) => ({ error: e })),
+        fetchJSON("/api/storage-reviews").catch((e) => ({ error: e })),
+      ]);
+      const netRows = Array.isArray(netRes?.data) ? netRes.data : [];
+      const storRows = Array.isArray(storRes?.data) ? storRes.data : [];
+      const tagged = [
+        ...netRows.map((r) => ({ ...r, kind: "network" })),
+        ...storRows.map((r) => ({ ...r, kind: "storage" })),
+      ];
+      // Newest first across the combined set.
+      tagged.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+      setNetworkReviews(tagged);
+      const errs = [netRes?.error, storRes?.error].filter(Boolean);
+      setNetworkReviewsError(errs.length ? errs.map((e) => e.message).join("; ") : null);
     } catch (e) {
       setNetworkReviewsError(e.message || "Failed to load reviews");
     } finally {
@@ -3100,16 +3117,26 @@ export default function VirtValidate() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
                 <div>
                   <div style={{ fontSize: 14, color: "#aaaacc", lineHeight: 1.6, maxWidth: 780 }}>
-                    Compare a proposed OpenShift Virtualization network design against your VMware source environment.
-                    Decision support — every finding still needs a network-engineer review before action.
+                    Compare a proposed OpenShift Virtualization design against your VMware source environment.
+                    Two review kinds: <strong style={{ color: "#88aaff" }}>network</strong> (CUDN / NAD / NetworkPolicy) and
+                    <strong style={{ color: "#ffaa00" }}> storage</strong> (StorageClass / VolumeSnapshotClass / StorageMap).
+                    Decision support — every finding still needs an architect review before action.
                   </div>
                 </div>
-                <Link to="/design-reviews/new" style={{
-                  background: "#1d3a8a", border: "1px solid #4488ff", color: "#eef2ff",
-                  padding: "10px 18px", fontFamily: "'Barlow', sans-serif", fontSize: 12,
-                  letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
-                  textDecoration: "none", whiteSpace: "nowrap",
-                }}>+ New review</Link>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Link to="/design-reviews/network/new" style={{
+                    background: "#1d3a8a", border: "1px solid #4488ff", color: "#eef2ff",
+                    padding: "10px 18px", fontFamily: "'Barlow', sans-serif", fontSize: 12,
+                    letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+                    textDecoration: "none", whiteSpace: "nowrap",
+                  }}>+ Network</Link>
+                  <Link to="/design-reviews/storage/new" style={{
+                    background: "#3a2d0a", border: "1px solid #ffaa00", color: "#fff5dd",
+                    padding: "10px 18px", fontFamily: "'Barlow', sans-serif", fontSize: 12,
+                    letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+                    textDecoration: "none", whiteSpace: "nowrap",
+                  }}>+ Storage</Link>
+                </div>
               </div>
 
               {networkReviewsError ? (
@@ -3122,27 +3149,36 @@ export default function VirtValidate() {
                 <EmptyState
                   icon="◇"
                   title="No design reviews yet"
-                  description="Create a review to validate a proposed OpenShift Virtualization network design against your source VMware environment."
-                  ctaLabel="Create First Review"
-                  onCta={() => window.location.assign("/design-reviews/new")}
+                  description="Create a review to validate a proposed OpenShift Virtualization design against your source VMware environment. Pick the kind below."
+                  ctaLabel="Network Review"
+                  onCta={() => window.location.assign("/design-reviews/network/new")}
+                  secondaryLabel="Storage Review"
+                  onSecondaryCta={() => window.location.assign("/design-reviews/storage/new")}
                 />
               ) : (
                 <div style={{ border: "1px solid #1a1a2e" }}>
                   <div style={{
-                    display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1.2fr",
+                    display: "grid", gridTemplateColumns: "0.8fr 2fr 1fr 1fr 1fr 1.2fr",
                     padding: "12px 18px", borderBottom: "1px solid #1a1a2e", background: "#0a0a16",
                   }}>
-                    {["Name", "Status", "Findings", "Severity Mix", "Last Analyzed"].map((h) => (
+                    {["Kind", "Name", "Status", "Findings", "Severity Mix", "Last Analyzed"].map((h) => (
                       <span key={h} style={{
                         fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
                         fontFamily: "'Barlow', sans-serif", textTransform: "uppercase", fontWeight: 700,
                       }}>{h}</span>
                     ))}
                   </div>
-                  {networkReviews.map((r, i) => (
-                    <Link key={r.id} to={`/design-reviews/${r.id}`}
+                  {networkReviews.map((r, i) => {
+                    // Storage rows live under /design-reviews/storage/:id;
+                    // network keeps the unprefixed path for back-compat.
+                    const detailPath = r.kind === "storage"
+                      ? `/design-reviews/storage/${r.id}`
+                      : `/design-reviews/${r.id}`;
+                    const kindColor = r.kind === "storage" ? "#ffaa00" : "#88aaff";
+                    return (
+                    <Link key={`${r.kind}-${r.id}`} to={detailPath}
                       style={{
-                        display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1.2fr",
+                        display: "grid", gridTemplateColumns: "0.8fr 2fr 1fr 1fr 1fr 1.2fr",
                         padding: "14px 18px", alignItems: "center",
                         borderBottom: i < networkReviews.length - 1 ? "1px solid #0f0f1e" : "none",
                         textDecoration: "none", transition: "background 0.15s",
@@ -3150,6 +3186,12 @@ export default function VirtValidate() {
                       onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(68,136,255,0.04)"; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
                     >
+                      <span style={{
+                        fontSize: 11, color: kindColor, border: `1px solid ${kindColor}66`,
+                        padding: "3px 9px", letterSpacing: "0.06em", fontWeight: 700,
+                        textTransform: "uppercase", fontFamily: "'Share Tech Mono', monospace",
+                        justifySelf: "start",
+                      }}>{r.kind || "network"}</span>
                       <span style={{ fontSize: 14, color: "#eeeeff", fontFamily: "'Barlow', sans-serif", fontWeight: 600 }}>{r.name}</span>
                       <NetworkReviewStatusPill status={r.status} />
                       <span style={{ fontSize: 13, color: "#ccccee", fontFamily: "'Share Tech Mono', monospace" }}>{r.finding_count}</span>
@@ -3167,7 +3209,8 @@ export default function VirtValidate() {
                         {r.last_analyzed_at ? new Date(r.last_analyzed_at).toLocaleString() : "—"}
                       </span>
                     </Link>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

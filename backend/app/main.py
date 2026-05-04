@@ -7,7 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.audit import router as audit_router
 from app.api.health import router as health_router
 from app.api.network_reviews import router as network_reviews_router
+from app.api.storage_reviews import router as storage_reviews_router
 from app.api.plans import router as plans_router
+from app.api.plans import strategies_router as planning_strategies_router
 from app.api.reports import router as reports_router
 from app.api.settings import settings_router, system_router
 from app.api.snapshots import router as snapshots_router
@@ -24,6 +26,7 @@ from app.models import audit as _audit_models  # noqa: F401  (register models on
 from app.models import grouping as _grouping_models  # noqa: F401  (register models on Base)
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)
 from app.models import settings as _settings_models  # noqa: F401  (register models on Base)
+from app.models import storage_review as _storage_review_models  # noqa: F401  (register models on Base)
 from app.models import validation as _validation_models  # noqa: F401  (register models on Base)
 from app.models import vcenter as _vcenter_models  # noqa: F401  (register models on Base)
 from app.models import vm as _vm_models  # noqa: F401  (register models on Base)
@@ -79,6 +82,7 @@ app.add_middleware(AuditMiddleware)
 app.include_router(vms_router, prefix="/api/vms")
 app.include_router(snapshots_router, prefix="/api/snapshots")
 app.include_router(plans_router, prefix="/api/plans")
+app.include_router(planning_strategies_router, prefix="/api/planning-strategies")
 app.include_router(health_router, prefix="/api/health")
 app.include_router(system_router, prefix="/api/system")
 app.include_router(settings_router, prefix="/api/settings")
@@ -86,5 +90,6 @@ app.include_router(audit_router, prefix="/api/audit")
 app.include_router(templates_router, prefix="/api/templates")
 app.include_router(reports_router, prefix="/api/reports")
 app.include_router(network_reviews_router, prefix="/api/network-reviews")
+app.include_router(storage_reviews_router, prefix="/api/storage-reviews")
 app.include_router(validations_router, prefix="/api/validations")
 app.include_router(vcenters_router, prefix="/api/sources/vcenters")
