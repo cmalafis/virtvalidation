@@ -82,12 +82,19 @@ class PlanScopeFilter(BaseModel):
 
 class PlanGenerateRequest(BaseModel):
     """Wizard submission. Either references a saved strategy or embeds
-    a strategy inline (one-off generation without persisting the strategy)."""
+    a strategy inline (one-off generation without persisting the strategy).
+
+    ``mapping_id`` ties the plan to a :class:`ResourceMapping` so MTV
+    YAML export resolves source→target resources via real cluster names.
+    Optional for back-compat — if absent, MTV YAML export falls back to
+    per-VM ``target_*`` columns and surfaces a warning on the plan.
+    """
 
     name: str = Field(min_length=1, max_length=255)
     strategy_id: int | None = None
     inline_strategy: PlanningStrategyCreate | None = None
     scope: PlanScopeFilter = Field(default_factory=PlanScopeFilter)
+    mapping_id: int | None = None
 
 
 class PlanGenerationTaskRead(BaseModel):
@@ -141,6 +148,7 @@ class PlanRead(BaseModel):
     summary: str | None = None
     model: str
     strategy_id: int | None = None
+    mapping_id: int | None = None
     plan_summary: str | None = None
     rationale: str | None = None
     warnings: list[str] = Field(default_factory=list)

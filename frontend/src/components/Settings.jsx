@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link } from "react-router-dom";
+import { throwForResponse } from "../utils/apiError";
 
 const TOAST_OPTS = {
   style: {
@@ -49,11 +50,12 @@ async function fetchJSON(url, { signal, method = "GET", body } = {}) {
   }
   const res = await fetch(url, opts);
   if (!res.ok) {
-    let detail = "";
-    try { detail = (await res.json())?.detail ?? ""; } catch { /* ignore */ }
-    const err = new Error(detail ? `HTTP ${res.status}: ${detail}` : `HTTP ${res.status}`);
-    err.status = res.status;
-    throw err;
+    try {
+      await throwForResponse(res);
+    } catch (err) {
+      err.status = res.status;
+      throw err;
+    }
   }
   if (res.status === 204) return null;
   return res.json();

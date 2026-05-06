@@ -38,6 +38,12 @@ from app.core.categorizer import (
 )
 from app.core.categorizer import task_store as categorization_task_store
 from app.core.db import get_db
+from app.core.rvtools_import import (
+    ASYNC_IMPORT_THRESHOLD,
+    run_rvtools_import,
+    run_rvtools_import_async,
+)
+from app.core.rvtools_import import task_store as rvtools_import_task_store
 from app.models.grouping import GroupKind, VMGroup, VMGroupMember
 from app.models.vcenter import VCenterSource
 from app.models.vm import VM
@@ -47,6 +53,7 @@ from app.schemas.vcenter import (
     RVToolsDeltaItem,
     RVToolsDeltaRequest,
     RVToolsDeltaResponse,
+    RVToolsImportTaskRead,
     VCenterSourceCreate,
     VCenterSourceRead,
     VCenterSourceUpdate,
@@ -345,6 +352,104 @@ def _diff_vm_row(existing: VM, incoming) -> dict:
             if (before or "") != after:
                 diff[field] = {"before": before, "after": after}
     return diff
+
+
+# ---------------------------------------------------------------------------
+# RVTools import (commit)
+# ---------------------------------------------------------------------------
+@router.post("/{vcenter_id}/rvtools/import")
+def rvtools_import(
+    request: Request,
+    vcenter_id: int,
+    payload: RVToolsDeltaRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Persist an RVTools delta against a vCenter scope.
+
+    Same payload shape as ``/preview``. Behavior:
+
+      - Under :data:`ASYNC_IMPORT_THRESHOLD` VMs (default 500): run
+        synchronously, return the import counts inline.
+      - At or above the threshold: spawn a BackgroundTask, return 202
+        with a ``task_id`` the operator polls.
+
+    "Removed" rows aren't auto-deleted — they're flagged
+    ``missing_from_last_upload=True`` and the operator decides whether
+    to decommission. This is a deliberate two-step (the same shape
+    as :func:`delete_vcenter`) to avoid silent fleet wipes.
+    """
+    _get_or_404(db, vcenter_id)
+    actor = request.headers.get("x-actor", "user")
+
+    record_audit(
+        db,
+        action="vcenter.rvtools_import_triggered",
+        actor=actor,
+        resource_type="vcenter",
+        resource_id=vcenter_id,
+        details={"vm_count": len(payload.vms)},
+    )
+    db.commit()
+    request.state.skip_audit_log = True
+
+    if len(payload.vms) >= ASYNC_IMPORT_THRESHOLD:
+        task = rvtools_import_task_store.create(vcenter_id=vcenter_id)
+        # The Pydantic models aren't pickleable through the worker
+        # boundary in every backend, but BackgroundTasks runs in-process
+        # so we hand the validated list straight through.
+        background_tasks.add_task(
+            run_rvtools_import_async,
+            task.task_id,
+            vcenter_id=vcenter_id,
+            payload_vms=list(payload.vms),
+            actor=actor,
+        )
+        # FastAPI returns 200 by default for response_model unions; we
+        # surface the async branch via the body's shape (presence of
+        # task_id + status). Operators detect async by the absence of
+        # `created` etc. on the response.
+        return task.to_dict()
+
+    summary = run_rvtools_import(
+        db,
+        vcenter_id=vcenter_id,
+        payload_vms=payload.vms,
+        actor=actor,
+    )
+    return {
+        "created": summary.created,
+        "updated": summary.updated,
+        "marked_missing": summary.marked_missing,
+        "unchanged": summary.unchanged,
+        "errors": summary.errors,
+    }
+
+
+@router.get(
+    "/{vcenter_id}/rvtools/import/{task_id}",
+    response_model=RVToolsImportTaskRead,
+)
+def get_rvtools_import_status(vcenter_id: int, task_id: str) -> dict:
+    task = rvtools_import_task_store.get(task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"RVTools import task {task_id} not found. Tasks live in "
+                "memory only and may have been cleared by an appliance "
+                "restart — re-trigger if needed."
+            ),
+        )
+    if task.vcenter_id != vcenter_id:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Task {task_id} belongs to vcenter {task.vcenter_id}, "
+                f"not {vcenter_id}"
+            ),
+        )
+    return task.to_dict()
 
 
 # ---------------------------------------------------------------------------

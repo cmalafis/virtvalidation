@@ -344,6 +344,18 @@ const DATA = {
             "method": "GET",
             "path": "/api/vms/{vm_id}/validation/latest",
             "handler": "latest_validation",
+            "summary": "Return the latest validation result for a VM."
+          },
+          {
+            "method": "POST",
+            "path": "/api/vms/{vm_id}/validate",
+            "handler": "trigger_validation",
+            "summary": "Spawn an immediate post-migration validation in the background."
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms/{vm_id}/validate/{task_id}",
+            "handler": "get_validation_status",
             "summary": ""
           },
           {
@@ -366,6 +378,7 @@ const DATA = {
           "app.core.baseline",
           "app.core.capture",
           "app.core.db",
+          "app.core.validation",
           "app.models.validation",
           "app.models.vm",
           "app.schemas.validation",
@@ -413,6 +426,10 @@ const DATA = {
               "target_namespace",
               "target_storage_class",
               "target_network_attachment",
+              "source_vcenter_id",
+              "application_hint",
+              "missing_from_last_upload",
+              "last_seen_in_upload_at",
               "created_at",
               "updated_at",
               "snapshots",
@@ -474,7 +491,9 @@ const DATA = {
               "vsphere_datastores",
               "target_namespace",
               "target_storage_class",
-              "target_network_attachment"
+              "target_network_attachment",
+              "source_vcenter_id",
+              "application_hint"
             ],
             "methods": [],
             "summary": ""
@@ -508,7 +527,9 @@ const DATA = {
               "vsphere_datastores",
               "target_namespace",
               "target_storage_class",
-              "target_network_attachment"
+              "target_network_attachment",
+              "source_vcenter_id",
+              "application_hint"
             ],
             "methods": [],
             "summary": ""
@@ -886,9 +907,15 @@ const DATA = {
             "summary": ""
           }
         ],
-        "functions": [],
+        "functions": [
+          {
+            "name": "load_private_key",
+            "summary": "Load a private key from disk, auto-detecting its type."
+          }
+        ],
         "depends_on": [
           "app.core.commands",
+          "app.core.fips",
           "app.core.os_profile"
         ]
       }
@@ -937,6 +964,54 @@ const DATA = {
             "path": "/api/plans/{plan_id}/waves/{wave_number}/mtv-yaml",
             "handler": "wave_mtv_yaml",
             "summary": "Render the wave as a multi-doc MTV/Forklift YAML for ``oc apply -f``."
+          },
+          {
+            "method": "GET",
+            "path": "/api/planning-strategies",
+            "handler": "list_strategies",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/planning-strategies",
+            "handler": "create_strategy",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/planning-strategies/{strategy_id}",
+            "handler": "get_strategy",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/planning-strategies/{strategy_id}",
+            "handler": "update_strategy",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/planning-strategies/{strategy_id}",
+            "handler": "delete_strategy",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/plans/generate",
+            "handler": "trigger_plan_generation",
+            "summary": "Spawn strategy-driven plan generation as a BackgroundTask."
+          },
+          {
+            "method": "GET",
+            "path": "/api/plans/generate/{task_id}/status",
+            "handler": "get_plan_generation_status",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/plans/{plan_id}/waves/{wave_number}/move-vm",
+            "handler": "move_vm_between_waves",
+            "summary": "Move one VM into a different wave, creating a new plan revision."
           }
         ],
         "classes": [],
@@ -946,9 +1021,11 @@ const DATA = {
           "app.core.baseline",
           "app.core.db",
           "app.core.mtv",
+          "app.core.plan_generation",
           "app.core.planner",
           "app.core.reporter",
           "app.models.plan",
+          "app.models.target",
           "app.models.validation",
           "app.models.vm",
           "app.schemas.plan",
@@ -971,6 +1048,32 @@ const DATA = {
             "fields": [],
             "methods": [],
             "summary": "Raised when the wave is missing data required to produce a valid plan."
+          },
+          {
+            "name": "MappingResolver",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "network_mappings",
+              "storage_mappings",
+              "namespace_mappings",
+              "default_target_namespace"
+            ],
+            "methods": [
+              {
+                "name": "resolve_network",
+                "summary": ""
+              },
+              {
+                "name": "resolve_storage",
+                "summary": ""
+              },
+              {
+                "name": "resolve_namespace",
+                "summary": "Walk namespace_mappings in order; first matching criteria wins."
+              }
+            ],
+            "summary": "Resolves source vSphere resources to target OCP names via a"
           },
           {
             "name": "WaveContext",
@@ -1037,7 +1140,8 @@ const DATA = {
         ],
         "functions": [],
         "depends_on": [
-          "app.core.config"
+          "app.core.llm.base",
+          "app.core.llm.factory"
         ]
       },
       {
@@ -1045,21 +1149,94 @@ const DATA = {
         "id": "app.models.plan",
         "title": "app.models.plan",
         "subtitle": "backend/app/models/plan.py",
-        "summary": "",
+        "summary": "Migration planning data model.",
         "category": "data",
         "routes": [],
         "classes": [
+          {
+            "name": "PrimaryGrouping",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "WaveSizeTarget",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "RiskApproach",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ProductionHandling",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ApplicationAtomicity",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanningStrategy",
+            "kind": "model",
+            "table": "planning_strategies",
+            "fields": [
+              "id",
+              "name",
+              "primary_grouping",
+              "wave_size_target",
+              "wave_size_custom",
+              "risk_approach",
+              "production_handling",
+              "application_atomicity",
+              "freeform_constraints",
+              "created_by_actor",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": "Customer intent captured by the planning wizard."
+          },
           {
             "name": "MigrationPlan",
             "kind": "model",
             "table": "migration_plans",
             "fields": [
               "id",
+              "name",
               "vm_ids",
               "waves",
               "summary",
               "model",
-              "created_at"
+              "strategy_id",
+              "mapping_id",
+              "generation_prompt",
+              "generation_response",
+              "plan_summary",
+              "rationale",
+              "warnings",
+              "next_actions",
+              "supersedes_plan_id",
+              "revision_number",
+              "created_at",
+              "strategy"
             ],
             "methods": [],
             "summary": ""
@@ -1075,22 +1252,151 @@ const DATA = {
         "id": "app.schemas.plan",
         "title": "app.schemas.plan",
         "subtitle": "backend/app/schemas/plan.py",
-        "summary": "",
+        "summary": "Pydantic schemas for migration plans + strategies.",
         "category": "data",
         "routes": [],
         "classes": [
+          {
+            "name": "PlanningStrategyCreate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "primary_grouping",
+              "wave_size_target",
+              "wave_size_custom",
+              "risk_approach",
+              "production_handling",
+              "application_atomicity",
+              "freeform_constraints"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanningStrategyUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "primary_grouping",
+              "wave_size_target",
+              "wave_size_custom",
+              "risk_approach",
+              "production_handling",
+              "application_atomicity",
+              "freeform_constraints"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanningStrategyRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "name",
+              "primary_grouping",
+              "wave_size_target",
+              "wave_size_custom",
+              "risk_approach",
+              "production_handling",
+              "application_atomicity",
+              "freeform_constraints",
+              "created_by_actor",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanScopeFilter",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids",
+              "source_vcenter_id",
+              "environment",
+              "application_hint"
+            ],
+            "methods": [],
+            "summary": "Operator-supplied scope. At most one axis is honored \u2014 the API"
+          },
+          {
+            "name": "PlanGenerateRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "strategy_id",
+              "inline_strategy",
+              "scope",
+              "mapping_id"
+            ],
+            "methods": [],
+            "summary": "Wizard submission. Either references a saved strategy or embeds"
+          },
+          {
+            "name": "PlanGenerationTaskRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "task_id",
+              "status",
+              "current_step",
+              "progress_percent",
+              "started_at",
+              "completed_at",
+              "plan_id",
+              "error"
+            ],
+            "methods": [],
+            "summary": ""
+          },
           {
             "name": "WaveRead",
             "kind": "schema",
             "table": "",
             "fields": [
               "wave_number",
+              "name",
               "vm_ids",
               "rationale",
-              "estimated_risk"
+              "estimated_duration",
+              "estimated_risk",
+              "risk_level",
+              "considerations",
+              "applications_included",
+              "applications_split_warning"
             ],
             "methods": [],
             "summary": ""
+          },
+          {
+            "name": "PlanRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "name",
+              "vm_ids",
+              "waves",
+              "summary",
+              "model",
+              "strategy_id",
+              "mapping_id",
+              "plan_summary",
+              "rationale",
+              "warnings",
+              "next_actions",
+              "supersedes_plan_id",
+              "revision_number",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": "Strategy-driven plans populate every field; legacy plans leave"
           },
           {
             "name": "PlanCreate",
@@ -1103,62 +1409,25 @@ const DATA = {
             "summary": ""
           },
           {
-            "name": "PlanRead",
+            "name": "WaveMoveVMRequest",
             "kind": "schema",
             "table": "",
             "fields": [
-              "id",
-              "vm_ids",
-              "waves",
-              "summary",
-              "model",
-              "created_at"
+              "vm_id",
+              "target_wave_number",
+              "note"
             ],
             "methods": [],
-            "summary": ""
-          }
-        ],
-        "functions": [],
-        "depends_on": []
-      }
-    ],
-    "validation": [
-      {
-        "kind": "module",
-        "id": "app.core.llm",
-        "title": "app.core.llm",
-        "subtitle": "backend/app/core/llm.py",
-        "summary": "LLM Client \u2014 Ollama (local, air-gapped)",
-        "category": "integration",
-        "routes": [],
-        "classes": [
-          {
-            "name": "LLMError",
-            "kind": "class",
-            "table": "",
-            "fields": [],
-            "methods": [],
-            "summary": "Raised when the Ollama call fails or returns unparseable output."
-          },
-          {
-            "name": "LLMClient",
-            "kind": "class",
-            "table": "",
-            "fields": [],
-            "methods": [
-              {
-                "name": "validate",
-                "summary": "Reason over pre/post migration diff and return a structured verdict."
-              }
-            ],
             "summary": ""
           }
         ],
         "functions": [],
         "depends_on": [
-          "app.core.config"
+          "app.models.plan"
         ]
-      },
+      }
+    ],
+    "validation": [
       {
         "kind": "module",
         "id": "app.models.validation",
@@ -1224,10 +1493,63 @@ const DATA = {
             ],
             "methods": [],
             "summary": ""
+          },
+          {
+            "name": "LatestValidationResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "validation"
+            ],
+            "methods": [],
+            "summary": "Wrapper so a missing validation is a 200 with `validation: null`"
+          },
+          {
+            "name": "ValidationTaskRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "task_id",
+              "vm_id",
+              "status",
+              "current_step",
+              "progress_percent",
+              "started_at",
+              "completed_at",
+              "validation_id",
+              "verdict",
+              "error"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkValidationSpawn",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "task_id"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkValidationResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "spawned",
+              "skipped"
+            ],
+            "methods": [],
+            "summary": ""
           }
         ],
         "functions": [],
-        "depends_on": []
+        "depends_on": [
+          "app.models.validation"
+        ]
       }
     ],
     "reports": [
@@ -1487,15 +1809,27 @@ const DATA = {
         "routes": [
           {
             "method": "GET",
+            "path": "/api/health/llm",
+            "handler": "llm_health",
+            "summary": "Probe the configured LLM backend."
+          },
+          {
+            "method": "GET",
             "path": "/api/health/ollama",
             "handler": "ollama_health",
-            "summary": "Probe the local Ollama server via /api/tags."
+            "summary": "Back-compat alias for ``/health/llm``."
           },
           {
             "method": "GET",
             "path": "/api/health/postgres",
             "handler": "postgres_health",
             "summary": "Run a SELECT 1 against the configured database."
+          },
+          {
+            "method": "GET",
+            "path": "/api/health/schema",
+            "handler": "schema_health",
+            "summary": "Report the database's Alembic migration state."
           },
           {
             "method": "GET",
@@ -1507,8 +1841,10 @@ const DATA = {
         "classes": [],
         "functions": [],
         "depends_on": [
-          "app.core.config",
-          "app.core.db"
+          "app.core.db",
+          "app.core.fips",
+          "app.core.llm.factory",
+          "app.core.migrations"
         ]
       },
       {
@@ -1658,7 +1994,19 @@ const DATA = {
             "method": "GET",
             "path": "/api/system/ollama-models",
             "handler": "ollama_models",
-            "summary": "List models currently pulled in the local Ollama instance."
+            "summary": "List models available on the active LLM backend."
+          },
+          {
+            "method": "GET",
+            "path": "/api/system/fips-status",
+            "handler": "fips_status_endpoint",
+            "summary": "FIPS 140-3 compliance posture \u2014 configured + detected + per-op status."
+          },
+          {
+            "method": "GET",
+            "path": "/api/system/llm-info",
+            "handler": "llm_info",
+            "summary": "Active LLM backend snapshot \u2014 what's wired up + live status."
           }
         ],
         "classes": [],
@@ -1666,9 +2014,391 @@ const DATA = {
         "depends_on": [
           "app.core.config",
           "app.core.db",
+          "app.core.fips",
+          "app.core.llm.factory",
           "app.core.scheduler",
           "app.models.settings",
           "app.schemas.settings"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.api.storage_reviews",
+        "title": "app.api.storage_reviews",
+        "subtitle": "backend/app/api/storage_reviews.py",
+        "summary": "Storage design review HTTP surface.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/api/storage-reviews",
+            "handler": "create_review",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/storage-reviews",
+            "handler": "list_reviews",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/storage-reviews/{review_id}",
+            "handler": "get_review",
+            "summary": ""
+          },
+          {
+            "method": "PUT",
+            "path": "/api/storage-reviews/{review_id}/notes",
+            "handler": "update_notes",
+            "summary": ""
+          },
+          {
+            "method": "PUT",
+            "path": "/api/storage-reviews/{review_id}/yaml",
+            "handler": "update_yaml",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/storage-reviews/{review_id}/analyze",
+            "handler": "analyze_review",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/storage-reviews/{review_id}",
+            "handler": "delete_review",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/storage-reviews/{review_id}/findings/{finding_id}",
+            "handler": "update_finding_triage",
+            "summary": ""
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.core.db",
+          "app.core.storage_review",
+          "app.models.network_review",
+          "app.models.storage_review",
+          "app.schemas.storage_review"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.api.targets",
+        "title": "app.api.targets",
+        "subtitle": "backend/app/api/targets.py",
+        "summary": "OCP target cluster registry + ResourceMapping CRUD + plan-time mapping resolution.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/sources/targets",
+            "handler": "list_targets",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/targets",
+            "handler": "create_target",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/targets/{target_id}",
+            "handler": "get_target",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/sources/targets/{target_id}",
+            "handler": "update_target",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/sources/targets/{target_id}",
+            "handler": "delete_target",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/targets/{target_id}/discover",
+            "handler": "discover_target",
+            "summary": "Run discovery against the target cluster."
+          },
+          {
+            "method": "GET",
+            "path": "/api/mappings",
+            "handler": "list_mappings",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/mappings",
+            "handler": "create_mapping",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/mappings/{mapping_id}",
+            "handler": "get_mapping",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/mappings/{mapping_id}",
+            "handler": "update_mapping",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/mappings/{mapping_id}",
+            "handler": "delete_mapping",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/mappings/{mapping_id}/suggest-network",
+            "handler": "suggest_networks",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/mappings/{mapping_id}/suggest-storage",
+            "handler": "suggest_storage",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/mappings/{mapping_id}/preflight",
+            "handler": "preflight",
+            "summary": "Validate a mapping is ready to drive plan generation."
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.db",
+          "app.core.mapping_suggester",
+          "app.core.ocp_discovery",
+          "app.models.target",
+          "app.models.vcenter",
+          "app.models.vm",
+          "app.schemas.target"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.api.validations",
+        "title": "app.api.validations",
+        "subtitle": "backend/app/api/validations.py",
+        "summary": "Cross-VM validation operations \u2014 currently bulk on-demand validate.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/api/validations/run-all",
+            "handler": "validate_all",
+            "summary": "Spawn a validation against every enrolled VM that has a baseline."
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.db",
+          "app.core.validation",
+          "app.models.vm",
+          "app.schemas.validation"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.api.vcenters",
+        "title": "app.api.vcenters",
+        "subtitle": "backend/app/api/vcenters.py",
+        "summary": "vCenter source registry + scale-aware RVTools upload helpers.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/sources/vcenters",
+            "handler": "list_vcenters",
+            "summary": "Return every registered vCenter with its current VM count."
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/vcenters",
+            "handler": "create_vcenter",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/vcenters/{vcenter_id}",
+            "handler": "get_vcenter",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/sources/vcenters/{vcenter_id}",
+            "handler": "update_vcenter",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/sources/vcenters/{vcenter_id}",
+            "handler": "delete_vcenter",
+            "summary": "Delete a vCenter source. Member VMs keep existing \u2014 their"
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/vcenters/{vcenter_id}/rvtools/preview",
+            "handler": "rvtools_delta_preview",
+            "summary": "Compare an uploaded RVTools VM list against current inventory."
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/vcenters/{vcenter_id}/rvtools/import",
+            "handler": "rvtools_import",
+            "summary": "Persist an RVTools delta against a vCenter scope."
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/vcenters/{vcenter_id}/rvtools/import/{task_id}",
+            "handler": "get_rvtools_import_status",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/vcenters/{vcenter_id}/categorize",
+            "handler": "trigger_categorization",
+            "summary": "Spawn a Level 1 categorization run as a BackgroundTask."
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/vcenters/{vcenter_id}/categorize/{task_id}",
+            "handler": "get_categorization_status",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/vcenters/{vcenter_id}/groups",
+            "handler": "list_groups",
+            "summary": "List the groups Level 1 categorization produced for a vCenter."
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.categorizer",
+          "app.core.db",
+          "app.core.rvtools_import",
+          "app.models.grouping",
+          "app.models.vcenter",
+          "app.models.vm",
+          "app.schemas.vcenter"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.categorizer",
+        "title": "app.core.categorizer",
+        "subtitle": "backend/app/core/categorizer.py",
+        "summary": "Level 1 categorization \u2014 batched LLM classification at scale.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "CategorizationTask",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "task_id",
+              "source_vcenter_id",
+              "status",
+              "current_step",
+              "progress_percent",
+              "batches_total",
+              "batches_complete",
+              "started_at",
+              "completed_at",
+              "groups_created",
+              "error"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "CategorizationTaskStore",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "create",
+                "summary": ""
+              },
+              {
+                "name": "get",
+                "summary": ""
+              },
+              {
+                "name": "update",
+                "summary": ""
+              },
+              {
+                "name": "mark_completed",
+                "summary": ""
+              },
+              {
+                "name": "mark_failed",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "CategorizationError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the categorizer cannot complete a batch."
+          }
+        ],
+        "functions": [
+          {
+            "name": "categorize",
+            "summary": "Run Level 1 categorization for one vCenter."
+          },
+          {
+            "name": "run_categorization_task",
+            "summary": "Body of the FastAPI BackgroundTask that drives a categorization run."
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.core.llm.base",
+          "app.core.llm.factory",
+          "app.models.grouping",
+          "app.models.vcenter",
+          "app.models.vm"
         ]
       },
       {
@@ -1701,7 +2431,12 @@ const DATA = {
               "hostname_fqdn",
               "firewall_inspect",
               "time_sync_status",
-              "package_list"
+              "package_list",
+              "windows_system_info",
+              "windows_hotfixes",
+              "windows_ad_membership",
+              "windows_processes",
+              "windows_users"
             ],
             "methods": [],
             "summary": "The shell commands to run on a given OS."
@@ -1732,10 +2467,21 @@ const DATA = {
             "table": "",
             "fields": [
               "database_url",
-              "ollama_host",
-              "ollama_model",
               "ssh_key_path",
               "cluster_name",
+              "fips_mode",
+              "ssh_key_algorithm",
+              "llm_backend_type",
+              "ollama_host",
+              "ollama_model",
+              "kserve_endpoint",
+              "kserve_model_name",
+              "kserve_token",
+              "kserve_token_file",
+              "kserve_verify_ssl",
+              "kserve_timeout_seconds",
+              "vllm_endpoint",
+              "vllm_model_name",
               "mtv_namespace",
               "mtv_source_provider",
               "mtv_destination_provider",
@@ -1779,6 +2525,380 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.fips",
+        "title": "app.core.fips",
+        "subtitle": "backend/app/core/fips.py",
+        "summary": "FIPS 140-3 compliance helpers.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "FIPSViolation",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when a FIPS-mode gate rejects a configuration or input."
+          }
+        ],
+        "functions": [
+          {
+            "name": "is_os_fips_enabled",
+            "summary": "Return True iff the host OS is running with the FIPS kernel"
+          },
+          {
+            "name": "is_fips_mode",
+            "summary": "Return True iff the operator asked the application to enforce"
+          },
+          {
+            "name": "assess_ssh_key",
+            "summary": "Evaluate a loaded SSH key against FIPS 186-5."
+          },
+          {
+            "name": "validate_ssh_key",
+            "summary": "Enforce :func:`assess_ssh_key` when ``fips_mode`` is active."
+          },
+          {
+            "name": "fips_status",
+            "summary": "Build the structured status payload exposed to operators."
+          },
+          {
+            "name": "log_startup_warning",
+            "summary": "Emit a one-shot startup log line summarizing the FIPS posture."
+          }
+        ],
+        "depends_on": [
+          "app.core.config"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.__init__",
+        "title": "app.core.llm.__init__",
+        "subtitle": "backend/app/core/llm/__init__.py",
+        "summary": "Pluggable LLM inference layer.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.llm.base",
+          "app.core.llm.client",
+          "app.core.llm.factory",
+          "app.core.llm.kserve_backend",
+          "app.core.llm.ollama_backend",
+          "app.core.llm.vllm_backend"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.base",
+        "title": "app.core.llm.base",
+        "subtitle": "backend/app/core/llm/base.py",
+        "summary": "Pluggable LLM inference backend.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "LLMBackendError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when a backend call fails \u2014 transport, parsing, or auth."
+          },
+          {
+            "name": "LLMBackend",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "backend_type"
+            ],
+            "methods": [
+              {
+                "name": "chat",
+                "summary": "Single completion request, returns full response."
+              },
+              {
+                "name": "chat_stream",
+                "summary": "Streaming completion \u2014 yields token chunks as they arrive."
+              },
+              {
+                "name": "health_check",
+                "summary": "Verify backend is reachable and the model is loaded."
+              },
+              {
+                "name": "list_models",
+                "summary": "List available models on this backend."
+              },
+              {
+                "name": "chat_sync",
+                "summary": "Synchronous wrapper around :meth:`chat`."
+              },
+              {
+                "name": "health_check_sync",
+                "summary": "Synchronous wrapper around :meth:`health_check`."
+              },
+              {
+                "name": "info",
+                "summary": "Static configuration snapshot \u2014 what backend is wired up."
+              }
+            ],
+            "summary": "Abstract base for all LLM inference backends."
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.client",
+        "title": "app.core.llm.client",
+        "subtitle": "backend/app/core/llm/client.py",
+        "summary": "Validation orchestrator \u2014 owns the prompt + verdict schema + diff engine.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "LLMError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the LLM call fails or returns unparseable output."
+          },
+          {
+            "name": "LLMClient",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "validate",
+                "summary": "Reason over pre/post migration diff and return a structured verdict."
+              }
+            ],
+            "summary": "Validation orchestrator."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.llm.base",
+          "app.core.llm.factory"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.factory",
+        "title": "app.core.llm.factory",
+        "subtitle": "backend/app/core/llm/factory.py",
+        "summary": "Factory \u2014 picks the configured backend based on settings.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "get_llm_backend",
+            "summary": "Return the configured backend, instantiating it on first call."
+          },
+          {
+            "name": "reset_backend_cache",
+            "summary": "Drop the cached backend so the next ``get_llm_backend`` re-reads"
+          }
+        ],
+        "depends_on": [
+          "app.core.config",
+          "app.core.llm.base",
+          "app.core.llm.kserve_backend",
+          "app.core.llm.ollama_backend",
+          "app.core.llm.vllm_backend"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.kserve_backend",
+        "title": "app.core.llm.kserve_backend",
+        "subtitle": "backend/app/core/llm/kserve_backend.py",
+        "summary": "KServe backend \u2014 RHOAI / OpenShift inference deployments.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "KServeBackend",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "chat",
+                "summary": ""
+              },
+              {
+                "name": "chat_stream",
+                "summary": ""
+              },
+              {
+                "name": "health_check",
+                "summary": ""
+              },
+              {
+                "name": "list_models",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.llm.base"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.ollama_backend",
+        "title": "app.core.llm.ollama_backend",
+        "subtitle": "backend/app/core/llm/ollama_backend.py",
+        "summary": "Ollama backend \u2014 default for standalone, air-gapped deployments.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "OllamaBackend",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "chat",
+                "summary": ""
+              },
+              {
+                "name": "chat_stream",
+                "summary": ""
+              },
+              {
+                "name": "health_check",
+                "summary": ""
+              },
+              {
+                "name": "list_models",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.llm.base"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.vllm_backend",
+        "title": "app.core.llm.vllm_backend",
+        "subtitle": "backend/app/core/llm/vllm_backend.py",
+        "summary": "vLLM backend \u2014 placeholder for v1.0.0.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "VLLMBackend",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "chat",
+                "summary": ""
+              },
+              {
+                "name": "chat_stream",
+                "summary": ""
+              },
+              {
+                "name": "health_check",
+                "summary": ""
+              },
+              {
+                "name": "list_models",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.llm.base"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.mapping_suggester",
+        "title": "app.core.mapping_suggester",
+        "subtitle": "backend/app/core/mapping_suggester.py",
+        "summary": "LLM-driven suggestion engine for resource mappings.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "SuggestionError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the LLM call fails or produces unparseable output."
+          }
+        ],
+        "functions": [
+          {
+            "name": "suggest_network_mappings",
+            "summary": "Ask the LLM for a network-mapping proposal."
+          },
+          {
+            "name": "suggest_storage_mappings",
+            "summary": "Ask the LLM for a storage-mapping proposal."
+          }
+        ],
+        "depends_on": [
+          "app.core.llm.base",
+          "app.core.llm.factory"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.migrations",
+        "title": "app.core.migrations",
+        "subtitle": "backend/app/core/migrations.py",
+        "summary": "Alembic migration orchestration for the FastAPI lifespan.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "MigrationError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when migrations fail to apply. Caller should crash the"
+          }
+        ],
+        "functions": [
+          {
+            "name": "schema_status",
+            "summary": "Snapshot of the database's migration state."
+          },
+          {
+            "name": "apply_migrations",
+            "summary": "Drive the full migration flow at startup."
+          }
+        ],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
         "id": "app.core.network_review",
         "title": "app.core.network_review",
         "subtitle": "backend/app/core/network_review.py",
@@ -1819,9 +2939,89 @@ const DATA = {
           }
         ],
         "depends_on": [
-          "app.core.config",
+          "app.core.llm.base",
+          "app.core.llm.factory",
           "app.models.vm"
         ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.ocp_discovery",
+        "title": "app.core.ocp_discovery",
+        "subtitle": "backend/app/core/ocp_discovery.py",
+        "summary": "OCP target cluster resource discovery.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "DiscoveryResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "storage_classes",
+              "network_attachments",
+              "namespaces",
+              "cluster_capacity",
+              "mtv_namespace",
+              "ocp_version",
+              "kubernetes_version"
+            ],
+            "methods": [],
+            "summary": "What ``discover_all`` returns. Each list is exactly the shape"
+          },
+          {
+            "name": "OCPDiscoveryError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the cluster is unreachable, rejects auth, or returns"
+          },
+          {
+            "name": "OCPDiscoveryClient",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "discover_storage_classes",
+                "summary": ""
+              },
+              {
+                "name": "discover_network_attachments",
+                "summary": ""
+              },
+              {
+                "name": "discover_namespaces",
+                "summary": ""
+              },
+              {
+                "name": "discover_capacity",
+                "summary": ""
+              },
+              {
+                "name": "discover_mtv_namespace",
+                "summary": "Find the namespace where MTV/Forklift is installed."
+              },
+              {
+                "name": "discover_versions",
+                "summary": "Return ``(ocp_version, kubernetes_version)``. The OCP version"
+              },
+              {
+                "name": "discover_all",
+                "summary": "Run every discovery call against one cluster connection."
+              }
+            ],
+            "summary": "HTTP-REST client for OCP discovery."
+          }
+        ],
+        "functions": [
+          {
+            "name": "storage_class_count",
+            "summary": "Helper used by the dashboard summary endpoint \u2014 returns 0 when"
+          }
+        ],
+        "depends_on": []
       },
       {
         "kind": "module",
@@ -1864,9 +3064,380 @@ const DATA = {
           {
             "name": "detect",
             "summary": "Build an ``OSProfile`` from the three commands the collector runs."
+          },
+          {
+            "name": "detect_windows",
+            "summary": "Build an ``OSProfile`` from ``Get-CimInstance Win32_OperatingSystem``."
           }
         ],
         "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.core.plan_generation",
+        "title": "app.core.plan_generation",
+        "subtitle": "backend/app/core/plan_generation.py",
+        "summary": "Async migration plan generation + revision tracking.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "PlanGenerationTask",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "task_id",
+              "status",
+              "current_step",
+              "progress_percent",
+              "started_at",
+              "completed_at",
+              "plan_id",
+              "error"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "PlanGenerationTaskStore",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "create",
+                "summary": ""
+              },
+              {
+                "name": "get",
+                "summary": ""
+              },
+              {
+                "name": "update",
+                "summary": ""
+              },
+              {
+                "name": "mark_completed",
+                "summary": ""
+              },
+              {
+                "name": "mark_failed",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "PlanRevisionError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when a per-wave action can't be applied \u2014 usually a"
+          }
+        ],
+        "functions": [
+          {
+            "name": "resolve_scope",
+            "summary": "Apply the wizard's scope filter and return the matching VMs."
+          },
+          {
+            "name": "assemble_vm_profiles",
+            "summary": "Build the lightweight VM payload the strategy planner sends to"
+          },
+          {
+            "name": "run_plan_generation",
+            "summary": "Body of the FastAPI BackgroundTask the generate endpoint spawns."
+          },
+          {
+            "name": "apply_move_vm",
+            "summary": "Create a new plan revision with one VM moved between waves."
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.core.baseline",
+          "app.core.strategy_planner",
+          "app.models.plan",
+          "app.models.target",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.rvtools_import",
+        "title": "app.core.rvtools_import",
+        "subtitle": "backend/app/core/rvtools_import.py",
+        "summary": "RVTools delta-import core.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "RVToolsImportSummary",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "created",
+              "updated",
+              "marked_missing",
+              "unchanged",
+              "errors"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "RVToolsImportTask",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "task_id",
+              "vcenter_id",
+              "status",
+              "progress_percent",
+              "started_at",
+              "completed_at",
+              "result",
+              "error"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "RVToolsImportTaskStore",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "create",
+                "summary": ""
+              },
+              {
+                "name": "get",
+                "summary": ""
+              },
+              {
+                "name": "mark_completed",
+                "summary": ""
+              },
+              {
+                "name": "mark_failed",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "run_rvtools_import",
+            "summary": "Apply an RVTools delta against a vCenter scope."
+          },
+          {
+            "name": "run_rvtools_import_async",
+            "summary": "BackgroundTask body. Opens its own session because the request"
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.storage_review",
+        "title": "app.core.storage_review",
+        "subtitle": "backend/app/core/storage_review.py",
+        "summary": "Storage Design Review \u2014 gap analysis between source VMware datastore",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "StorageReviewError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the LLM call fails or returns unparseable output."
+          },
+          {
+            "name": "StorageReviewer",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "analyze",
+                "summary": ""
+              }
+            ],
+            "summary": "Wraps the LLM call. Same DI pattern as NetworkReviewer / LLMClient"
+          }
+        ],
+        "functions": [
+          {
+            "name": "build_storage_source_summary",
+            "summary": "Aggregate vSphere datastores + per-datastore VM membership."
+          },
+          {
+            "name": "normalize_findings",
+            "summary": "Public re-export \u2014 same shape as network_review.normalize_findings."
+          }
+        ],
+        "depends_on": [
+          "app.core.llm.base",
+          "app.core.llm.factory",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.strategy_planner",
+        "title": "app.core.strategy_planner",
+        "subtitle": "backend/app/core/strategy_planner.py",
+        "summary": "Strategy-driven migration planner.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "StrategyPlannerError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when the strategy-driven planner fails to call the LLM,"
+          },
+          {
+            "name": "StrategyPlanner",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "plan",
+                "summary": "Generate a plan for the given strategy + VM inventory."
+              }
+            ],
+            "summary": "Strategy-driven plan generator."
+          }
+        ],
+        "functions": [
+          {
+            "name": "build_user_prompt",
+            "summary": "Assemble the user-message body for one strategy-driven plan call."
+          }
+        ],
+        "depends_on": [
+          "app.core.llm.base",
+          "app.core.llm.factory",
+          "app.models.plan"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.validation",
+        "title": "app.core.validation",
+        "subtitle": "backend/app/core/validation.py",
+        "summary": "On-demand post-migration validation.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ValidationTask",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "task_id",
+              "vm_id",
+              "status",
+              "current_step",
+              "progress_percent",
+              "started_at",
+              "completed_at",
+              "validation_id",
+              "verdict",
+              "error"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "ValidationTaskStore",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "create",
+                "summary": ""
+              },
+              {
+                "name": "get",
+                "summary": ""
+              },
+              {
+                "name": "update_step",
+                "summary": ""
+              },
+              {
+                "name": "mark_completed",
+                "summary": ""
+              },
+              {
+                "name": "mark_failed",
+                "summary": ""
+              }
+            ],
+            "summary": "Thread-safe in-memory registry of running validation tasks."
+          },
+          {
+            "name": "ValidationError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised inside the workflow when collection, reasoning, or persistence fails."
+          }
+        ],
+        "functions": [
+          {
+            "name": "run_validation",
+            "summary": "Drive one VM through the full validation pipeline."
+          },
+          {
+            "name": "run_validation_task",
+            "summary": "Body of the FastAPI BackgroundTask spawned by the manual-validate endpoint."
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.core.baseline",
+          "app.core.capture",
+          "app.core.config",
+          "app.core.llm",
+          "app.core.ssh",
+          "app.models.validation",
+          "app.models.vm"
+        ]
       },
       {
         "kind": "module",
@@ -1891,9 +3462,15 @@ const DATA = {
           "app.api.reports",
           "app.api.settings",
           "app.api.snapshots",
+          "app.api.storage_reviews",
+          "app.api.targets",
           "app.api.templates",
+          "app.api.validations",
+          "app.api.vcenters",
           "app.api.vms",
           "app.core.db",
+          "app.core.fips",
+          "app.core.migrations",
           "app.core.scheduler",
           "app.middleware.audit",
           "app.models"
@@ -1916,6 +3493,78 @@ const DATA = {
           "app.models.settings",
           "app.models.validation",
           "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.grouping",
+        "title": "app.models.grouping",
+        "subtitle": "backend/app/models/grouping.py",
+        "summary": "Hierarchical migration planning data model.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "GroupKind",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Logical grouping axes Level 1 categorization emits."
+          },
+          {
+            "name": "VMGroup",
+            "kind": "model",
+            "table": "vm_groups",
+            "fields": [
+              "id",
+              "source_vcenter_id",
+              "kind",
+              "name",
+              "description",
+              "created_by_run_id",
+              "created_at",
+              "updated_at",
+              "members"
+            ],
+            "methods": [],
+            "summary": "Logical group of VMs identified by Level 1 categorization."
+          },
+          {
+            "name": "VMGroupMember",
+            "kind": "model",
+            "table": "vm_group_members",
+            "fields": [
+              "id",
+              "group_id",
+              "vm_id",
+              "confidence",
+              "rationale",
+              "group"
+            ],
+            "methods": [],
+            "summary": "Many-to-many: which VMs belong to which group."
+          },
+          {
+            "name": "MigrationProgram",
+            "kind": "model",
+            "table": "migration_programs",
+            "fields": [
+              "id",
+              "name",
+              "description",
+              "source_vcenter_ids",
+              "strategy",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": "A migration program is the top-level container an operator runs."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
         ]
       },
       {
@@ -2053,6 +3702,224 @@ const DATA = {
             ],
             "methods": [],
             "summary": "Singleton settings row \u2014 always id=1."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.storage_review",
+        "title": "app.models.storage_review",
+        "subtitle": "backend/app/models/storage_review.py",
+        "summary": "Storage design review tables.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "StorageReviewStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "StorageFindingCategory",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Storage-specific issue categories."
+          },
+          {
+            "name": "StorageDesignReview",
+            "kind": "model",
+            "table": "storage_design_reviews",
+            "fields": [
+              "id",
+              "name",
+              "status",
+              "customer_notes",
+              "proposed_yaml",
+              "analysis_results",
+              "last_analyzed_at",
+              "last_error",
+              "created_at",
+              "updated_at",
+              "findings"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "StorageFinding",
+            "kind": "model",
+            "table": "storage_findings",
+            "fields": [
+              "id",
+              "review_id",
+              "category",
+              "severity",
+              "confidence",
+              "triage",
+              "title",
+              "description",
+              "source_evidence",
+              "proposed_evidence",
+              "recommendation",
+              "created_at",
+              "review"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db",
+          "app.models.network_review"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.target",
+        "title": "app.models.target",
+        "subtitle": "backend/app/models/target.py",
+        "summary": "OCP target cluster registry + resource mapping.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "OCPAuthType",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "How VirtValidate authenticates to the target cluster."
+          },
+          {
+            "name": "OCPTargetStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OCPTarget",
+            "kind": "model",
+            "table": "ocp_targets",
+            "fields": [
+              "id",
+              "name",
+              "api_endpoint",
+              "region",
+              "site",
+              "classification_level",
+              "status",
+              "auth_type",
+              "auth_credential_secret_ref",
+              "verify_ssl",
+              "storage_classes",
+              "network_attachments",
+              "namespaces",
+              "cluster_capacity",
+              "mtv_namespace",
+              "ocp_version",
+              "kubernetes_version",
+              "last_synced_at",
+              "last_error",
+              "notes",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": "A registered OpenShift Virtualization target cluster."
+          },
+          {
+            "name": "ResourceMappingStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Lifecycle of a mapping. ``incomplete`` means at least one"
+          },
+          {
+            "name": "ResourceMapping",
+            "kind": "model",
+            "table": "resource_mappings",
+            "fields": [
+              "id",
+              "name",
+              "vcenter_source_id",
+              "ocp_target_id",
+              "status",
+              "network_mappings",
+              "storage_mappings",
+              "namespace_mappings",
+              "is_active",
+              "last_used_at",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": "Concrete network/storage/namespace mapping between a vCenter"
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db",
+          "app.models.vcenter"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.vcenter",
+        "title": "app.models.vcenter",
+        "subtitle": "backend/app/models/vcenter.py",
+        "summary": "vCenter source registry \u2014 separate model from VM so a single",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ClassificationLevel",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "DoD-style data classification. Defaults to ``unclassified`` so"
+          },
+          {
+            "name": "VCenterStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VCenterSource",
+            "kind": "model",
+            "table": "vcenter_sources",
+            "fields": [
+              "id",
+              "name",
+              "hostname",
+              "region",
+              "site",
+              "classification_level",
+              "status",
+              "default_target_namespace",
+              "default_target_storage_class",
+              "notes",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": "Logical handle for a vCenter that VMs belong to."
           }
         ],
         "functions": [],
@@ -2257,11 +4124,665 @@ const DATA = {
             ],
             "methods": [],
             "summary": ""
+          },
+          {
+            "name": "LLMBackendConfig",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "backend",
+              "model",
+              "endpoint"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "LLMBackendHealth",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "status",
+              "backend",
+              "model",
+              "endpoint",
+              "latency_ms",
+              "details"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "LLMBackendInfo",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "config",
+              "health"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "FIPSOperationStatus",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "configured",
+              "fips_approved",
+              "enforced"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "FIPSStatus",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "configured",
+              "detected",
+              "effective",
+              "mismatch_warning",
+              "operations"
+            ],
+            "methods": [],
+            "summary": ""
           }
         ],
         "functions": [],
         "depends_on": [
           "app.models.settings"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.storage_review",
+        "title": "app.schemas.storage_review",
+        "subtitle": "backend/app/schemas/storage_review.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "StorageReviewCreate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "customer_notes",
+              "proposed_yaml"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "StorageReviewNotesUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "customer_notes"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "StorageReviewYamlUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "proposed_yaml"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "StorageFindingTriageUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "triage"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "StorageFindingRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "category",
+              "severity",
+              "confidence",
+              "triage",
+              "title",
+              "description",
+              "source_evidence",
+              "proposed_evidence",
+              "recommendation",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "StorageReviewSummary",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "name",
+              "status",
+              "finding_count",
+              "severity_counts",
+              "created_at",
+              "updated_at",
+              "last_analyzed_at"
+            ],
+            "methods": [],
+            "summary": "Lightweight row for the index page."
+          },
+          {
+            "name": "StorageReviewRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "name",
+              "status",
+              "customer_notes",
+              "proposed_yaml",
+              "analysis_results",
+              "last_analyzed_at",
+              "last_error",
+              "created_at",
+              "updated_at",
+              "findings"
+            ],
+            "methods": [],
+            "summary": "Full review with embedded findings \u2014 used by the detail view."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.models.network_review",
+          "app.models.storage_review"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.target",
+        "title": "app.schemas.target",
+        "subtitle": "backend/app/schemas/target.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "StorageClassDiscovered",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "provisioner",
+              "is_default",
+              "access_modes",
+              "reclaim_policy",
+              "volume_binding_mode"
+            ],
+            "methods": [],
+            "summary": "One row from the discovered StorageClass list. Field set is the"
+          },
+          {
+            "name": "NetworkAttachmentDiscovered",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "namespace",
+              "type",
+              "config_summary"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "NamespaceDiscovered",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "labels"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ClusterCapacity",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "node_count",
+              "total_cpu_millicores",
+              "total_memory_bytes",
+              "existing_vm_count"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OCPTargetBase",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "api_endpoint",
+              "region",
+              "site",
+              "classification_level",
+              "auth_type",
+              "auth_credential_secret_ref",
+              "verify_ssl",
+              "notes"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OCPTargetCreate",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OCPTargetUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "api_endpoint",
+              "region",
+              "site",
+              "classification_level",
+              "auth_type",
+              "auth_credential_secret_ref",
+              "verify_ssl",
+              "notes"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OCPTargetRead",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "id",
+              "status",
+              "storage_classes",
+              "network_attachments",
+              "namespaces",
+              "cluster_capacity",
+              "mtv_namespace",
+              "ocp_version",
+              "kubernetes_version",
+              "last_synced_at",
+              "last_error",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OCPDiscoveryRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "bearer_token",
+              "manual_storage_classes",
+              "manual_network_attachments",
+              "manual_namespaces"
+            ],
+            "methods": [],
+            "summary": "Optional: paste a pre-discovered resource bundle instead of"
+          },
+          {
+            "name": "OCPDiscoveryResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "target_id",
+              "status",
+              "last_synced_at",
+              "storage_class_count",
+              "network_attachment_count",
+              "namespace_count",
+              "last_error"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "NetworkMappingItem",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "source_network",
+              "target_network_name",
+              "target_network_type",
+              "target_namespace",
+              "confidence",
+              "rationale"
+            ],
+            "methods": [],
+            "summary": "One source network \u2192 target network row."
+          },
+          {
+            "name": "StorageMappingItem",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "source_datastore",
+              "target_storage_class",
+              "access_mode",
+              "confidence",
+              "rationale"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "NamespaceMappingItem",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "criteria",
+              "criteria_value",
+              "target_namespace"
+            ],
+            "methods": [],
+            "summary": "How VMs land into target namespaces. ``criteria`` is one of"
+          },
+          {
+            "name": "ResourceMappingBase",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "vcenter_source_id",
+              "ocp_target_id",
+              "network_mappings",
+              "storage_mappings",
+              "namespace_mappings",
+              "is_active"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ResourceMappingCreate",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ResourceMappingUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "network_mappings",
+              "storage_mappings",
+              "namespace_mappings",
+              "is_active"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ResourceMappingRead",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "id",
+              "status",
+              "last_used_at",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "MappingSuggestionResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "suggestions",
+              "rationale_summary"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PreflightCheckResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "ok",
+              "target_status",
+              "unmapped_networks",
+              "unmapped_datastores",
+              "missing_storage_classes_on_target",
+              "missing_networks_on_target",
+              "missing_namespaces_on_target",
+              "warnings"
+            ],
+            "methods": [],
+            "summary": "Returned by POST /api/mappings/{id}/preflight. Reports every"
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.models.target",
+          "app.models.vcenter"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.vcenter",
+        "title": "app.schemas.vcenter",
+        "subtitle": "backend/app/schemas/vcenter.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "VCenterSourceBase",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "hostname",
+              "region",
+              "site",
+              "classification_level",
+              "status",
+              "default_target_namespace",
+              "default_target_storage_class",
+              "notes"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VCenterSourceCreate",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VCenterSourceUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "hostname",
+              "region",
+              "site",
+              "classification_level",
+              "status",
+              "default_target_namespace",
+              "default_target_storage_class",
+              "notes"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VCenterSourceRead",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "id",
+              "created_at",
+              "updated_at",
+              "vm_count"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "RVToolsVMRow",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "source_hostname",
+              "ip_address",
+              "os_family",
+              "role",
+              "environment",
+              "owner",
+              "application_hint",
+              "vsphere_networks",
+              "vsphere_datastores"
+            ],
+            "methods": [],
+            "summary": "The minimal shape the delta-detector reads."
+          },
+          {
+            "name": "RVToolsDeltaRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vms"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "RVToolsDeltaItem",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "diff"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "RVToolsDeltaResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "new",
+              "updated",
+              "removed",
+              "unchanged",
+              "summary"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "RVToolsImportResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "created",
+              "updated",
+              "marked_missing",
+              "unchanged",
+              "errors"
+            ],
+            "methods": [],
+            "summary": "Sync-mode import result."
+          },
+          {
+            "name": "RVToolsImportTaskRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "task_id",
+              "status",
+              "progress_percent",
+              "started_at",
+              "completed_at",
+              "result",
+              "error"
+            ],
+            "methods": [],
+            "summary": "Async-mode handle for large imports."
+          },
+          {
+            "name": "CategorizationGroupRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "kind",
+              "name",
+              "description",
+              "vm_count"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "CategorizationTaskRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "task_id",
+              "source_vcenter_id",
+              "status",
+              "current_step",
+              "progress_percent",
+              "batches_total",
+              "batches_complete",
+              "started_at",
+              "completed_at",
+              "groups_created",
+              "error"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.models.vcenter"
         ]
       }
     ],
@@ -2392,6 +4913,145 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/components/OCPTargets.jsx",
+        "title": "OCPTargets.jsx",
+        "subtitle": "frontend/src/components/OCPTargets.jsx",
+        "summary": "OCP target cluster registry. Operators register the cluster they're",
+        "category": "frontend",
+        "api_calls": [
+          "/api/sources/targets",
+          "/api/sources/targets/{id}",
+          "/api/sources/targets/{id}/discover"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "OCPTargets",
+            "kind": "component"
+          },
+          {
+            "name": "Row",
+            "kind": "component"
+          },
+          {
+            "name": "CreateModal",
+            "kind": "component"
+          },
+          {
+            "name": "DiscoverModal",
+            "kind": "component"
+          },
+          {
+            "name": "Empty",
+            "kind": "component"
+          },
+          {
+            "name": "Pill",
+            "kind": "component"
+          },
+          {
+            "name": "Field",
+            "kind": "component"
+          },
+          {
+            "name": "ErrorBlock",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/PlanView.jsx",
+        "title": "PlanView.jsx",
+        "subtitle": "frontend/src/components/PlanView.jsx",
+        "summary": "Strategy-driven plan detail page. Surfaces the LLM's rationale +",
+        "category": "frontend",
+        "api_calls": [
+          "/api/plans/{id}",
+          "/api/plans/{id}/waves/{id}/move-vm",
+          "/api/vms?limit=500"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "PlanView",
+            "kind": "component"
+          },
+          {
+            "name": "WaveCard",
+            "kind": "component"
+          },
+          {
+            "name": "MoveVMPicker",
+            "kind": "component"
+          },
+          {
+            "name": "Section",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/PlanWizard.jsx",
+        "title": "PlanWizard.jsx",
+        "subtitle": "frontend/src/components/PlanWizard.jsx",
+        "summary": "Strategy-driven migration planning wizard. 8 conceptual steps",
+        "category": "frontend",
+        "api_calls": [
+          "/api/mappings",
+          "/api/plans/generate",
+          "/api/plans/generate/{id}/status",
+          "/api/sources/vcenters",
+          "/api/vms?{id}"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "PlanWizard",
+            "kind": "component"
+          },
+          {
+            "name": "ProgressBar",
+            "kind": "component"
+          },
+          {
+            "name": "estimateWaveCount",
+            "kind": "helper"
+          },
+          {
+            "name": "Radio",
+            "kind": "component"
+          },
+          {
+            "name": "Step",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/components/ReportView.jsx",
         "title": "ReportView.jsx",
         "subtitle": "frontend/src/components/ReportView.jsx",
@@ -2459,15 +5119,90 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/components/ResourceMappings.jsx",
+        "title": "ResourceMappings.jsx",
+        "subtitle": "frontend/src/components/ResourceMappings.jsx",
+        "summary": "Resource-mapping editor. Operators map source vSphere networks /",
+        "category": "frontend",
+        "api_calls": [
+          "/api/mappings",
+          "/api/mappings/{id}",
+          "/api/mappings/{id}/preflight",
+          "/api/mappings/{id}/suggest-network",
+          "/api/mappings/{id}/suggest-storage",
+          "/api/sources/targets",
+          "/api/sources/targets/{id}",
+          "/api/sources/vcenters",
+          "/api/vms?source_vcenter_id={id}&limit=10000"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "ResourceMappings",
+            "kind": "component"
+          },
+          {
+            "name": "CreateModal",
+            "kind": "component"
+          },
+          {
+            "name": "ResourceMappingDetail",
+            "kind": "component"
+          },
+          {
+            "name": "PreflightPanel",
+            "kind": "component"
+          },
+          {
+            "name": "Section",
+            "kind": "component"
+          },
+          {
+            "name": "RowGrid",
+            "kind": "component"
+          },
+          {
+            "name": "ConfidencePill",
+            "kind": "component"
+          },
+          {
+            "name": "Empty",
+            "kind": "component"
+          },
+          {
+            "name": "Pill",
+            "kind": "component"
+          },
+          {
+            "name": "Field",
+            "kind": "component"
+          },
+          {
+            "name": "ErrorBlock",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/components/Settings.jsx",
         "title": "Settings.jsx",
         "subtitle": "frontend/src/components/Settings.jsx",
         "summary": "",
         "category": "frontend",
         "api_calls": [
-          "/api/health/ollama",
+          "/api/health/llm",
           "/api/health/postgres",
           "/api/settings",
+          "/api/system/fips-status",
+          "/api/system/llm-info",
           "/api/system/ollama-models",
           "/api/system/ssh-public-key"
         ],
@@ -2486,6 +5221,14 @@ const DATA = {
           },
           {
             "name": "ConnectionStatus",
+            "kind": "component"
+          },
+          {
+            "name": "FIPSCompliancePanel",
+            "kind": "component"
+          },
+          {
+            "name": "LLMBackendPanel",
             "kind": "component"
           },
           {
@@ -2523,6 +5266,182 @@ const DATA = {
           {
             "name": "Row",
             "kind": "component"
+          },
+          {
+            "name": "Pill",
+            "kind": "component"
+          },
+          {
+            "name": "KV",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/StorageReviewDetail.jsx",
+        "title": "StorageReviewDetail.jsx",
+        "subtitle": "frontend/src/components/StorageReviewDetail.jsx",
+        "summary": "Per-review detail page. Renders the full report view + lets operators",
+        "category": "frontend",
+        "api_calls": [
+          "/api/storage-reviews/{id}",
+          "/api/storage-reviews/{id}/analyze",
+          "/api/storage-reviews/{id}/findings/{id}"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "StorageReviewDetail",
+            "kind": "component"
+          },
+          {
+            "name": "FindingCard",
+            "kind": "component"
+          },
+          {
+            "name": "ConfidenceTag",
+            "kind": "component"
+          },
+          {
+            "name": "EvidenceBlock",
+            "kind": "component"
+          },
+          {
+            "name": "SourceProposedBlocks",
+            "kind": "component"
+          },
+          {
+            "name": "ConfidenceLimitations",
+            "kind": "component"
+          },
+          {
+            "name": "StatusPill",
+            "kind": "component"
+          },
+          {
+            "name": "Caveats",
+            "kind": "component"
+          },
+          {
+            "name": "H2",
+            "kind": "component"
+          },
+          {
+            "name": "Err",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          },
+          {
+            "name": "Styles",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/StorageReviewNew.jsx",
+        "title": "StorageReviewNew.jsx",
+        "subtitle": "frontend/src/components/StorageReviewNew.jsx",
+        "summary": "New Storage Design Review wizard. Sister page to NetworkReviewNew \u2014",
+        "category": "frontend",
+        "api_calls": [
+          "/api/storage-reviews",
+          "/api/storage-reviews/{id}/analyze"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "StorageReviewNew",
+            "kind": "component"
+          },
+          {
+            "name": "FileUpload",
+            "kind": "component"
+          },
+          {
+            "name": "Section",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/VCenterSources.jsx",
+        "title": "VCenterSources.jsx",
+        "subtitle": "frontend/src/components/VCenterSources.jsx",
+        "summary": "Scale-aware vCenter source registry. List + create + edit + delete.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/sources/vcenters",
+          "/api/sources/vcenters/{id}",
+          "/api/sources/vcenters/{id}/categorize",
+          "/api/sources/vcenters/{id}/categorize/{id}",
+          "/api/sources/vcenters/{id}/rvtools/import",
+          "/api/sources/vcenters/{id}/rvtools/import/{id}",
+          "/api/sources/vcenters/{id}/rvtools/preview"
+        ],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          },
+          {
+            "name": "VCenterSources",
+            "kind": "component"
+          },
+          {
+            "name": "Row",
+            "kind": "component"
+          },
+          {
+            "name": "CreateModal",
+            "kind": "component"
+          },
+          {
+            "name": "UploadRVToolsModal",
+            "kind": "component"
+          },
+          {
+            "name": "DeltaSummaryGrid",
+            "kind": "component"
+          },
+          {
+            "name": "DoneSummary",
+            "kind": "component"
+          },
+          {
+            "name": "Empty",
+            "kind": "component"
+          },
+          {
+            "name": "Pill",
+            "kind": "component"
+          },
+          {
+            "name": "Field",
+            "kind": "component"
+          },
+          {
+            "name": "ErrorBlock",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
           }
         ]
       },
@@ -2541,6 +5460,8 @@ const DATA = {
           "/api/vms/{id}/capture",
           "/api/vms/{id}/capture/{id}",
           "/api/vms/{id}/snapshots",
+          "/api/vms/{id}/validate",
+          "/api/vms/{id}/validate/{id}",
           "/api/vms/{id}/validation/latest"
         ],
         "members": [
@@ -2553,7 +5474,7 @@ const DATA = {
             "kind": "helper"
           },
           {
-            "name": "VMDetail",
+            "name": "VMDetailBody",
             "kind": "component"
           },
           {
@@ -2585,7 +5506,23 @@ const DATA = {
             "kind": "component"
           },
           {
+            "name": "ValidationProgress",
+            "kind": "component"
+          },
+          {
+            "name": "Finding",
+            "kind": "component"
+          },
+          {
+            "name": "Evidence",
+            "kind": "component"
+          },
+          {
             "name": "OSBadge",
+            "kind": "component"
+          },
+          {
+            "name": "VMDetail",
             "kind": "component"
           }
         ]
@@ -2604,13 +5541,17 @@ const DATA = {
           "/api/plans/{id}/waves/{id}/mtv-yaml",
           "/api/plans?limit=1",
           "/api/snapshots/capture-all",
+          "/api/storage-reviews",
           "/api/templates/csv",
+          "/api/validations/run-all",
           "/api/vms",
           "/api/vms/bulk",
           "/api/vms/{id}",
           "/api/vms/{id}/baseline/profile",
           "/api/vms/{id}/capture",
           "/api/vms/{id}/capture/{id}",
+          "/api/vms/{id}/validate",
+          "/api/vms/{id}/validate/{id}",
           "/api/vms/{id}/validation/latest"
         ],
         "members": [
@@ -2627,6 +5568,10 @@ const DATA = {
             "kind": "helper"
           },
           {
+            "name": "FindingCard",
+            "kind": "component"
+          },
+          {
             "name": "OSBadge",
             "kind": "component"
           },
@@ -2637,22 +5582,6 @@ const DATA = {
           {
             "name": "Modal",
             "kind": "component"
-          },
-          {
-            "name": "_shortenOSFamily",
-            "kind": "helper"
-          },
-          {
-            "name": "rowToPayload",
-            "kind": "helper"
-          },
-          {
-            "name": "parseCSV",
-            "kind": "helper"
-          },
-          {
-            "name": "parseXLSX",
-            "kind": "helper"
           },
           {
             "name": "CSVTemplateDownload",
@@ -2757,6 +5686,60 @@ const DATA = {
           {
             "name": "TabButton",
             "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/utils/apiError.js",
+        "title": "apiError.js",
+        "subtitle": "frontend/src/utils/apiError.js",
+        "summary": "Shared response-error formatter. Used by every component's fetchJSON",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "formatApiErrorDetail",
+            "kind": "helper"
+          },
+          {
+            "name": "throwForResponse",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/utils/parseRVTools.js",
+        "title": "parseRVTools.js",
+        "subtitle": "frontend/src/utils/parseRVTools.js",
+        "summary": "Shared RVTools / CSV parser. Two surfaces consume this:",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "shortenOSFamily",
+            "kind": "helper"
+          },
+          {
+            "name": "rowToPayload",
+            "kind": "helper"
+          },
+          {
+            "name": "parseCSV",
+            "kind": "helper"
+          },
+          {
+            "name": "_loadXLSX",
+            "kind": "helper"
+          },
+          {
+            "name": "parseXLSXRows",
+            "kind": "helper"
+          },
+          {
+            "name": "parseRVToolsXLSX",
+            "kind": "helper"
           }
         ]
       }

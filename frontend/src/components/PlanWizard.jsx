@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate } from "react-router-dom";
+import { throwForResponse } from "../utils/apiError";
 
 // Strategy-driven migration planning wizard. 8 conceptual steps
 // flattened into a scrollable single-page form so operators don't
@@ -73,11 +74,7 @@ async function fetchJSON(url, opts = {}) {
     init.body = JSON.stringify(init.body);
   }
   const r = await fetch(url, init);
-  if (!r.ok) {
-    let detail = "";
-    try { detail = (await r.json())?.detail ?? ""; } catch { /* */ }
-    throw new Error(detail ? `HTTP ${r.status}: ${detail}` : `HTTP ${r.status}`);
-  }
+  if (!r.ok) await throwForResponse(r);
   return r.json();
 }
 
@@ -99,17 +96,22 @@ export default function PlanWizard() {
   const [freeform, setFreeform] = useState("");
 
   const [vcenters, setVcenters] = useState([]);
+  const [mappings, setMappings] = useState([]);
+  const [mappingId, setMappingId] = useState("");
   const [vmCount, setVmCount] = useState(null);
   const [vmCountLoading, setVmCountLoading] = useState(false);
 
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(null);
 
-  // Load vCenters once for the scope dropdown.
+  // Load vCenters + resource mappings once for the scope/mapping dropdowns.
   useEffect(() => {
     fetchJSON("/api/sources/vcenters")
       .then(setVcenters)
       .catch(() => setVcenters([]));
+    fetchJSON("/api/mappings")
+      .then(setMappings)
+      .catch(() => setMappings([]));
   }, []);
 
   // Estimate matched VM count whenever scope changes. We hit the
@@ -168,9 +170,15 @@ export default function PlanWizard() {
         application_atomicity: atomicity,
         freeform_constraints: freeform,
       };
+      const body = {
+        name: name.trim(),
+        inline_strategy: inline,
+        scope: buildScope(),
+      };
+      if (mappingId) body.mapping_id = parseInt(mappingId, 10);
       const spawn = await fetchJSON("/api/plans/generate", {
         method: "POST",
-        body: { name: name.trim(), inline_strategy: inline, scope: buildScope() },
+        body,
       });
       toast(`Generating plan… (estimated 3–5 minutes)`, { ...TOAST_OPTS, icon: "🤖" });
 
@@ -267,6 +275,27 @@ export default function PlanWizard() {
                 No VMs match this scope. Adjust the filter before continuing.
               </div>
             )}
+
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px dashed #1a1a2e" }}>
+              <label style={{ display: "block", fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em", fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
+                Resource mapping (optional but recommended)
+              </label>
+              <select style={inputStyle} value={mappingId}
+                onChange={(e) => setMappingId(e.target.value)}>
+                <option value="">— No mapping (MTV YAML uses placeholders) —</option>
+                {mappings.map((m) => (
+                  <option key={m.id} value={m.id}
+                    disabled={scopeMode === "vcenter" && vcenterId &&
+                      String(m.vcenter_source_id) !== String(vcenterId)}>
+                    {m.name} · {m.status} {m.is_active ? "· active" : ""}
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 12, color: "#888899", marginTop: 4 }}>
+                Mapping ties source vSphere networks/datastores to real cluster
+                resources. Without it, MTV YAML export uses placeholder names.
+              </div>
+            </div>
           </Step>
 
           {/* Step 3: Primary grouping */}

@@ -29,7 +29,7 @@ Enrolling, listing, editing, and deleting VMs.
 <details><summary><strong><code>app.api.vms</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/vms.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.models.validation`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
+Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.validation`, `app.models.validation`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
 
 **Routes**
 
@@ -47,7 +47,9 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core
 | `POST` | `/api/vms/{vm_id}/snapshots` | `create_snapshot(vm_id, payload, db)` | — |
 | `GET` | `/api/vms/{vm_id}/snapshots` | `list_snapshots(vm_id, db)` | — |
 | `GET` | `/api/vms/{vm_id}/snapshots/{snapshot_id}` | `get_snapshot(vm_id, snapshot_id, db)` | — |
-| `GET` | `/api/vms/{vm_id}/validation/latest` | `latest_validation(vm_id, db)` | — |
+| `GET` | `/api/vms/{vm_id}/validation/latest` | `latest_validation(vm_id, db)` | Return the latest validation result for a VM. |
+| `POST` | `/api/vms/{vm_id}/validate` | `trigger_validation(request, vm_id, background_tasks, db)` | Spawn an immediate post-migration validation in the background. |
+| `GET` | `/api/vms/{vm_id}/validate/{task_id}` | `get_validation_status(vm_id, task_id)` | — |
 | `GET` | `/api/vms/{vm_id}/baseline/history` | `baseline_history(vm_id, db)` | — |
 | `GET` | `/api/vms/{vm_id}/baseline/profile` | `baseline_profile(vm_id, db)` | — |
 
@@ -62,7 +64,7 @@ Depends on: `app.core.db`
 
 - **`VMStatus`** (Class)
 - **`VM`** (SQLAlchemy model · table `vms`)
-  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `created_at`, `updated_at`, `snapshots`, `validations`
+  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
 - **`BaselineSnapshot`** (SQLAlchemy model · table `baseline_snapshots`)
   - Fields: `id`, `vm_id`, `snapshot_number`, `ssh_user`, `raw_data`, `checksum`, `collected_at`, `vm`
 
@@ -76,10 +78,10 @@ Depends on: `app.models.vm`
 **Classes**
 
 - **`VMBase`** (Pydantic schema)
-  - Fields: `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`
+  - Fields: `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`
 - **`VMCreate`** (Class)
 - **`VMUpdate`** (Pydantic schema)
-  - Fields: `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`
+  - Fields: `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`
 - **`VMRead`** (Class)
   - Fields: `id`, `status`, `created_at`, `updated_at`
 - **`BulkVMCreate`** (Pydantic schema)
@@ -187,7 +189,7 @@ Depends on: `app.core`, `app.core.capture`, `app.core.config`, `app.core.ssh`, `
 <details><summary><strong><code>app.core.ssh</code></strong> — <em>External integration</em> · SSH Collection Engine.</summary>
 
 Path: `backend/app/core/ssh.py`  
-Depends on: `app.core.commands`, `app.core.os_profile`
+Depends on: `app.core.commands`, `app.core.fips`, `app.core.os_profile`
 
 **Classes**
 
@@ -200,6 +202,10 @@ Depends on: `app.core.commands`, `app.core.os_profile`
 - **`SSHCollector`** (Class)
   - Methods:
     - `collect(self, host, username)` — SSH into a VM and collect full system state as structured JSON.
+
+**Functions**
+
+- `load_private_key(path)` — Load a private key from disk, auto-detecting its type.
 
 </details>
 
@@ -216,7 +222,7 @@ LLM-driven wave planning + MTV/Forklift YAML generation.
 <details><summary><strong><code>app.api.plans</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/plans.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.db`, `app.core.mtv`, `app.core.planner`, `app.core.reporter`, `app.models.plan`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
+Depends on: `app.core.audit`, `app.core.baseline`, `app.core.db`, `app.core.mtv`, `app.core.plan_generation`, `app.core.planner`, `app.core.reporter`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
 
 **Routes**
 
@@ -228,6 +234,14 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.db`, `app.core.mtv`
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/report` | `wave_report(request, plan_id, wave_number, format, db)` | — |
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/report/pdf` | `wave_report_pdf(request, plan_id, wave_number, db)` | Dedicated PDF endpoint — always returns Content-Type: application/pdf. |
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/mtv-yaml` | `wave_mtv_yaml(request, plan_id, wave_number, db)` | Render the wave as a multi-doc MTV/Forklift YAML for ``oc apply -f``. |
+| `GET` | `/api/planning-strategies` | `list_strategies(db)` | — |
+| `POST` | `/api/planning-strategies` | `create_strategy(request, payload, db)` | — |
+| `GET` | `/api/planning-strategies/{strategy_id}` | `get_strategy(strategy_id, db)` | — |
+| `PATCH` | `/api/planning-strategies/{strategy_id}` | `update_strategy(request, strategy_id, payload, db)` | — |
+| `DELETE` | `/api/planning-strategies/{strategy_id}` | `delete_strategy(request, strategy_id, db)` | — |
+| `POST` | `/api/plans/generate` | `trigger_plan_generation(request, payload, background_tasks, db)` | Spawn strategy-driven plan generation as a BackgroundTask. |
+| `GET` | `/api/plans/generate/{task_id}/status` | `get_plan_generation_status(task_id)` | — |
+| `POST` | `/api/plans/{plan_id}/waves/{wave_number}/move-vm` | `move_vm_between_waves(request, plan_id, wave_number, payload, db)` | Move one VM into a different wave, creating a new plan revision. |
 
 </details>
 
@@ -240,6 +254,13 @@ Depends on: `app.core.config`
 
 - **`MTVGenerationError`** (Class)
   - Raised when the wave is missing data required to produce a valid plan.
+- **`MappingResolver`** (Class)
+  - Resolves source vSphere resources to target OCP names via a
+  - Fields: `network_mappings`, `storage_mappings`, `namespace_mappings`, `default_target_namespace`
+  - Methods:
+    - `resolve_network(self, source_network)`
+    - `resolve_storage(self, source_datastore)`
+    - `resolve_namespace(self, vm)` — Walk namespace_mappings in order; first matching criteria wins.
 - **`WaveContext`** (Class)
   - Inputs the YAML generator needs in addition to the per-VM rows.
   - Fields: `plan_id`, `wave_number`, `rationale`, `namespace`, `source_provider`, `destination_provider`, `default_target_namespace`
@@ -248,14 +269,14 @@ Depends on: `app.core.config`
 
 **Functions**
 
-- `generate_wave_yaml(ctx, vms)` — Render the wave's NetworkMap + StorageMap + Plan as a multi-doc YAML.
+- `generate_wave_yaml(ctx, vms, resolver)` — Render the wave's NetworkMap + StorageMap + Plan as a multi-doc YAML.
 
 </details>
 
 <details><summary><strong><code>app.core.planner</code></strong> — <em>Business logic</em> · Migration wave planner.</summary>
 
 Path: `backend/app/core/planner.py`  
-Depends on: `app.core.config`
+Depends on: `app.core.llm.base`, `app.core.llm.factory`
 
 **Classes**
 
@@ -267,30 +288,56 @@ Depends on: `app.core.config`
 
 </details>
 
-<details><summary><strong><code>app.models.plan</code></strong> — <em>Data models / schemas</em></summary>
+<details><summary><strong><code>app.models.plan</code></strong> — <em>Data models / schemas</em> · Migration planning data model.</summary>
 
 Path: `backend/app/models/plan.py`  
 Depends on: `app.core.db`
 
 **Classes**
 
+- **`PrimaryGrouping`** (Class)
+- **`WaveSizeTarget`** (Class)
+- **`RiskApproach`** (Class)
+- **`ProductionHandling`** (Class)
+- **`ApplicationAtomicity`** (Class)
+- **`PlanningStrategy`** (SQLAlchemy model · table `planning_strategies`)
+  - Customer intent captured by the planning wizard.
+  - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
 - **`MigrationPlan`** (SQLAlchemy model · table `migration_plans`)
-  - Fields: `id`, `vm_ids`, `waves`, `summary`, `model`, `created_at`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `generation_prompt`, `generation_response`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `created_at`, `strategy`
 
 </details>
 
-<details><summary><strong><code>app.schemas.plan</code></strong> — <em>Data models / schemas</em></summary>
+<details><summary><strong><code>app.schemas.plan</code></strong> — <em>Data models / schemas</em> · Pydantic schemas for migration plans + strategies.</summary>
 
 Path: `backend/app/schemas/plan.py`  
+Depends on: `app.models.plan`
 
 **Classes**
 
+- **`PlanningStrategyCreate`** (Pydantic schema)
+  - Fields: `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`
+- **`PlanningStrategyUpdate`** (Pydantic schema)
+  - Fields: `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`
+- **`PlanningStrategyRead`** (Pydantic schema)
+  - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
+- **`PlanScopeFilter`** (Pydantic schema)
+  - Operator-supplied scope. At most one axis is honored — the API
+  - Fields: `vm_ids`, `source_vcenter_id`, `environment`, `application_hint`
+- **`PlanGenerateRequest`** (Pydantic schema)
+  - Wizard submission. Either references a saved strategy or embeds
+  - Fields: `name`, `strategy_id`, `inline_strategy`, `scope`, `mapping_id`
+- **`PlanGenerationTaskRead`** (Pydantic schema)
+  - Fields: `task_id`, `status`, `current_step`, `progress_percent`, `started_at`, `completed_at`, `plan_id`, `error`
 - **`WaveRead`** (Pydantic schema)
-  - Fields: `wave_number`, `vm_ids`, `rationale`, `estimated_risk`
+  - Fields: `wave_number`, `name`, `vm_ids`, `rationale`, `estimated_duration`, `estimated_risk`, `risk_level`, `considerations`, `applications_included`, `applications_split_warning`
+- **`PlanRead`** (Pydantic schema)
+  - Strategy-driven plans populate every field; legacy plans leave
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `created_at`
 - **`PlanCreate`** (Pydantic schema)
   - Fields: `vm_ids`
-- **`PlanRead`** (Pydantic schema)
-  - Fields: `id`, `vm_ids`, `waves`, `summary`, `model`, `created_at`
+- **`WaveMoveVMRequest`** (Pydantic schema)
+  - Fields: `vm_id`, `target_wave_number`, `note`
 
 </details>
 
@@ -303,21 +350,6 @@ Path: `backend/app/schemas/plan.py`
 ### Validation Engine
 
 Pre/post diffing, LLM verdict reasoning, finding triage.
-
-<details><summary><strong><code>app.core.llm</code></strong> — <em>External integration</em> · LLM Client — Ollama (local, air-gapped)</summary>
-
-Path: `backend/app/core/llm.py`  
-Depends on: `app.core.config`
-
-**Classes**
-
-- **`LLMError`** (Class)
-  - Raised when the Ollama call fails or returns unparseable output.
-- **`LLMClient`** (Class)
-  - Methods:
-    - `validate(self, baseline, current_state, vm_role)` — Reason over pre/post migration diff and return a structured verdict.
-
-</details>
 
 <details><summary><strong><code>app.models.validation</code></strong> — <em>Data models / schemas</em></summary>
 
@@ -335,11 +367,21 @@ Depends on: `app.core.db`
 <details><summary><strong><code>app.schemas.validation</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/schemas/validation.py`  
+Depends on: `app.models.validation`
 
 **Classes**
 
 - **`ValidationResultRead`** (Pydantic schema)
   - Fields: `id`, `vm_id`, `status`, `summary`, `findings`, `remediation`, `diff`, `validated_at`
+- **`LatestValidationResponse`** (Pydantic schema)
+  - Wrapper so a missing validation is a 200 with `validation: null`
+  - Fields: `validation`
+- **`ValidationTaskRead`** (Pydantic schema)
+  - Fields: `task_id`, `vm_id`, `status`, `current_step`, `progress_percent`, `started_at`, `completed_at`, `validation_id`, `verdict`, `error`
+- **`BulkValidationSpawn`** (Pydantic schema)
+  - Fields: `vm_id`, `task_id`
+- **`BulkValidationResult`** (Pydantic schema)
+  - Fields: `spawned`, `skipped`
 
 </details>
 
@@ -484,14 +526,16 @@ Settings, scheduler config, health probes, app bootstrap.
 <details><summary><strong><code>app.api.health</code></strong> — <em>API endpoints</em> · Health-check endpoints for the system tab on the settings page.</summary>
 
 Path: `backend/app/api/health.py`  
-Depends on: `app.core.config`, `app.core.db`
+Depends on: `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.migrations`
 
 **Routes**
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
-| `GET` | `/api/health/ollama` | `ollama_health()` | Probe the local Ollama server via /api/tags. |
+| `GET` | `/api/health/llm` | `llm_health()` | Probe the configured LLM backend. |
+| `GET` | `/api/health/ollama` | `ollama_health()` | Back-compat alias for ``/health/llm``. |
 | `GET` | `/api/health/postgres` | `postgres_health(db)` | Run a SELECT 1 against the configured database. |
+| `GET` | `/api/health/schema` | `schema_health()` | Report the database&#x27;s Alembic migration state. |
 | `GET` | `/api/health/full` | `full_health(db)` | Combined status across the API and every backing dependency. |
 
 </details>
@@ -536,7 +580,7 @@ Depends on: `app.core.config`, `app.core.db`, `app.models.plan`, `app.models.val
 <details><summary><strong><code>app.api.settings</code></strong> — <em>API endpoints</em> · Settings + system-info endpoints powering the /settings page.</summary>
 
 Path: `backend/app/api/settings.py`  
-Depends on: `app.core.config`, `app.core.db`, `app.core.scheduler`, `app.models.settings`, `app.schemas.settings`
+Depends on: `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.scheduler`, `app.models.settings`, `app.schemas.settings`
 
 **Routes**
 
@@ -545,7 +589,119 @@ Depends on: `app.core.config`, `app.core.db`, `app.core.scheduler`, `app.models.
 | `GET` | `/api/settings` | `get_settings(db)` | — |
 | `PUT` | `/api/settings` | `update_settings(payload, db)` | — |
 | `GET` | `/api/system/ssh-public-key` | `ssh_public_key()` | Return the OpenSSH public key VirtValidate uses. Never the private key. |
-| `GET` | `/api/system/ollama-models` | `ollama_models()` | List models currently pulled in the local Ollama instance. |
+| `GET` | `/api/system/ollama-models` | `ollama_models()` | List models available on the active LLM backend. |
+| `GET` | `/api/system/fips-status` | `fips_status_endpoint()` | FIPS 140-3 compliance posture — configured + detected + per-op status. |
+| `GET` | `/api/system/llm-info` | `llm_info()` | Active LLM backend snapshot — what&#x27;s wired up + live status. |
+
+</details>
+
+<details><summary><strong><code>app.api.storage_reviews</code></strong> — <em>API endpoints</em> · Storage design review HTTP surface.</summary>
+
+Path: `backend/app/api/storage_reviews.py`  
+Depends on: `app.core`, `app.core.audit`, `app.core.db`, `app.core.storage_review`, `app.models.network_review`, `app.models.storage_review`, `app.schemas.storage_review`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `POST` | `/api/storage-reviews` | `create_review(request, payload, db)` | — |
+| `GET` | `/api/storage-reviews` | `list_reviews(db)` | — |
+| `GET` | `/api/storage-reviews/{review_id}` | `get_review(review_id, db)` | — |
+| `PUT` | `/api/storage-reviews/{review_id}/notes` | `update_notes(request, review_id, payload, db)` | — |
+| `PUT` | `/api/storage-reviews/{review_id}/yaml` | `update_yaml(request, review_id, payload, db)` | — |
+| `POST` | `/api/storage-reviews/{review_id}/analyze` | `analyze_review(request, review_id, background_tasks, db)` | — |
+| `DELETE` | `/api/storage-reviews/{review_id}` | `delete_review(request, review_id, db)` | — |
+| `PATCH` | `/api/storage-reviews/{review_id}/findings/{finding_id}` | `update_finding_triage(request, review_id, finding_id, payload, db)` | — |
+
+</details>
+
+<details><summary><strong><code>app.api.targets</code></strong> — <em>API endpoints</em> · OCP target cluster registry + ResourceMapping CRUD + plan-time mapping resolution.</summary>
+
+Path: `backend/app/api/targets.py`  
+Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.core.ocp_discovery`, `app.models.target`, `app.models.vcenter`, `app.models.vm`, `app.schemas.target`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `GET` | `/api/sources/targets` | `list_targets(db)` | — |
+| `POST` | `/api/sources/targets` | `create_target(request, payload, db)` | — |
+| `GET` | `/api/sources/targets/{target_id}` | `get_target(target_id, db)` | — |
+| `PATCH` | `/api/sources/targets/{target_id}` | `update_target(request, target_id, payload, db)` | — |
+| `DELETE` | `/api/sources/targets/{target_id}` | `delete_target(request, target_id, db)` | — |
+| `POST` | `/api/sources/targets/{target_id}/discover` | `discover_target(request, target_id, payload, db)` | Run discovery against the target cluster. |
+| `GET` | `/api/mappings` | `list_mappings(db)` | — |
+| `POST` | `/api/mappings` | `create_mapping(request, payload, db)` | — |
+| `GET` | `/api/mappings/{mapping_id}` | `get_mapping(mapping_id, db)` | — |
+| `PATCH` | `/api/mappings/{mapping_id}` | `update_mapping(request, mapping_id, payload, db)` | — |
+| `DELETE` | `/api/mappings/{mapping_id}` | `delete_mapping(request, mapping_id, db)` | — |
+| `POST` | `/api/mappings/{mapping_id}/suggest-network` | `suggest_networks(mapping_id, db)` | — |
+| `POST` | `/api/mappings/{mapping_id}/suggest-storage` | `suggest_storage(mapping_id, db)` | — |
+| `POST` | `/api/mappings/{mapping_id}/preflight` | `preflight(mapping_id, db)` | Validate a mapping is ready to drive plan generation. |
+
+</details>
+
+<details><summary><strong><code>app.api.validations</code></strong> — <em>API endpoints</em> · Cross-VM validation operations — currently bulk on-demand validate.</summary>
+
+Path: `backend/app/api/validations.py`  
+Depends on: `app.core.audit`, `app.core.db`, `app.core.validation`, `app.models.vm`, `app.schemas.validation`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `POST` | `/api/validations/run-all` | `validate_all(request, background_tasks, db)` | Spawn a validation against every enrolled VM that has a baseline. |
+
+</details>
+
+<details><summary><strong><code>app.api.vcenters</code></strong> — <em>API endpoints</em> · vCenter source registry + scale-aware RVTools upload helpers.</summary>
+
+Path: `backend/app/api/vcenters.py`  
+Depends on: `app.core.audit`, `app.core.categorizer`, `app.core.db`, `app.core.rvtools_import`, `app.models.grouping`, `app.models.vcenter`, `app.models.vm`, `app.schemas.vcenter`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `GET` | `/api/sources/vcenters` | `list_vcenters(db)` | Return every registered vCenter with its current VM count. |
+| `POST` | `/api/sources/vcenters` | `create_vcenter(request, payload, db)` | — |
+| `GET` | `/api/sources/vcenters/{vcenter_id}` | `get_vcenter(vcenter_id, db)` | — |
+| `PATCH` | `/api/sources/vcenters/{vcenter_id}` | `update_vcenter(request, vcenter_id, payload, db)` | — |
+| `DELETE` | `/api/sources/vcenters/{vcenter_id}` | `delete_vcenter(request, vcenter_id, db)` | Delete a vCenter source. Member VMs keep existing — their |
+| `POST` | `/api/sources/vcenters/{vcenter_id}/rvtools/preview` | `rvtools_delta_preview(vcenter_id, payload, db)` | Compare an uploaded RVTools VM list against current inventory. |
+| `POST` | `/api/sources/vcenters/{vcenter_id}/rvtools/import` | `rvtools_import(request, vcenter_id, payload, background_tasks, db)` | Persist an RVTools delta against a vCenter scope. |
+| `GET` | `/api/sources/vcenters/{vcenter_id}/rvtools/import/{task_id}` | `get_rvtools_import_status(vcenter_id, task_id)` | — |
+| `POST` | `/api/sources/vcenters/{vcenter_id}/categorize` | `trigger_categorization(request, vcenter_id, background_tasks, batch_size, db)` | Spawn a Level 1 categorization run as a BackgroundTask. |
+| `GET` | `/api/sources/vcenters/{vcenter_id}/categorize/{task_id}` | `get_categorization_status(vcenter_id, task_id)` | — |
+| `GET` | `/api/sources/vcenters/{vcenter_id}/groups` | `list_groups(vcenter_id, kind, db)` | List the groups Level 1 categorization produced for a vCenter. |
+
+</details>
+
+<details><summary><strong><code>app.core.categorizer</code></strong> — <em>Business logic</em> · Level 1 categorization — batched LLM classification at scale.</summary>
+
+Path: `backend/app/core/categorizer.py`  
+Depends on: `app.core`, `app.core.audit`, `app.core.llm.base`, `app.core.llm.factory`, `app.models.grouping`, `app.models.vcenter`, `app.models.vm`
+
+**Classes**
+
+- **`CategorizationTask`** (Class)
+  - Fields: `task_id`, `source_vcenter_id`, `status`, `current_step`, `progress_percent`, `batches_total`, `batches_complete`, `started_at`, `completed_at`, `groups_created`, `error`
+  - Methods:
+    - `to_dict(self)`
+- **`CategorizationTaskStore`** (Class)
+  - Methods:
+    - `create(self, source_vcenter_id)`
+    - `get(self, task_id)`
+    - `update(self, task_id, **fields)`
+    - `mark_completed(self, task_id)`
+    - `mark_failed(self, task_id)`
+- **`CategorizationError`** (Class)
+  - Raised when the categorizer cannot complete a batch.
+
+**Functions**
+
+- `categorize(db)` — Run Level 1 categorization for one vCenter.
+- `run_categorization_task(task_id, source_vcenter_id)` — Body of the FastAPI BackgroundTask that drives a categorization run.
 
 </details>
 
@@ -558,7 +714,7 @@ Depends on: `app.core.os_profile`
 
 - **`CommandSet`** (Class)
   - The shell commands to run on a given OS.
-  - Fields: `services_running`, `network_addr_v4`, `network_addr_v6`, `network_routes`, `resolv_conf`, `listening_ports`, `mounts`, `cron_users`, `cron_user_template`, `cron_system_paths`, `os_release`, `uname_kernel`, `uname_arch`, `hostname_fqdn`, `firewall_inspect`, `time_sync_status`, `package_list`
+  - Fields: `services_running`, `network_addr_v4`, `network_addr_v6`, `network_routes`, `resolv_conf`, `listening_ports`, `mounts`, `cron_users`, `cron_user_template`, `cron_system_paths`, `os_release`, `uname_kernel`, `uname_arch`, `hostname_fqdn`, `firewall_inspect`, `time_sync_status`, `package_list`, `windows_system_info`, `windows_hotfixes`, `windows_ad_membership`, `windows_processes`, `windows_users`
 
 **Functions**
 
@@ -573,7 +729,7 @@ Path: `backend/app/core/config.py`
 **Classes**
 
 - **`Settings`** (Class)
-  - Fields: `database_url`, `ollama_host`, `ollama_model`, `ssh_key_path`, `cluster_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
+  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
 
 </details>
 
@@ -592,10 +748,169 @@ Depends on: `app.core.config`
 
 </details>
 
+<details><summary><strong><code>app.core.fips</code></strong> — <em>Business logic</em> · FIPS 140-3 compliance helpers.</summary>
+
+Path: `backend/app/core/fips.py`  
+Depends on: `app.core.config`
+
+**Classes**
+
+- **`FIPSViolation`** (Class)
+  - Raised when a FIPS-mode gate rejects a configuration or input.
+
+**Functions**
+
+- `is_os_fips_enabled(proc_path)` — Return True iff the host OS is running with the FIPS kernel
+- `is_fips_mode(cfg)` — Return True iff the operator asked the application to enforce
+- `assess_ssh_key(key_type, key_size_bits)` — Evaluate a loaded SSH key against FIPS 186-5.
+- `validate_ssh_key(key_type, key_size_bits)` — Enforce :func:`assess_ssh_key` when ``fips_mode`` is active.
+- `fips_status(cfg)` — Build the structured status payload exposed to operators.
+- `log_startup_warning()` — Emit a one-shot startup log line summarizing the FIPS posture.
+
+</details>
+
+<details><summary><strong><code>app.core.llm.__init__</code></strong> — <em>Business logic</em> · Pluggable LLM inference layer.</summary>
+
+Path: `backend/app/core/llm/__init__.py`  
+Depends on: `app.core.llm.base`, `app.core.llm.client`, `app.core.llm.factory`, `app.core.llm.kserve_backend`, `app.core.llm.ollama_backend`, `app.core.llm.vllm_backend`
+
+</details>
+
+<details><summary><strong><code>app.core.llm.base</code></strong> — <em>Business logic</em> · Pluggable LLM inference backend.</summary>
+
+Path: `backend/app/core/llm/base.py`  
+
+**Classes**
+
+- **`LLMBackendError`** (Class)
+  - Raised when a backend call fails — transport, parsing, or auth.
+- **`LLMBackend`** (Class)
+  - Abstract base for all LLM inference backends.
+  - Fields: `backend_type`
+  - Methods:
+    - `chat(self, messages, model, temperature, max_tokens)` — Single completion request, returns full response.
+    - `chat_stream(self, messages, model, temperature)` — Streaming completion — yields token chunks as they arrive.
+    - `health_check(self)` — Verify backend is reachable and the model is loaded.
+    - `list_models(self)` — List available models on this backend.
+    - `chat_sync(self, messages, model, temperature, max_tokens)` — Synchronous wrapper around :meth:`chat`.
+    - `health_check_sync(self)` — Synchronous wrapper around :meth:`health_check`.
+    - `info(self)` — Static configuration snapshot — what backend is wired up.
+
+</details>
+
+<details><summary><strong><code>app.core.llm.client</code></strong> — <em>Business logic</em> · Validation orchestrator — owns the prompt + verdict schema + diff engine.</summary>
+
+Path: `backend/app/core/llm/client.py`  
+Depends on: `app.core.llm.base`, `app.core.llm.factory`
+
+**Classes**
+
+- **`LLMError`** (Class)
+  - Raised when the LLM call fails or returns unparseable output.
+- **`LLMClient`** (Class)
+  - Validation orchestrator.
+  - Methods:
+    - `validate(self, baseline, current_state, vm_role)` — Reason over pre/post migration diff and return a structured verdict.
+
+</details>
+
+<details><summary><strong><code>app.core.llm.factory</code></strong> — <em>Business logic</em> · Factory — picks the configured backend based on settings.</summary>
+
+Path: `backend/app/core/llm/factory.py`  
+Depends on: `app.core.config`, `app.core.llm.base`, `app.core.llm.kserve_backend`, `app.core.llm.ollama_backend`, `app.core.llm.vllm_backend`
+
+**Functions**
+
+- `get_llm_backend(cfg)` — Return the configured backend, instantiating it on first call.
+- `reset_backend_cache()` — Drop the cached backend so the next ``get_llm_backend`` re-reads
+
+</details>
+
+<details><summary><strong><code>app.core.llm.kserve_backend</code></strong> — <em>Business logic</em> · KServe backend — RHOAI / OpenShift inference deployments.</summary>
+
+Path: `backend/app/core/llm/kserve_backend.py`  
+Depends on: `app.core.llm.base`
+
+**Classes**
+
+- **`KServeBackend`** (Class)
+  - Methods:
+    - `chat(self, messages, model, temperature, max_tokens)`
+    - `chat_stream(self, messages, model, temperature)`
+    - `health_check(self)`
+    - `list_models(self)`
+
+</details>
+
+<details><summary><strong><code>app.core.llm.ollama_backend</code></strong> — <em>Business logic</em> · Ollama backend — default for standalone, air-gapped deployments.</summary>
+
+Path: `backend/app/core/llm/ollama_backend.py`  
+Depends on: `app.core.llm.base`
+
+**Classes**
+
+- **`OllamaBackend`** (Class)
+  - Methods:
+    - `chat(self, messages, model, temperature, max_tokens)`
+    - `chat_stream(self, messages, model, temperature)`
+    - `health_check(self)`
+    - `list_models(self)`
+
+</details>
+
+<details><summary><strong><code>app.core.llm.vllm_backend</code></strong> — <em>Business logic</em> · vLLM backend — placeholder for v1.0.0.</summary>
+
+Path: `backend/app/core/llm/vllm_backend.py`  
+Depends on: `app.core.llm.base`
+
+**Classes**
+
+- **`VLLMBackend`** (Class)
+  - Methods:
+    - `chat(self, messages, model, temperature, max_tokens)`
+    - `chat_stream(self, messages, model, temperature)`
+    - `health_check(self)`
+    - `list_models(self)`
+
+</details>
+
+<details><summary><strong><code>app.core.mapping_suggester</code></strong> — <em>Business logic</em> · LLM-driven suggestion engine for resource mappings.</summary>
+
+Path: `backend/app/core/mapping_suggester.py`  
+Depends on: `app.core.llm.base`, `app.core.llm.factory`
+
+**Classes**
+
+- **`SuggestionError`** (Class)
+  - Raised when the LLM call fails or produces unparseable output.
+
+**Functions**
+
+- `suggest_network_mappings()` — Ask the LLM for a network-mapping proposal.
+- `suggest_storage_mappings()` — Ask the LLM for a storage-mapping proposal.
+
+</details>
+
+<details><summary><strong><code>app.core.migrations</code></strong> — <em>Business logic</em> · Alembic migration orchestration for the FastAPI lifespan.</summary>
+
+Path: `backend/app/core/migrations.py`  
+
+**Classes**
+
+- **`MigrationError`** (Class)
+  - Raised when migrations fail to apply. Caller should crash the
+
+**Functions**
+
+- `schema_status(engine)` — Snapshot of the database's migration state.
+- `apply_migrations(engine)` — Drive the full migration flow at startup.
+
+</details>
+
 <details><summary><strong><code>app.core.network_review</code></strong> — <em>Business logic</em> · Network Design Review — gap analysis between source VMware networking and</summary>
 
 Path: `backend/app/core/network_review.py`  
-Depends on: `app.core.config`, `app.models.vm`
+Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.models.vm`
 
 **Classes**
 
@@ -610,6 +925,34 @@ Depends on: `app.core.config`, `app.models.vm`
 
 - `build_source_summary(db)` — Aggregate vSphere networks across all enrolled VMs.
 - `normalize_findings(items)` — Public re-export for callers that already have raw finding dicts
+
+</details>
+
+<details><summary><strong><code>app.core.ocp_discovery</code></strong> — <em>Business logic</em> · OCP target cluster resource discovery.</summary>
+
+Path: `backend/app/core/ocp_discovery.py`  
+
+**Classes**
+
+- **`DiscoveryResult`** (Class)
+  - What ``discover_all`` returns. Each list is exactly the shape
+  - Fields: `storage_classes`, `network_attachments`, `namespaces`, `cluster_capacity`, `mtv_namespace`, `ocp_version`, `kubernetes_version`
+- **`OCPDiscoveryError`** (Class)
+  - Raised when the cluster is unreachable, rejects auth, or returns
+- **`OCPDiscoveryClient`** (Class)
+  - HTTP-REST client for OCP discovery.
+  - Methods:
+    - `discover_storage_classes(self, client)`
+    - `discover_network_attachments(self, client)`
+    - `discover_namespaces(self, client)`
+    - `discover_capacity(self, client)`
+    - `discover_mtv_namespace(self, client)` — Find the namespace where MTV/Forklift is installed.
+    - `discover_versions(self, client)` — Return ``(ocp_version, kubernetes_version)``. The OCP version
+    - `discover_all(self)` — Run every discovery call against one cluster connection.
+
+**Functions**
+
+- `storage_class_count(target_row)` — Helper used by the dashboard summary endpoint — returns 0 when
 
 </details>
 
@@ -629,13 +972,141 @@ Path: `backend/app/core/os_profile.py`
 **Functions**
 
 - `detect()` — Build an ``OSProfile`` from the three commands the collector runs.
+- `detect_windows()` — Build an ``OSProfile`` from ``Get-CimInstance Win32_OperatingSystem``.
+
+</details>
+
+<details><summary><strong><code>app.core.plan_generation</code></strong> — <em>Business logic</em> · Async migration plan generation + revision tracking.</summary>
+
+Path: `backend/app/core/plan_generation.py`  
+Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.strategy_planner`, `app.models.plan`, `app.models.target`, `app.models.vm`
+
+**Classes**
+
+- **`PlanGenerationTask`** (Class)
+  - Fields: `task_id`, `status`, `current_step`, `progress_percent`, `started_at`, `completed_at`, `plan_id`, `error`
+  - Methods:
+    - `to_dict(self)`
+- **`PlanGenerationTaskStore`** (Class)
+  - Methods:
+    - `create(self)`
+    - `get(self, task_id)`
+    - `update(self, task_id)`
+    - `mark_completed(self, task_id)`
+    - `mark_failed(self, task_id)`
+- **`PlanRevisionError`** (Class)
+  - Raised when a per-wave action can't be applied — usually a
+
+**Functions**
+
+- `resolve_scope(db, scope)` — Apply the wizard's scope filter and return the matching VMs.
+- `assemble_vm_profiles(db, vms)` — Build the lightweight VM payload the strategy planner sends to
+- `run_plan_generation(task_id)` — Body of the FastAPI BackgroundTask the generate endpoint spawns.
+- `apply_move_vm(db, plan)` — Create a new plan revision with one VM moved between waves.
+
+</details>
+
+<details><summary><strong><code>app.core.rvtools_import</code></strong> — <em>Business logic</em> · RVTools delta-import core.</summary>
+
+Path: `backend/app/core/rvtools_import.py`  
+Depends on: `app.core`, `app.core.audit`, `app.models.vm`
+
+**Classes**
+
+- **`RVToolsImportSummary`** (Class)
+  - Fields: `created`, `updated`, `marked_missing`, `unchanged`, `errors`
+- **`RVToolsImportTask`** (Class)
+  - Fields: `task_id`, `vcenter_id`, `status`, `progress_percent`, `started_at`, `completed_at`, `result`, `error`
+  - Methods:
+    - `to_dict(self)`
+- **`RVToolsImportTaskStore`** (Class)
+  - Methods:
+    - `create(self, vcenter_id)`
+    - `get(self, task_id)`
+    - `mark_completed(self, task_id, result)`
+    - `mark_failed(self, task_id, error)`
+
+**Functions**
+
+- `run_rvtools_import(db)` — Apply an RVTools delta against a vCenter scope.
+- `run_rvtools_import_async(task_id)` — BackgroundTask body. Opens its own session because the request
+
+</details>
+
+<details><summary><strong><code>app.core.storage_review</code></strong> — <em>Business logic</em> · Storage Design Review — gap analysis between source VMware datastore</summary>
+
+Path: `backend/app/core/storage_review.py`  
+Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.models.vm`
+
+**Classes**
+
+- **`StorageReviewError`** (Class)
+  - Raised when the LLM call fails or returns unparseable output.
+- **`StorageReviewer`** (Class)
+  - Wraps the LLM call. Same DI pattern as NetworkReviewer / LLMClient
+  - Methods:
+    - `analyze(self)`
+
+**Functions**
+
+- `build_storage_source_summary(db)` — Aggregate vSphere datastores + per-datastore VM membership.
+- `normalize_findings(items)` — Public re-export — same shape as network_review.normalize_findings.
+
+</details>
+
+<details><summary><strong><code>app.core.strategy_planner</code></strong> — <em>Business logic</em> · Strategy-driven migration planner.</summary>
+
+Path: `backend/app/core/strategy_planner.py`  
+Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.models.plan`
+
+**Classes**
+
+- **`StrategyPlannerError`** (Class)
+  - Raised when the strategy-driven planner fails to call the LLM,
+- **`StrategyPlanner`** (Class)
+  - Strategy-driven plan generator.
+  - Methods:
+    - `plan(self, strategy, vm_profiles)` — Generate a plan for the given strategy + VM inventory.
+
+**Functions**
+
+- `build_user_prompt(strategy, vm_profiles)` — Assemble the user-message body for one strategy-driven plan call.
+
+</details>
+
+<details><summary><strong><code>app.core.validation</code></strong> — <em>Business logic</em> · On-demand post-migration validation.</summary>
+
+Path: `backend/app/core/validation.py`  
+Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.config`, `app.core.llm`, `app.core.ssh`, `app.models.validation`, `app.models.vm`
+
+**Classes**
+
+- **`ValidationTask`** (Class)
+  - Fields: `task_id`, `vm_id`, `status`, `current_step`, `progress_percent`, `started_at`, `completed_at`, `validation_id`, `verdict`, `error`
+  - Methods:
+    - `to_dict(self)`
+- **`ValidationTaskStore`** (Class)
+  - Thread-safe in-memory registry of running validation tasks.
+  - Methods:
+    - `create(self, vm_id)`
+    - `get(self, task_id)`
+    - `update_step(self, task_id)`
+    - `mark_completed(self, task_id)`
+    - `mark_failed(self, task_id)`
+- **`ValidationError`** (Class)
+  - Raised inside the workflow when collection, reasoning, or persistence fails.
+
+**Functions**
+
+- `run_validation(db, vm)` — Drive one VM through the full validation pipeline.
+- `run_validation_task(task_id, vm_id)` — Body of the FastAPI BackgroundTask spawned by the manual-validate endpoint.
 
 </details>
 
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.settings`, `app.api.snapshots`, `app.api.templates`, `app.api.vms`, `app.core.db`, `app.core.scheduler`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.settings`, `app.api.snapshots`, `app.api.storage_reviews`, `app.api.targets`, `app.api.templates`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.core.db`, `app.core.fips`, `app.core.migrations`, `app.core.scheduler`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -647,6 +1118,27 @@ Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.a
 
 Path: `backend/app/models/__init__.py`  
 Depends on: `app.models.audit`, `app.models.network_review`, `app.models.plan`, `app.models.settings`, `app.models.validation`, `app.models.vm`
+
+</details>
+
+<details><summary><strong><code>app.models.grouping</code></strong> — <em>Data models / schemas</em> · Hierarchical migration planning data model.</summary>
+
+Path: `backend/app/models/grouping.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`GroupKind`** (Class)
+  - Logical grouping axes Level 1 categorization emits.
+- **`VMGroup`** (SQLAlchemy model · table `vm_groups`)
+  - Logical group of VMs identified by Level 1 categorization.
+  - Fields: `id`, `source_vcenter_id`, `kind`, `name`, `description`, `created_by_run_id`, `created_at`, `updated_at`, `members`
+- **`VMGroupMember`** (SQLAlchemy model · table `vm_group_members`)
+  - Many-to-many: which VMs belong to which group.
+  - Fields: `id`, `group_id`, `vm_id`, `confidence`, `rationale`, `group`
+- **`MigrationProgram`** (SQLAlchemy model · table `migration_programs`)
+  - A migration program is the top-level container an operator runs.
+  - Fields: `id`, `name`, `description`, `source_vcenter_ids`, `strategy`, `created_at`, `updated_at`
 
 </details>
 
@@ -683,6 +1175,60 @@ Depends on: `app.core.db`
 - **`AppSettings`** (SQLAlchemy model · table `app_settings`)
   - Singleton settings row — always id=1.
   - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.models.storage_review</code></strong> — <em>Data models / schemas</em> · Storage design review tables.</summary>
+
+Path: `backend/app/models/storage_review.py`  
+Depends on: `app.core.db`, `app.models.network_review`
+
+**Classes**
+
+- **`StorageReviewStatus`** (Class)
+- **`StorageFindingCategory`** (Class)
+  - Storage-specific issue categories.
+- **`StorageDesignReview`** (SQLAlchemy model · table `storage_design_reviews`)
+  - Fields: `id`, `name`, `status`, `customer_notes`, `proposed_yaml`, `analysis_results`, `last_analyzed_at`, `last_error`, `created_at`, `updated_at`, `findings`
+- **`StorageFinding`** (SQLAlchemy model · table `storage_findings`)
+  - Fields: `id`, `review_id`, `category`, `severity`, `confidence`, `triage`, `title`, `description`, `source_evidence`, `proposed_evidence`, `recommendation`, `created_at`, `review`
+
+</details>
+
+<details><summary><strong><code>app.models.target</code></strong> — <em>Data models / schemas</em> · OCP target cluster registry + resource mapping.</summary>
+
+Path: `backend/app/models/target.py`  
+Depends on: `app.core.db`, `app.models.vcenter`
+
+**Classes**
+
+- **`OCPAuthType`** (Class)
+  - How VirtValidate authenticates to the target cluster.
+- **`OCPTargetStatus`** (Class)
+- **`OCPTarget`** (SQLAlchemy model · table `ocp_targets`)
+  - A registered OpenShift Virtualization target cluster.
+  - Fields: `id`, `name`, `api_endpoint`, `region`, `site`, `classification_level`, `status`, `auth_type`, `auth_credential_secret_ref`, `verify_ssl`, `storage_classes`, `network_attachments`, `namespaces`, `cluster_capacity`, `mtv_namespace`, `ocp_version`, `kubernetes_version`, `last_synced_at`, `last_error`, `notes`, `created_at`, `updated_at`
+- **`ResourceMappingStatus`** (Class)
+  - Lifecycle of a mapping. ``incomplete`` means at least one
+- **`ResourceMapping`** (SQLAlchemy model · table `resource_mappings`)
+  - Concrete network/storage/namespace mapping between a vCenter
+  - Fields: `id`, `name`, `vcenter_source_id`, `ocp_target_id`, `status`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`, `last_used_at`, `created_at`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.models.vcenter</code></strong> — <em>Data models / schemas</em> · vCenter source registry — separate model from VM so a single</summary>
+
+Path: `backend/app/models/vcenter.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`ClassificationLevel`** (Class)
+  - DoD-style data classification. Defaults to ``unclassified`` so
+- **`VCenterStatus`** (Class)
+- **`VCenterSource`** (SQLAlchemy model · table `vcenter_sources`)
+  - Logical handle for a vCenter that VMs belong to.
+  - Fields: `id`, `name`, `hostname`, `region`, `site`, `classification_level`, `status`, `default_target_namespace`, `default_target_storage_class`, `notes`, `created_at`, `updated_at`
 
 </details>
 
@@ -731,6 +1277,129 @@ Depends on: `app.models.settings`
   - Fields: `models`
 - **`SSHPublicKey`** (Pydantic schema)
   - Fields: `public_key`, `fingerprint`, `type`
+- **`LLMBackendConfig`** (Pydantic schema)
+  - Fields: `backend`, `model`, `endpoint`
+- **`LLMBackendHealth`** (Pydantic schema)
+  - Fields: `status`, `backend`, `model`, `endpoint`, `latency_ms`, `details`
+- **`LLMBackendInfo`** (Pydantic schema)
+  - Fields: `config`, `health`
+- **`FIPSOperationStatus`** (Pydantic schema)
+  - Fields: `name`, `configured`, `fips_approved`, `enforced`
+- **`FIPSStatus`** (Pydantic schema)
+  - Fields: `configured`, `detected`, `effective`, `mismatch_warning`, `operations`
+
+</details>
+
+<details><summary><strong><code>app.schemas.storage_review</code></strong> — <em>Data models / schemas</em></summary>
+
+Path: `backend/app/schemas/storage_review.py`  
+Depends on: `app.models.network_review`, `app.models.storage_review`
+
+**Classes**
+
+- **`StorageReviewCreate`** (Pydantic schema)
+  - Fields: `name`, `customer_notes`, `proposed_yaml`
+- **`StorageReviewNotesUpdate`** (Pydantic schema)
+  - Fields: `customer_notes`
+- **`StorageReviewYamlUpdate`** (Pydantic schema)
+  - Fields: `proposed_yaml`
+- **`StorageFindingTriageUpdate`** (Pydantic schema)
+  - Fields: `triage`
+- **`StorageFindingRead`** (Pydantic schema)
+  - Fields: `id`, `category`, `severity`, `confidence`, `triage`, `title`, `description`, `source_evidence`, `proposed_evidence`, `recommendation`, `created_at`
+- **`StorageReviewSummary`** (Pydantic schema)
+  - Lightweight row for the index page.
+  - Fields: `id`, `name`, `status`, `finding_count`, `severity_counts`, `created_at`, `updated_at`, `last_analyzed_at`
+- **`StorageReviewRead`** (Pydantic schema)
+  - Full review with embedded findings — used by the detail view.
+  - Fields: `id`, `name`, `status`, `customer_notes`, `proposed_yaml`, `analysis_results`, `last_analyzed_at`, `last_error`, `created_at`, `updated_at`, `findings`
+
+</details>
+
+<details><summary><strong><code>app.schemas.target</code></strong> — <em>Data models / schemas</em></summary>
+
+Path: `backend/app/schemas/target.py`  
+Depends on: `app.models.target`, `app.models.vcenter`
+
+**Classes**
+
+- **`StorageClassDiscovered`** (Pydantic schema)
+  - One row from the discovered StorageClass list. Field set is the
+  - Fields: `name`, `provisioner`, `is_default`, `access_modes`, `reclaim_policy`, `volume_binding_mode`
+- **`NetworkAttachmentDiscovered`** (Pydantic schema)
+  - Fields: `name`, `namespace`, `type`, `config_summary`
+- **`NamespaceDiscovered`** (Pydantic schema)
+  - Fields: `name`, `labels`
+- **`ClusterCapacity`** (Pydantic schema)
+  - Fields: `node_count`, `total_cpu_millicores`, `total_memory_bytes`, `existing_vm_count`
+- **`OCPTargetBase`** (Pydantic schema)
+  - Fields: `name`, `api_endpoint`, `region`, `site`, `classification_level`, `auth_type`, `auth_credential_secret_ref`, `verify_ssl`, `notes`
+- **`OCPTargetCreate`** (Class)
+- **`OCPTargetUpdate`** (Pydantic schema)
+  - Fields: `name`, `api_endpoint`, `region`, `site`, `classification_level`, `auth_type`, `auth_credential_secret_ref`, `verify_ssl`, `notes`
+- **`OCPTargetRead`** (Class)
+  - Fields: `id`, `status`, `storage_classes`, `network_attachments`, `namespaces`, `cluster_capacity`, `mtv_namespace`, `ocp_version`, `kubernetes_version`, `last_synced_at`, `last_error`, `created_at`, `updated_at`
+- **`OCPDiscoveryRequest`** (Pydantic schema)
+  - Optional: paste a pre-discovered resource bundle instead of
+  - Fields: `bearer_token`, `manual_storage_classes`, `manual_network_attachments`, `manual_namespaces`
+- **`OCPDiscoveryResponse`** (Pydantic schema)
+  - Fields: `target_id`, `status`, `last_synced_at`, `storage_class_count`, `network_attachment_count`, `namespace_count`, `last_error`
+- **`NetworkMappingItem`** (Pydantic schema)
+  - One source network → target network row.
+  - Fields: `source_network`, `target_network_name`, `target_network_type`, `target_namespace`, `confidence`, `rationale`
+- **`StorageMappingItem`** (Pydantic schema)
+  - Fields: `source_datastore`, `target_storage_class`, `access_mode`, `confidence`, `rationale`
+- **`NamespaceMappingItem`** (Pydantic schema)
+  - How VMs land into target namespaces. ``criteria`` is one of
+  - Fields: `criteria`, `criteria_value`, `target_namespace`
+- **`ResourceMappingBase`** (Pydantic schema)
+  - Fields: `name`, `vcenter_source_id`, `ocp_target_id`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`
+- **`ResourceMappingCreate`** (Class)
+- **`ResourceMappingUpdate`** (Pydantic schema)
+  - Fields: `name`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`
+- **`ResourceMappingRead`** (Class)
+  - Fields: `id`, `status`, `last_used_at`, `created_at`, `updated_at`
+- **`MappingSuggestionResponse`** (Pydantic schema)
+  - Fields: `suggestions`, `rationale_summary`
+- **`PreflightCheckResponse`** (Pydantic schema)
+  - Returned by POST /api/mappings/{id}/preflight. Reports every
+  - Fields: `ok`, `target_status`, `unmapped_networks`, `unmapped_datastores`, `missing_storage_classes_on_target`, `missing_networks_on_target`, `missing_namespaces_on_target`, `warnings`
+
+</details>
+
+<details><summary><strong><code>app.schemas.vcenter</code></strong> — <em>Data models / schemas</em></summary>
+
+Path: `backend/app/schemas/vcenter.py`  
+Depends on: `app.models.vcenter`
+
+**Classes**
+
+- **`VCenterSourceBase`** (Pydantic schema)
+  - Fields: `name`, `hostname`, `region`, `site`, `classification_level`, `status`, `default_target_namespace`, `default_target_storage_class`, `notes`
+- **`VCenterSourceCreate`** (Class)
+- **`VCenterSourceUpdate`** (Pydantic schema)
+  - Fields: `name`, `hostname`, `region`, `site`, `classification_level`, `status`, `default_target_namespace`, `default_target_storage_class`, `notes`
+- **`VCenterSourceRead`** (Class)
+  - Fields: `id`, `created_at`, `updated_at`, `vm_count`
+- **`RVToolsVMRow`** (Pydantic schema)
+  - The minimal shape the delta-detector reads.
+  - Fields: `name`, `source_hostname`, `ip_address`, `os_family`, `role`, `environment`, `owner`, `application_hint`, `vsphere_networks`, `vsphere_datastores`
+- **`RVToolsDeltaRequest`** (Pydantic schema)
+  - Fields: `vms`
+- **`RVToolsDeltaItem`** (Pydantic schema)
+  - Fields: `name`, `diff`
+- **`RVToolsDeltaResponse`** (Pydantic schema)
+  - Fields: `new`, `updated`, `removed`, `unchanged`, `summary`
+- **`RVToolsImportResult`** (Pydantic schema)
+  - Sync-mode import result.
+  - Fields: `created`, `updated`, `marked_missing`, `unchanged`, `errors`
+- **`RVToolsImportTaskRead`** (Pydantic schema)
+  - Async-mode handle for large imports.
+  - Fields: `task_id`, `status`, `progress_percent`, `started_at`, `completed_at`, `result`, `error`
+- **`CategorizationGroupRead`** (Pydantic schema)
+  - Fields: `id`, `kind`, `name`, `description`, `vm_count`
+- **`CategorizationTaskRead`** (Pydantic schema)
+  - Fields: `task_id`, `source_vcenter_id`, `status`, `current_step`, `progress_percent`, `batches_total`, `batches_complete`, `started_at`, `completed_at`, `groups_created`, `error`
 
 </details>
 
@@ -792,6 +1461,64 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/components/OCPTargets.jsx</code></strong> — <em>Frontend component</em> · OCP target cluster registry. Operators register the cluster they&#x27;re</summary>
+
+API calls:
+- `/api/sources/targets`
+- `/api/sources/targets/{id}`
+- `/api/sources/targets/{id}/discover`
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`OCPTargets`** (component)
+- **`Row`** (component)
+- **`CreateModal`** (component)
+- **`DiscoverModal`** (component)
+- **`Empty`** (component)
+- **`Pill`** (component)
+- **`Field`** (component)
+- **`ErrorBlock`** (component)
+- **`Shell`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/components/PlanView.jsx</code></strong> — <em>Frontend component</em> · Strategy-driven plan detail page. Surfaces the LLM&#x27;s rationale +</summary>
+
+API calls:
+- `/api/plans/{id}`
+- `/api/plans/{id}/waves/{id}/move-vm`
+- `/api/vms?limit=500`
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`PlanView`** (component)
+- **`WaveCard`** (component)
+- **`MoveVMPicker`** (component)
+- **`Section`** (component)
+- **`Shell`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/components/PlanWizard.jsx</code></strong> — <em>Frontend component</em> · Strategy-driven migration planning wizard. 8 conceptual steps</summary>
+
+API calls:
+- `/api/mappings`
+- `/api/plans/generate`
+- `/api/plans/generate/{id}/status`
+- `/api/sources/vcenters`
+- `/api/vms?{id}`
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`PlanWizard`** (component)
+- **`ProgressBar`** (component)
+- **`estimateWaveCount`** (helper)
+- **`Radio`** (component)
+- **`Step`** (component)
+- **`Shell`** (component)
+
+</details>
+
 <details><summary><strong><code>frontend/src/components/ReportView.jsx</code></strong> — <em>Frontend component</em> · Inline report viewer. Mirrors the dashboard aesthetic exactly so users</summary>
 
 Exports / inner components:
@@ -812,12 +1539,44 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/components/ResourceMappings.jsx</code></strong> — <em>Frontend component</em> · Resource-mapping editor. Operators map source vSphere networks /</summary>
+
+API calls:
+- `/api/mappings`
+- `/api/mappings/{id}`
+- `/api/mappings/{id}/preflight`
+- `/api/mappings/{id}/suggest-network`
+- `/api/mappings/{id}/suggest-storage`
+- `/api/sources/targets`
+- `/api/sources/targets/{id}`
+- `/api/sources/vcenters`
+- `/api/vms?source_vcenter_id={id}&limit=10000`
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`ResourceMappings`** (component)
+- **`CreateModal`** (component)
+- **`ResourceMappingDetail`** (component)
+- **`PreflightPanel`** (component)
+- **`Section`** (component)
+- **`RowGrid`** (component)
+- **`ConfidencePill`** (component)
+- **`Empty`** (component)
+- **`Pill`** (component)
+- **`Field`** (component)
+- **`ErrorBlock`** (component)
+- **`Shell`** (component)
+
+</details>
+
 <details><summary><strong><code>frontend/src/components/Settings.jsx</code></strong> — <em>Frontend component</em></summary>
 
 API calls:
-- `/api/health/ollama`
+- `/api/health/llm`
 - `/api/health/postgres`
 - `/api/settings`
+- `/api/system/fips-status`
+- `/api/system/llm-info`
 - `/api/system/ollama-models`
 - `/api/system/ssh-public-key`
 
@@ -826,6 +1585,8 @@ Exports / inner components:
 - **`NextRunIndicator`** (component)
 - **`SSHKeyViewer`** (component)
 - **`ConnectionStatus`** (component)
+- **`FIPSCompliancePanel`** (component)
+- **`LLMBackendPanel`** (component)
 - **`ConfigurationForm`** (component)
 - **`Settings`** (component)
 - **`Spinner`** (component)
@@ -835,6 +1596,74 @@ Exports / inner components:
 - **`SecondaryButton`** (component)
 - **`PrimaryButton`** (component)
 - **`Row`** (component)
+- **`Pill`** (component)
+- **`KV`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/components/StorageReviewDetail.jsx</code></strong> — <em>Frontend component</em> · Per-review detail page. Renders the full report view + lets operators</summary>
+
+API calls:
+- `/api/storage-reviews/{id}`
+- `/api/storage-reviews/{id}/analyze`
+- `/api/storage-reviews/{id}/findings/{id}`
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`StorageReviewDetail`** (component)
+- **`FindingCard`** (component)
+- **`ConfidenceTag`** (component)
+- **`EvidenceBlock`** (component)
+- **`SourceProposedBlocks`** (component)
+- **`ConfidenceLimitations`** (component)
+- **`StatusPill`** (component)
+- **`Caveats`** (component)
+- **`H2`** (component)
+- **`Err`** (component)
+- **`Shell`** (component)
+- **`Styles`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/components/StorageReviewNew.jsx</code></strong> — <em>Frontend component</em> · New Storage Design Review wizard. Sister page to NetworkReviewNew —</summary>
+
+API calls:
+- `/api/storage-reviews`
+- `/api/storage-reviews/{id}/analyze`
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`StorageReviewNew`** (component)
+- **`FileUpload`** (component)
+- **`Section`** (component)
+- **`Shell`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/components/VCenterSources.jsx</code></strong> — <em>Frontend component</em> · Scale-aware vCenter source registry. List + create + edit + delete.</summary>
+
+API calls:
+- `/api/sources/vcenters`
+- `/api/sources/vcenters/{id}`
+- `/api/sources/vcenters/{id}/categorize`
+- `/api/sources/vcenters/{id}/categorize/{id}`
+- `/api/sources/vcenters/{id}/rvtools/import`
+- `/api/sources/vcenters/{id}/rvtools/import/{id}`
+- `/api/sources/vcenters/{id}/rvtools/preview`
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+- **`VCenterSources`** (component)
+- **`Row`** (component)
+- **`CreateModal`** (component)
+- **`UploadRVToolsModal`** (component)
+- **`DeltaSummaryGrid`** (component)
+- **`DoneSummary`** (component)
+- **`Empty`** (component)
+- **`Pill`** (component)
+- **`Field`** (component)
+- **`ErrorBlock`** (component)
+- **`Shell`** (component)
 
 </details>
 
@@ -848,12 +1677,14 @@ API calls:
 - `/api/vms/{id}/capture`
 - `/api/vms/{id}/capture/{id}`
 - `/api/vms/{id}/snapshots`
+- `/api/vms/{id}/validate`
+- `/api/vms/{id}/validate/{id}`
 - `/api/vms/{id}/validation/latest`
 
 Exports / inner components:
 - **`fetchJSON`** (helper)
 - **`classifyCaptureError`** (helper)
-- **`VMDetail`** (component)
+- **`VMDetailBody`** (component)
 - **`Shell`** (component)
 - **`Section`** (component)
 - **`Field`** (component)
@@ -861,7 +1692,11 @@ Exports / inner components:
 - **`Subtitle`** (component)
 - **`Banner`** (component)
 - **`Error`** (component)
+- **`ValidationProgress`** (component)
+- **`Finding`** (component)
+- **`Evidence`** (component)
 - **`OSBadge`** (component)
+- **`VMDetail`** (component)
 
 </details>
 
@@ -874,26 +1709,27 @@ API calls:
 - `/api/plans/{id}/waves/{id}/mtv-yaml`
 - `/api/plans?limit=1`
 - `/api/snapshots/capture-all`
+- `/api/storage-reviews`
 - `/api/templates/csv`
+- `/api/validations/run-all`
 - `/api/vms`
 - `/api/vms/bulk`
 - `/api/vms/{id}`
 - `/api/vms/{id}/baseline/profile`
 - `/api/vms/{id}/capture`
 - `/api/vms/{id}/capture/{id}`
+- `/api/vms/{id}/validate`
+- `/api/vms/{id}/validate/{id}`
 - `/api/vms/{id}/validation/latest`
 
 Exports / inner components:
 - **`NetworkReviewStatusPill`** (component)
 - **`mapVM`** (helper)
 - **`fetchJSON`** (helper)
+- **`FindingCard`** (component)
 - **`OSBadge`** (component)
 - **`WaveMTVDownload`** (component)
 - **`Modal`** (component)
-- **`_shortenOSFamily`** (helper)
-- **`rowToPayload`** (helper)
-- **`parseCSV`** (helper)
-- **`parseXLSX`** (helper)
 - **`CSVTemplateDownload`** (component)
 - **`CSVColumnDocs`** (component)
 - **`AccordionSection`** (component)
@@ -920,6 +1756,26 @@ Exports / inner components:
 - **`FormField`** (component)
 - **`PreviewTable`** (component)
 - **`TabButton`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/utils/apiError.js</code></strong> — <em>Frontend component</em> · Shared response-error formatter. Used by every component&#x27;s fetchJSON</summary>
+
+Exports / inner components:
+- **`formatApiErrorDetail`** (helper)
+- **`throwForResponse`** (helper)
+
+</details>
+
+<details><summary><strong><code>frontend/src/utils/parseRVTools.js</code></strong> — <em>Frontend component</em> · Shared RVTools / CSV parser. Two surfaces consume this:</summary>
+
+Exports / inner components:
+- **`shortenOSFamily`** (helper)
+- **`rowToPayload`** (helper)
+- **`parseCSV`** (helper)
+- **`_loadXLSX`** (helper)
+- **`parseXLSXRows`** (helper)
+- **`parseRVToolsXLSX`** (helper)
 
 </details>
 

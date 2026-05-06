@@ -28,6 +28,7 @@ from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
 from app.core.strategy_planner import StrategyPlanner, StrategyPlannerError
 from app.models.plan import MigrationPlan, PlanningStrategy
+from app.models.target import ResourceMapping
 from app.models.vm import VM, BaselineSnapshot
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,7 @@ def run_plan_generation(
     strategy_id: int,
     scope: dict,
     actor: str = "user",
+    mapping_id: int | None = None,
 ) -> None:
     """Body of the FastAPI BackgroundTask the generate endpoint spawns."""
     db = _db_module.SessionLocal()
@@ -200,6 +202,32 @@ def run_plan_generation(
                 task_id, error=f"Strategy {strategy_id} not found"
             )
             return
+        mapping_warnings: list[str] = []
+        if mapping_id is not None:
+            mapping = db.get(ResourceMapping, mapping_id)
+            if mapping is None:
+                task_store.mark_failed(
+                    task_id, error=f"Resource mapping {mapping_id} not found"
+                )
+                return
+            if mapping.status.value == "incomplete":
+                mapping_warnings.append(
+                    f"Mapping {mapping.id} ({mapping.name!r}) is incomplete — "
+                    "MTV YAML export may produce entries with missing target "
+                    "resources. Complete the mapping before applying."
+                )
+            elif mapping.status.value == "needs_review":
+                mapping_warnings.append(
+                    f"Mapping {mapping.id} ({mapping.name!r}) needs review — "
+                    "drift detected against the target cluster's discovered "
+                    "resources. Re-run discovery and review before applying."
+                )
+        else:
+            mapping_warnings.append(
+                "Plan generated without a resource_mapping — MTV YAML export "
+                "will fall back to per-VM target_* fields and may reference "
+                "placeholder resource names. Attach a mapping for production use."
+            )
         vms = resolve_scope(db, scope)
         if not vms:
             task_store.mark_failed(
@@ -223,6 +251,7 @@ def run_plan_generation(
         task_store.update(task_id, current_step="validating", progress_percent=85)
 
         task_store.update(task_id, current_step="persisting", progress_percent=95)
+        merged_warnings = list(result.get("warnings") or []) + mapping_warnings
         plan = MigrationPlan(
             name=plan_name,
             vm_ids=[p["vm_id"] for p in profiles],
@@ -230,11 +259,12 @@ def run_plan_generation(
             summary=result.get("plan_summary") or None,
             model=result.get("model") or "",
             strategy_id=strategy.id,
+            mapping_id=mapping_id,
             generation_prompt=result.get("generation_prompt"),
             generation_response=result.get("generation_response"),
             plan_summary=result.get("plan_summary") or None,
             rationale=result.get("rationale") or None,
-            warnings=result.get("warnings") or [],
+            warnings=merged_warnings,
             next_actions=result.get("next_actions") or [],
             revision_number=1,
         )

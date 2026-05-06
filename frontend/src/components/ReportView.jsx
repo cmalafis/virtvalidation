@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { throwForResponse } from "../utils/apiError";
 
 // Inline report viewer. Mirrors the dashboard aesthetic exactly so users
 // reading a report don't context-switch into a different visual idiom.
@@ -92,11 +93,7 @@ const REPORTS = {
 
 async function fetchJSON(url) {
   const r = await fetch(url);
-  if (!r.ok) {
-    let detail = "";
-    try { detail = (await r.json())?.detail ?? ""; } catch { /* */ }
-    throw new Error(detail ? `HTTP ${r.status}: ${detail}` : `HTTP ${r.status}`);
-  }
+  if (!r.ok) await throwForResponse(r);
   return r.json();
 }
 

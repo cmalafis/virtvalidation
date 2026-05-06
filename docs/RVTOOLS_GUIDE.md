@@ -48,23 +48,82 @@ curl -X POST http://<host>:8000/api/sources/vcenters \
 
 ### Uploading RVTools to a vCenter
 
-The frontend's RVTools tab parses the `.xlsx` client-side, then
-either commits directly or runs a delta preview first.
+Each vCenter row on the **Sources → vCenters** page has an **Upload
+RVTools** action. The flow is three-stage and stays inside one modal
+so the operator never loses context:
 
-1. **Parse client-side.** The browser reads the workbook and pulls
-   the `vInfo` sheet (RVTools' canonical VM list). Extra sheets are
-   ignored.
-2. **Preview the delta.** Submit the parsed list to
+1. **Parse client-side.** The browser reads the workbook, pulls the
+   `vInfo` sheet (RVTools' canonical VM list), and runs every row
+   through `frontend/src/utils/parseRVTools.js` — the same parser
+   the global Enroll modal uses, extracted so both flows stay
+   consistent. Extra sheets are ignored.
+2. **Preview the delta.** The modal submits the parsed list to
    `POST /api/sources/vcenters/{id}/rvtools/preview`. The response
    buckets every VM into:
    - **new** — name not in this vCenter's existing VMs
    - **updated** — name matches but a tracked field changed
    - **removed** — VM exists in inventory but not in the upload
    - **unchanged** — exact match
-3. **Confirm and commit.** Submit the new + updated VMs to the
-   existing `POST /api/vms/bulk` with `source_vcenter_id` set.
-   Removed VMs are surfaced as a separate decision — operator
-   chooses to mark them decommissioned, ignore, or delete.
+3. **Confirm and commit.** The operator clicks **Confirm Import**;
+   the modal fires `POST /api/sources/vcenters/{id}/rvtools/import`
+   with the same payload. Behavior:
+   - **Created** rows land with `source_vcenter_id` set and
+     `status='discovered'`.
+   - **Updated** rows get the changed tracked fields applied;
+     non-tracked state (target_namespace, owner-set notes, etc.) is
+     preserved.
+   - **Removed** rows are **flagged** with
+     `missing_from_last_upload=True` rather than deleted. Operators
+     decommission separately when ready — a deliberate two-step that
+     mirrors `DELETE /api/sources/vcenters/{id}` to avoid silent
+     fleet wipes.
+
+#### Sync vs async imports
+
+Imports of fewer than 500 VMs run in-line and return the counts
+directly. Above that threshold the endpoint returns 202 with a
+`task_id` and the modal polls
+`GET /api/sources/vcenters/{id}/rvtools/import/{task_id}` until
+completion. The threshold is `ASYNC_IMPORT_THRESHOLD` in
+`backend/app/core/rvtools_import.py`.
+
+#### Idempotency
+
+Re-running the same import is safe. Already-present rows count as
+`unchanged`; previously-marked-missing rows that reappear flip
+`missing_from_last_upload` back to `False` and emit a
+`vm.rvtools_import.reappeared` audit row.
+
+#### What gets audited
+
+One audit row per material change:
+
+- `vm.rvtools_import.create` — new VM enrolled.
+- `vm.rvtools_import.update` — tracked fields changed (the
+  `details.changes` carries the per-field diff).
+- `vm.rvtools_import.marked_missing` — VM absent from this upload
+  but present in prior imports.
+- `vm.rvtools_import.reappeared` — VM came back after being marked
+  missing.
+- `vcenter.rvtools_import_triggered` — single per-call event with
+  the source / VM count for high-level reconciliation.
+
+Filter the trail with `GET /api/audit?action=vm.rvtools_import.update`
+when reconciling a specific upload.
+
+### Per-vCenter upload vs the global Enroll modal
+
+| Flow | When to use | Persists `source_vcenter_id`? |
+|------|-------------|-------------------------------|
+| **Sources → vCenters → Upload RVTools** | Multi-vCenter customers, weekly delta refreshes, classification boundaries | ✅ Yes — set to the vCenter's id |
+| **Top nav → + Add VMs (Enroll modal)** | Single-environment customers, ad-hoc CSV / XLSX bulk-add | ❌ No — VMs land ungrouped |
+
+The Enroll modal still works and does **not** run the delta-detect
+preview — it submits straight to `POST /api/vms/bulk`. Use it when
+you don't care about the vCenter scope (e.g., a quick lab import
+or a one-off CSV from a CMDB export). For production migrations,
+prefer the per-vCenter flow so the planner / mapper / categorizer
+have the source boundary they need.
 
 ---
 

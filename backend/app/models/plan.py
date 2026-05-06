@@ -165,6 +165,13 @@ class MigrationPlan(Base):
     strategy_id: Mapped[int | None] = mapped_column(
         ForeignKey("planning_strategies.id", ondelete="SET NULL"), nullable=True
     )
+    # Resource mapping referenced at generation time. Captured on the
+    # plan row so MTV YAML export resolves source→target resource names
+    # against the same mapping the operator chose during planning,
+    # even if the mapping is later edited or deactivated.
+    mapping_id: Mapped[int | None] = mapped_column(
+        ForeignKey("resource_mappings.id", ondelete="SET NULL"), nullable=True
+    )
     # The full prompt sent to the LLM. Stored verbatim so federal
     # reviewers can reproduce the call if they need to.
     generation_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)

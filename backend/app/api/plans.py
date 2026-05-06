@@ -15,7 +15,12 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
 from app.core.db import get_db
-from app.core.mtv import MTVGenerationError, WaveContext, generate_wave_yaml
+from app.core.mtv import (
+    MappingResolver,
+    MTVGenerationError,
+    WaveContext,
+    generate_wave_yaml,
+)
 from app.core.plan_generation import (
     PlanRevisionError,
     apply_move_vm,
@@ -26,6 +31,7 @@ from app.core.plan_generation import task_store as plan_task_store
 from app.core.planner import MigrationPlanner, PlannerError
 from app.core.reporter import ReporterError, WaveReporter, render_pdf
 from app.models.plan import MigrationPlan, PlanningStrategy
+from app.models.target import ResourceMapping
 from app.models.validation import ValidationResult
 from app.models.vm import VM, BaselineSnapshot
 from app.schemas.plan import (
@@ -279,6 +285,8 @@ def wave_mtv_yaml(
             "name": vms_by_id[vid].name,
             "vsphere_networks": list(vms_by_id[vid].vsphere_networks or []),
             "vsphere_datastores": list(vms_by_id[vid].vsphere_datastores or []),
+            "environment": vms_by_id[vid].environment or "",
+            "application_hint": vms_by_id[vid].application_hint or "",
             "target_namespace": vms_by_id[vid].target_namespace or "",
             "target_storage_class": vms_by_id[vid].target_storage_class or "",
             "target_network_attachment": vms_by_id[vid].target_network_attachment or "",
@@ -286,13 +294,36 @@ def wave_mtv_yaml(
         for vid in vm_ids
     ]
 
+    resolver: MappingResolver | None = None
+    used_mapping_id: int | None = None
+    if plan.mapping_id is not None:
+        mapping = db.get(ResourceMapping, plan.mapping_id)
+        if mapping is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Plan {plan_id} references resource mapping "
+                    f"{plan.mapping_id} but that mapping has been deleted. "
+                    "Re-generate the plan with a valid mapping."
+                ),
+            )
+        resolver = MappingResolver(
+            network_mappings=list(mapping.network_mappings or []),
+            storage_mappings=list(mapping.storage_mappings or []),
+            namespace_mappings=list(mapping.namespace_mappings or []),
+        )
+        used_mapping_id = mapping.id
+        # Stamp last_used_at so operators can spot stale mappings.
+        from datetime import datetime, timezone
+        mapping.last_used_at = datetime.now(timezone.utc)
+
     ctx = WaveContext.from_settings(
         plan_id=plan_id,
         wave_number=wave_number,
         rationale=wave.get("rationale", ""),
     )
     try:
-        yaml_text = generate_wave_yaml(ctx, vm_payloads)
+        yaml_text = generate_wave_yaml(ctx, vm_payloads, resolver=resolver)
     except MTVGenerationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
@@ -302,7 +333,7 @@ def wave_mtv_yaml(
         actor=request.headers.get("x-actor", "anonymous"),
         resource_type="plan",
         resource_id=plan_id,
-        details={"wave_number": wave_number},
+        details={"wave_number": wave_number, "mapping_id": used_mapping_id},
     )
     db.commit()
 
@@ -488,6 +519,31 @@ def trigger_plan_generation(
             detail="Provide either strategy_id or inline_strategy",
         )
 
+    # Pre-flight mapping check — fail-fast on a bogus mapping_id and on
+    # source/scope mismatches so the operator finds out at trigger time
+    # rather than after the LLM call.
+    mapping_id = payload.mapping_id
+    if mapping_id is not None:
+        mapping = db.get(ResourceMapping, mapping_id)
+        if mapping is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Resource mapping {mapping_id} not found",
+            )
+        scope_vcenter_id = payload.scope.source_vcenter_id
+        if (
+            scope_vcenter_id is not None
+            and mapping.vcenter_source_id != scope_vcenter_id
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Mapping {mapping_id} is for vCenter source "
+                    f"{mapping.vcenter_source_id}, but scope filter targets "
+                    f"vCenter {scope_vcenter_id}"
+                ),
+            )
+
     # Pre-flight scope check — fail fast if the scope filter would
     # match zero VMs. Saves the operator a 30-second wait to find out
     # they typo'd the environment filter.
@@ -511,6 +567,7 @@ def trigger_plan_generation(
             "plan_name": payload.name,
             "scope": scope_dict,
             "vm_count": len(matched),
+            "mapping_id": mapping_id,
         },
     )
     db.commit()
@@ -522,6 +579,7 @@ def trigger_plan_generation(
         strategy_id=strategy.id,
         scope=scope_dict,
         actor=actor,
+        mapping_id=mapping_id,
     )
     request.state.skip_audit_log = True
     return task.to_dict()

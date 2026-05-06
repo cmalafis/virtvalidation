@@ -2,9 +2,11 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import NetworkReviewDetail from "./components/NetworkReviewDetail";
 import NetworkReviewNew from "./components/NetworkReviewNew";
+import OCPTargets from "./components/OCPTargets";
 import PlanView from "./components/PlanView";
 import PlanWizard from "./components/PlanWizard";
 import ReportView from "./components/ReportView";
+import ResourceMappings, { ResourceMappingDetail } from "./components/ResourceMappings";
 import Settings from "./components/Settings";
 import StorageReviewDetail from "./components/StorageReviewDetail";
 import StorageReviewNew from "./components/StorageReviewNew";
@@ -29,6 +31,9 @@ export default function App() {
         <Route path="/plans/new" element={<PlanWizard />} />
         <Route path="/plans/:id" element={<PlanView />} />
         <Route path="/sources/vcenters" element={<VCenterSources />} />
+        <Route path="/sources/targets" element={<OCPTargets />} />
+        <Route path="/mappings" element={<ResourceMappings />} />
+        <Route path="/mappings/:id" element={<ResourceMappingDetail />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

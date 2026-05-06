@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { throwForResponse } from "../utils/apiError";
 
 // Per-review detail page. Renders the full report view + lets operators
 // triage findings (open / accepted / dismissed) and re-run analysis.
@@ -58,11 +59,7 @@ async function fetchJSON(url, opts = {}) {
   }
   const r = await fetch(url, init);
   if (r.status === 404) return { status: 404, data: null };
-  if (!r.ok) {
-    let detail = "";
-    try { detail = (await r.json())?.detail ?? ""; } catch { /* */ }
-    throw new Error(detail ? `HTTP ${r.status}: ${detail}` : `HTTP ${r.status}`);
-  }
+  if (!r.ok) await throwForResponse(r);
   if (r.status === 204) return { status: 204, data: null };
   return { status: r.status, data: await r.json() };
 }

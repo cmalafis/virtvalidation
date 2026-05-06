@@ -8,6 +8,8 @@ from app.api.audit import router as audit_router
 from app.api.health import router as health_router
 from app.api.network_reviews import router as network_reviews_router
 from app.api.storage_reviews import router as storage_reviews_router
+from app.api.targets import mappings_router as resource_mappings_router
+from app.api.targets import targets_router as ocp_targets_router
 from app.api.plans import router as plans_router
 from app.api.plans import strategies_router as planning_strategies_router
 from app.api.reports import router as reports_router
@@ -27,6 +29,7 @@ from app.models import grouping as _grouping_models  # noqa: F401  (register mod
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)
 from app.models import settings as _settings_models  # noqa: F401  (register models on Base)
 from app.models import storage_review as _storage_review_models  # noqa: F401  (register models on Base)
+from app.models import target as _target_models  # noqa: F401  (register models on Base)
 from app.models import validation as _validation_models  # noqa: F401  (register models on Base)
 from app.models import vcenter as _vcenter_models  # noqa: F401  (register models on Base)
 from app.models import vm as _vm_models  # noqa: F401  (register models on Base)
@@ -91,5 +94,7 @@ app.include_router(templates_router, prefix="/api/templates")
 app.include_router(reports_router, prefix="/api/reports")
 app.include_router(network_reviews_router, prefix="/api/network-reviews")
 app.include_router(storage_reviews_router, prefix="/api/storage-reviews")
+app.include_router(ocp_targets_router, prefix="/api/sources/targets")
+app.include_router(resource_mappings_router, prefix="/api/mappings")
 app.include_router(validations_router, prefix="/api/validations")
 app.include_router(vcenters_router, prefix="/api/sources/vcenters")

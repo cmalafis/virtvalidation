@@ -1,6 +1,7 @@
 import { useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate } from "react-router-dom";
+import { throwForResponse } from "../utils/apiError";
 
 // New Storage Design Review wizard. Sister page to NetworkReviewNew —
 // same single-page form pattern (name → notes → YAML → analyze) but
@@ -75,11 +76,7 @@ async function fetchJSON(url, opts = {}) {
     init.body = JSON.stringify(init.body);
   }
   const r = await fetch(url, init);
-  if (!r.ok) {
-    let detail = "";
-    try { detail = (await r.json())?.detail ?? ""; } catch { /* */ }
-    throw new Error(detail ? `HTTP ${r.status}: ${detail}` : `HTTP ${r.status}`);
-  }
+  if (!r.ok) await throwForResponse(r);
   return r.json();
 }
 

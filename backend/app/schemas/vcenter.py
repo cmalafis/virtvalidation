@@ -88,6 +88,33 @@ class RVToolsDeltaResponse(BaseModel):
     summary: dict[str, int]
 
 
+class RVToolsImportResult(BaseModel):
+    """Sync-mode import result.
+
+    For uploads under the background-task threshold the import endpoint
+    returns this body directly (HTTP 200). Above the threshold it returns
+    202 + :class:`RVToolsImportTaskRead` and the operator polls.
+    """
+
+    created: int = 0
+    updated: int = 0
+    marked_missing: int = 0
+    unchanged: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class RVToolsImportTaskRead(BaseModel):
+    """Async-mode handle for large imports."""
+
+    task_id: str
+    status: Literal["running", "completed", "failed"]
+    progress_percent: int = 0
+    started_at: datetime
+    completed_at: datetime | None = None
+    result: RVToolsImportResult | None = None
+    error: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Categorization (Level 1) — output schemas
 # ---------------------------------------------------------------------------

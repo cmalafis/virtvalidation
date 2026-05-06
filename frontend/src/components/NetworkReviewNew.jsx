@@ -1,6 +1,7 @@
 import { useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate } from "react-router-dom";
+import { throwForResponse } from "../utils/apiError";
 
 // New Network Design Review wizard. Single-page form: name → notes upload
 // or paste → YAML upload or paste → "Analyze now" CTA. Files are read
@@ -76,11 +77,7 @@ async function fetchJSON(url, opts = {}) {
     init.body = JSON.stringify(init.body);
   }
   const r = await fetch(url, init);
-  if (!r.ok) {
-    let detail = "";
-    try { detail = (await r.json())?.detail ?? ""; } catch { /* */ }
-    throw new Error(detail ? `HTTP ${r.status}: ${detail}` : `HTTP ${r.status}`);
-  }
+  if (!r.ok) await throwForResponse(r);
   return r.json();
 }
 

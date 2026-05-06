@@ -1,6 +1,7 @@
 import { Component, useCallback, useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { throwForResponse } from "../utils/apiError";
 
 // Per-VM detail page — everything operators want to see about a VM in one
 // scrollable surface, organized into collapsible sections. Replaces the
@@ -53,11 +54,7 @@ async function fetchJSON(url, opts = {}) {
   }
   const r = await fetch(url, init);
   if (r.status === 404) return { status: 404, data: null };
-  if (!r.ok) {
-    let detail = "";
-    try { detail = (await r.json())?.detail ?? ""; } catch { /* */ }
-    throw new Error(detail ? `HTTP ${r.status}: ${detail}` : `HTTP ${r.status}`);
-  }
+  if (!r.ok) await throwForResponse(r);
   if (r.status === 204) return { status: 204, data: null };
   return { status: r.status, data: await r.json() };
 }

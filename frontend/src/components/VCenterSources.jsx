@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link } from "react-router-dom";
+import { throwForResponse } from "../utils/apiError";
+
+import { parseRVToolsXLSX } from "../utils/parseRVTools";
 
 // Scale-aware vCenter source registry. List + create + edit + delete.
 // Categorization (Level 1) trigger ships here too — operators look at
@@ -44,11 +47,7 @@ async function fetchJSON(url, opts = {}) {
     init.body = JSON.stringify(init.body);
   }
   const r = await fetch(url, init);
-  if (!r.ok) {
-    let detail = "";
-    try { detail = (await r.json())?.detail ?? ""; } catch { /* */ }
-    throw new Error(detail ? `HTTP ${r.status}: ${detail}` : `HTTP ${r.status}`);
-  }
+  if (!r.ok) await throwForResponse(r);
   if (r.status === 204) return null;
   return await r.json();
 }
@@ -59,6 +58,7 @@ export default function VCenterSources() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [uploadFor, setUploadFor] = useState(null); // vcenter row when uploading
   const [categorizing, setCategorizing] = useState(null); // vcenter id when running
 
   const load = useCallback(async () => {
@@ -175,6 +175,7 @@ export default function VCenterSources() {
                 categorizing={categorizing === vc.id}
                 onDelete={() => onDelete(vc)}
                 onCategorize={() => onCategorize(vc)}
+                onUpload={() => setUploadFor(vc)}
               />
             ))}
           </div>
@@ -187,12 +188,19 @@ export default function VCenterSources() {
           await load();
         }}/>
       )}
+      {uploadFor && (
+        <UploadRVToolsModal
+          vcenter={uploadFor}
+          onClose={() => setUploadFor(null)}
+          onImported={async () => { setUploadFor(null); await load(); }}
+        />
+      )}
     </Shell>
   );
 }
 
 
-function Row({ vc, categorizing, onDelete, onCategorize }) {
+function Row({ vc, categorizing, onDelete, onCategorize, onUpload }) {
   const cls = CLASSIFICATION_LABEL[vc.classification_level] || CLASSIFICATION_LABEL.unclassified;
   const stat = STATUS_LABEL[vc.status] || STATUS_LABEL.active;
   return (
@@ -212,6 +220,13 @@ function Row({ vc, categorizing, onDelete, onCategorize }) {
         {vc.vm_count}
       </span>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button
+          onClick={onUpload}
+          title="Upload RVTools XLSX (preview + import)"
+          style={btnGhost}
+        >
+          ⬆ Upload RVTools
+        </button>
         <button
           onClick={onCategorize}
           disabled={categorizing || vc.vm_count === 0}
@@ -335,6 +350,245 @@ function CreateModal({ onClose, onSaved }) {
 }
 
 
+function UploadRVToolsModal({ vcenter, onClose, onImported }) {
+  // Three-stage modal: pick file → review preview → confirm import.
+  // Stays mounted across stages so the operator can re-pick a file
+  // without closing.
+  const [stage, setStage] = useState("pick"); // pick | preview | importing | done
+  const [filename, setFilename] = useState("");
+  const [parseStats, setParseStats] = useState(null);
+  const [vms, setVms] = useState([]);
+  const [delta, setDelta] = useState(null);
+  const [importResult, setImportResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    try {
+      const result = await parseRVToolsXLSX(file);
+      if (result.vms.length === 0) {
+        toast.error("No VMs parsed from file — wrong sheet?", TOAST_OPTS);
+        return;
+      }
+      setFilename(file.name);
+      setParseStats({
+        total: result.totalRows,
+        parsed: result.vms.length,
+        skipped: result.skipped.length,
+        sheet: result.sheetName,
+      });
+      setVms(result.vms);
+      // Immediately fire the preview so the operator sees the delta
+      // before they confirm. Big files might take a beat.
+      const previewBody = await fetchJSON(
+        `/api/sources/vcenters/${vcenter.id}/rvtools/preview`,
+        { method: "POST", body: { vms: result.vms } },
+      );
+      setDelta(previewBody);
+      setStage("preview");
+    } catch (err) {
+      toast.error(err.message || "Failed to parse XLSX", TOAST_OPTS);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onConfirm = async () => {
+    setBusy(true);
+    setStage("importing");
+    try {
+      const body = await fetchJSON(
+        `/api/sources/vcenters/${vcenter.id}/rvtools/import`,
+        { method: "POST", body: { vms } },
+      );
+      // Async branch — body has task_id but no `created` counts.
+      if (body?.task_id && body.status === "running") {
+        const startedAt = Date.now();
+        let final = null;
+        while (final == null && Date.now() - startedAt < 10 * 60 * 1000) {
+          await new Promise((r) => setTimeout(r, 2000));
+          try {
+            const status = await fetchJSON(
+              `/api/sources/vcenters/${vcenter.id}/rvtools/import/${body.task_id}`,
+            );
+            if (status.status === "completed") {
+              final = status.result;
+            } else if (status.status === "failed") {
+              throw new Error(status.error || "Import failed");
+            }
+          } catch (e) {
+            // 404 / network blip — keep polling unless explicit failure
+            if (String(e.message).includes("not found")) throw e;
+          }
+        }
+        setImportResult(final);
+      } else {
+        setImportResult(body);
+      }
+      setStage("done");
+      const r = body.task_id ? importResult : body;
+      const counts = r || {};
+      toast.success(
+        `Imported · ${counts.created ?? 0} new · ${counts.updated ?? 0} updated · ${counts.marked_missing ?? 0} missing`,
+        TOAST_OPTS,
+      );
+    } catch (err) {
+      toast.error(err.message || "Import failed", TOAST_OPTS);
+      setStage("preview");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const close = async () => {
+    if (stage === "done") {
+      await onImported();
+    } else {
+      onClose();
+    }
+  };
+
+  return (
+    <div style={modalOverlay} onClick={busy ? undefined : close}>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...modalBox, width: 720 }}>
+        <div style={{ borderBottom: "1px solid #1a1a2e", padding: "18px 22px" }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>Upload RVTools — {vcenter.name}</div>
+          <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 4 }}>
+            Parses the vInfo sheet. Preview shows the delta against current
+            inventory in this vCenter; confirm to commit.
+          </div>
+        </div>
+
+        <div style={{ padding: "18px 22px", display: "grid", gap: 14 }}>
+          {stage === "pick" && (
+            <label style={{
+              display: "flex", flexDirection: "column", alignItems: "center",
+              padding: 32, border: "1px dashed #3a3a55", cursor: busy ? "not-allowed" : "pointer",
+              background: "#07070f",
+            }}>
+              <div style={{ fontSize: 28, color: "#aaaacc", marginBottom: 12 }}>↑</div>
+              <div style={{ fontSize: 14, color: "#eeeeff", fontWeight: 600 }}>
+                {busy ? "Parsing…" : "Click to choose RVTools .xlsx"}
+              </div>
+              <div style={{ fontSize: 12, color: "#888899", marginTop: 6 }}>
+                Looks for a sheet named &quot;vInfo&quot; (falls back to first sheet).
+              </div>
+              <input
+                type="file"
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                style={{ display: "none" }}
+                onChange={onFile}
+                disabled={busy}
+              />
+            </label>
+          )}
+
+          {(stage === "preview" || stage === "importing" || stage === "done") && parseStats && (
+            <div style={{
+              padding: "10px 14px", border: "1px solid #1a1a2e", background: "#0a0a16",
+              fontSize: 12, color: "#ccccee",
+            }}>
+              <div><strong>{filename}</strong> · sheet: {parseStats.sheet}</div>
+              <div style={{ color: "#aaaacc", marginTop: 4 }}>
+                Parsed {parseStats.parsed} of {parseStats.total} rows
+                {parseStats.skipped > 0 ? ` (${parseStats.skipped} skipped — missing both name and hostname)` : ""}
+              </div>
+            </div>
+          )}
+
+          {(stage === "preview" || stage === "importing") && delta && (
+            <DeltaSummaryGrid delta={delta} />
+          )}
+
+          {stage === "done" && importResult && (
+            <DoneSummary result={importResult} />
+          )}
+        </div>
+
+        <div style={{ borderTop: "1px solid #1a1a2e", padding: "14px 22px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          {stage === "pick" && (
+            <button onClick={onClose} style={btnSecondary} disabled={busy}>Cancel</button>
+          )}
+          {stage === "preview" && (
+            <>
+              <button onClick={() => { setStage("pick"); setDelta(null); }} style={btnSecondary} disabled={busy}>← Pick another file</button>
+              <button onClick={onConfirm} style={btnPrimary} disabled={busy}>
+                {busy ? "Importing…" : "Confirm Import"}
+              </button>
+            </>
+          )}
+          {stage === "importing" && (
+            <button style={btnPrimary} disabled>Importing…</button>
+          )}
+          {stage === "done" && (
+            <button onClick={close} style={btnPrimary}>Close</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeltaSummaryGrid({ delta }) {
+  const buckets = [
+    ["new", "#00ff88", delta.new?.length ?? 0, "VMs to create"],
+    ["updated", "#ffaa00", delta.updated?.length ?? 0, "Tracked fields changed"],
+    ["unchanged", "#aaaacc", delta.unchanged?.length ?? 0, "Already match"],
+    ["removed", "#ff5577", delta.removed?.length ?? 0, "Will be flagged missing (not deleted)"],
+  ];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+      {buckets.map(([label, color, count, hint]) => (
+        <div key={label} style={{
+          padding: "10px 12px", border: `1px solid ${color}55`,
+          background: `${color}0d`,
+        }}>
+          <div style={{ fontSize: 11, color, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            {label}
+          </div>
+          <div style={{ fontSize: 22, color: "#eeeeff", fontFamily: "'Share Tech Mono', monospace", marginTop: 2 }}>
+            {count}
+          </div>
+          <div style={{ fontSize: 11, color: "#888899", marginTop: 4 }}>{hint}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DoneSummary({ result }) {
+  const items = [
+    ["Created", result.created],
+    ["Updated", result.updated],
+    ["Marked missing", result.marked_missing],
+    ["Unchanged", result.unchanged],
+  ];
+  return (
+    <div style={{ padding: "16px 18px", border: "1px solid #00ff8855", background: "rgba(0,255,136,0.06)" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#00ff88", marginBottom: 8 }}>
+        ✓ Import complete
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+        {items.map(([label, count]) => (
+          <div key={label}>
+            <div style={{ fontSize: 11, color: "#aaaacc", textTransform: "uppercase" }}>{label}</div>
+            <div style={{ fontSize: 18, fontFamily: "'Share Tech Mono', monospace", color: "#eeeeff" }}>{count ?? 0}</div>
+          </div>
+        ))}
+      </div>
+      {(result.errors || []).length > 0 && (
+        <div style={{ marginTop: 10, fontSize: 12, color: "#ff99aa" }}>
+          {result.errors.length} error{result.errors.length === 1 ? "" : "s"} — see audit log
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function Empty({ onAdd }) {
   return (
     <div style={{ padding: "60px 40px", border: "1px dashed #2a2a44", textAlign: "center" }}>
@@ -418,7 +672,7 @@ const headerStyle = {
 
 const tableHeaderStyle = {
   display: "grid",
-  gridTemplateColumns: "1fr 1.4fr 1fr 1.2fr 0.8fr 0.5fr 1.5fr",
+  gridTemplateColumns: "1fr 1.4fr 1fr 1.2fr 0.8fr 0.5fr 2.4fr",
   padding: "12px 18px",
   borderBottom: "1px solid #1a1a2e",
   background: "#0a0a16",
@@ -429,7 +683,7 @@ const tableHeaderStyle = {
 
 const tableRowStyle = {
   display: "grid",
-  gridTemplateColumns: "1fr 1.4fr 1fr 1.2fr 0.8fr 0.5fr 1.5fr",
+  gridTemplateColumns: "1fr 1.4fr 1fr 1.2fr 0.8fr 0.5fr 2.4fr",
   padding: "14px 18px",
   borderBottom: "1px solid #0f0f1e",
   alignItems: "center",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useParams } from "react-router-dom";
+import { throwForResponse } from "../utils/apiError";
 
 // Strategy-driven plan detail page. Surfaces the LLM's rationale +
 // per-wave reasoning prominently — that's the consultative output the
@@ -24,11 +25,7 @@ async function fetchJSON(url, opts = {}) {
     init.body = JSON.stringify(init.body);
   }
   const r = await fetch(url, init);
-  if (!r.ok) {
-    let detail = "";
-    try { detail = (await r.json())?.detail ?? ""; } catch { /* */ }
-    throw new Error(detail ? `HTTP ${r.status}: ${detail}` : `HTTP ${r.status}`);
-  }
+  if (!r.ok) await throwForResponse(r);
   if (r.status === 204) return null;
   return r.json();
 }
