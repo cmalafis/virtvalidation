@@ -37,6 +37,30 @@ class Settings(BaseSettings):
     # by design — point this at the local Ollama instance only.
     ollama_host: str = "http://ollama:11434"
     ollama_model: str = "llama3:8b"
+    # Ollama defaults to 4096-token context, which truncates our larger
+    # prompts (categorizer batches, plan generation). 8192 doubles
+    # headroom while staying inside Llama 3 8B's hard 8192 ceiling. Bump
+    # higher only when running a model that supports it (Llama 3.1+).
+    ollama_num_ctx: int = 8192
+
+    # ----- LLM transport timeouts -----
+    # CPU-only inference for Llama 3 8B can spend 60-120s per call on
+    # large prompts. The default 120s read timeout was racing the model
+    # and producing 500s; 600s gives Ollama enough room without making
+    # operators wait forever on a wedged worker.
+    llm_read_timeout: float = 600.0
+    llm_connect_timeout: float = 30.0
+    # Number of retry attempts on transport-level failures (timeouts,
+    # connection resets). Backoff schedule lives in the backend; the
+    # value here is the *additional* attempts after the first call.
+    llm_max_retries: int = 2
+
+    # ----- Level 1 categorizer -----
+    # VMs per LLM call. With Llama 3 8B and num_ctx=8192 a 10-VM batch
+    # fits comfortably with system prompt + JSON output overhead. Bump
+    # higher on KServe / larger context models, or lower if seeing
+    # hallucinated tail entries.
+    categorizer_batch_size: int = 10
 
     # ----- KServe backend (RHOAI / OpenShift inference) -----
     # Endpoint must point at an InferenceService that exposes the

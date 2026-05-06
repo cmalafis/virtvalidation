@@ -4,9 +4,10 @@ The hierarchical migration planner runs in three levels:
 
   - **Level 1** (this module) — categorize a vCenter's VMs into
     application / environment / business-unit groupings. Each LLM
-    call sees ~100 lightweight VM rows, so a 5,000-VM vCenter
-    finishes in ~50 calls. The output is a set of :class:`VMGroup`
-    rows with :class:`VMGroupMember` associations.
+    call sees a small batch (default 10 VMs) so the prompt fits
+    comfortably under Llama 3 8B's 8192-token context. A 5,000-VM
+    vCenter finishes in ~500 calls; tune up the batch on
+    larger-context models. See ``docs/LLM_TUNING.md``.
 
   - **Level 2** (deferred — see ``docs/SCALE.md``) — strategy. One
     call per program, sees group summaries (not individual VMs),
@@ -41,6 +42,7 @@ from sqlalchemy.orm import Session
 
 from app.core import db as _db_module
 from app.core.audit import record_audit
+from app.core.config import settings as _module_settings
 from app.core.llm.base import LLMBackend, LLMBackendError
 from app.core.llm.factory import get_llm_backend
 from app.models.grouping import GroupKind, VMGroup, VMGroupMember
@@ -49,11 +51,19 @@ from app.models.vm import VM
 
 logger = logging.getLogger(__name__)
 
-# Tunables — sized for Ollama llama3:8b on a single-host appliance.
-# A full prompt with 100 VMs fits comfortably in the 8B model's context
-# window with room for the system prompt + JSON response. Larger
-# batches risk hallucination at the tail of the list.
-DEFAULT_BATCH_SIZE = 100
+# Tunables — sized for Ollama llama3:8b on a single-host appliance with
+# the default num_ctx=8192. A 10-VM batch fits comfortably with the
+# system prompt + JSON response overhead. Larger batches truncate
+# silently (the v0.1.x default of 100 was the root cause of the
+# "prompt limit=4096 prompt=10420" Ollama warning) and risk
+# hallucinated tail entries even when they don't truncate.
+#
+# Override via the CATEGORIZER_BATCH_SIZE env var when running on a
+# larger context model — see docs/LLM_TUNING.md for guidance.
+DEFAULT_BATCH_SIZE = _module_settings.categorizer_batch_size
+# Hard ceiling. Above this even Llama 3.1's 128K context starts
+# producing stale-tail hallucinations because the model loses
+# attention on the back half of the list.
 MAX_BATCH_SIZE = 200
 
 CategorizationStatus = Literal["running", "completed", "failed"]

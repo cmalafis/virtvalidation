@@ -680,7 +680,7 @@ Depends on: `app.core.audit`, `app.core.categorizer`, `app.core.db`, `app.core.r
 <details><summary><strong><code>app.core.categorizer</code></strong> — <em>Business logic</em> · Level 1 categorization — batched LLM classification at scale.</summary>
 
 Path: `backend/app/core/categorizer.py`  
-Depends on: `app.core`, `app.core.audit`, `app.core.llm.base`, `app.core.llm.factory`, `app.models.grouping`, `app.models.vcenter`, `app.models.vm`
+Depends on: `app.core`, `app.core.audit`, `app.core.config`, `app.core.llm.base`, `app.core.llm.factory`, `app.models.grouping`, `app.models.vcenter`, `app.models.vm`
 
 **Classes**
 
@@ -729,7 +729,7 @@ Path: `backend/app/core/config.py`
 **Classes**
 
 - **`Settings`** (Class)
-  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
+  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `categorizer_batch_size`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
 
 </details>
 

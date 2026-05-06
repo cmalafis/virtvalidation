@@ -60,6 +60,10 @@ def _instantiate(backend_type: str, cfg: Settings) -> LLMBackend:
         return OllamaBackend(
             base_url=cfg.ollama_host,
             default_model=cfg.ollama_model,
+            timeout=cfg.llm_read_timeout,
+            connect_timeout=cfg.llm_connect_timeout,
+            num_ctx=cfg.ollama_num_ctx,
+            max_retries=cfg.llm_max_retries,
         )
     if backend_type == "kserve":
         return KServeBackend(

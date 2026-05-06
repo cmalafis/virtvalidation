@@ -90,7 +90,9 @@ class TestOllamaBackend:
         assert sent["messages"] == [{"role": "user", "content": "hi"}]
 
     def test_chat_raises_backend_error_on_http_failure(self):
-        backend = OllamaBackend()
+        # max_retries=0 keeps the test fast — retry-with-backoff behavior
+        # is exercised in test_retry.py.
+        backend = OllamaBackend(max_retries=0)
         mock_client = _mock_async_client(post_raises=httpx.ConnectError("refused"))
         with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(LLMBackendError, match="Ollama request failed"):
