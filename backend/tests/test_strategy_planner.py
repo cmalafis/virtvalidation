@@ -388,13 +388,21 @@ def test_strategy_can_be_updated_and_deleted(client):
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def stub_planner_backend(monkeypatch):
-    """Wire the strategy planner's get_llm_backend to a stub, and reset
-    the plan-generation task store between tests."""
-    from app.core import strategy_planner as sp
+    """Wire every layer's get_llm_backend to a stub and reset the
+    plan-generation task store between tests.
+
+    The hierarchical planner imports ``get_llm_backend`` into its own
+    namespace, so patching only the strategy_planner module misses
+    the chunked path. Patch both here so the small-input single-shot
+    fallback AND the chunked path land on the stub.
+    """
+    from app.core import chunked_planner as cp
     from app.core import plan_generation as pg
+    from app.core import strategy_planner as sp
 
     backend = _StubBackend()
     monkeypatch.setattr(sp, "get_llm_backend", lambda: backend)
+    monkeypatch.setattr(cp, "get_llm_backend", lambda: backend)
     pg.task_store._tasks.clear()
     yield backend
     pg.task_store._tasks.clear()

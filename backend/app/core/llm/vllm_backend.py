@@ -29,6 +29,17 @@ _NOT_READY_MESSAGE = (
 class VLLMBackend(LLMBackend):
     backend_type = "vllm"
 
+    # Direct vLLM connection — large context (Llama 3.1 128K), in-flight
+    # batching means high concurrent throughput. Conservatively cap at
+    # 5 concurrent calls because the planner's per-chunk waves are
+    # already coarse parallelism and we don't want to thrash a shared
+    # GPU. Bump higher in vllm_backend config if you have dedicated
+    # capacity.
+    max_planning_chunk_size = 75
+    max_context_tokens = 128_000
+    supports_concurrent_calls = True
+    max_concurrent_calls = 5
+
     def __init__(
         self,
         endpoint: str | None = None,

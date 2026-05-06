@@ -36,6 +36,7 @@ export default function PlanView() {
   const planId = Number(id);
 
   const [plan, setPlan] = useState(null);
+  const [chunks, setChunks] = useState([]);
   const [vmsById, setVmsById] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -44,11 +45,13 @@ export default function PlanView() {
     setLoading(true);
     setError(null);
     try {
-      const [planData, vmList] = await Promise.all([
+      const [planData, chunkList, vmList] = await Promise.all([
         fetchJSON(`/api/plans/${planId}`),
+        fetchJSON(`/api/plans/${planId}/chunks`).catch(() => []),
         fetchJSON("/api/vms?limit=500").catch(() => []),
       ]);
       setPlan(planData);
+      setChunks(Array.isArray(chunkList) ? chunkList : []);
       const map = {};
       (Array.isArray(vmList) ? vmList : []).forEach((v) => { map[v.id] = v; });
       setVmsById(map);
@@ -144,6 +147,28 @@ export default function PlanView() {
           </Section>
         )}
 
+        {/* Chunk navigation — only shown when the plan came from
+            the hierarchical pipeline (legacy/single-shot plans have
+            no chunks persisted). */}
+        {chunks.length > 0 && (
+          <Section title={`Chunk breakdown (${chunks.length})`}>
+            <p style={{ fontSize: 13, color: "#aaaacc", marginBottom: 10 }}>
+              The chunker partitioned this scope before the AI ran.
+              Each chunk got its own focused planning call; cross-chunk
+              ordering came from a final review pass.
+            </p>
+            {chunks.map((c) => (
+              <ChunkCard
+                key={c.chunk_id}
+                chunk={c}
+                waves={(plan.waves || []).filter(
+                  (w) => w.chunk_id === c.chunk_id
+                )}
+              />
+            ))}
+          </Section>
+        )}
+
         {/* Waves — the meat */}
         <Section title={`Waves (${(plan.waves || []).length})`}>
           {(plan.waves || []).map((wave) => (
@@ -171,6 +196,69 @@ export default function PlanView() {
         )}
       </main>
     </Shell>
+  );
+}
+
+
+function ChunkCard({ chunk, waves }) {
+  const [open, setOpen] = useState(false);
+  const isFoundation = chunk.sub_key?.is_foundation;
+  const accent = isFoundation ? "#88aaff" : "#4488ff";
+  return (
+    <div style={{
+      border: "1px solid #1a1a2e", background: "#0a0a18",
+      borderLeft: `3px solid ${accent}`,
+      marginBottom: 12, padding: "14px 18px", cursor: "pointer",
+    }} onClick={() => setOpen((v) => !v)}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <span style={{ fontSize: 11, color: accent, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", fontFamily: "'Share Tech Mono', monospace", marginRight: 10 }}>
+            {isFoundation ? "Foundation" : "Chunk"}
+          </span>
+          <span style={{ fontSize: 15, color: "#eeeeff", fontWeight: 600 }}>
+            {chunk.label || "(no label)"}
+          </span>
+          <span style={{ fontSize: 12, color: "#aaaacc", marginLeft: 10 }}>
+            {chunk.vm_ids.length} VMs · {chunk.wave_numbers.length} waves
+          </span>
+        </div>
+        <span style={{ fontSize: 18, color: "#aaaacc" }}>{open ? "−" : "+"}</span>
+      </div>
+      <div style={{ fontSize: 12, color: "#888899", marginTop: 4 }}>
+        {chunk.reason_for_chunk}
+      </div>
+      {open && (
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #1a1a2e" }}>
+          {chunk.chunk_rationale && (
+            <p style={{ fontSize: 13, color: "#ccccee", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+              {chunk.chunk_rationale}
+            </p>
+          )}
+          {(chunk.sequence_dependencies || []).length > 0 && (
+            <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 8 }}>
+              Depends on chunk{chunk.sequence_dependencies.length === 1 ? "" : "s"}:{" "}
+              <span style={{ fontFamily: "'Share Tech Mono', monospace" }}>
+                {chunk.sequence_dependencies.map((d) => d.slice(0, 8)).join(", ")}
+              </span>
+            </div>
+          )}
+          {chunk.wave_numbers.length > 0 && (
+            <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 8 }}>
+              Wave numbers in this chunk: {chunk.wave_numbers.join(", ")}
+            </div>
+          )}
+          {waves.length > 0 && (
+            <ul style={{ marginTop: 10, paddingLeft: 18, color: "#ccccee", fontSize: 12 }}>
+              {waves.map((w) => (
+                <li key={w.wave_number} style={{ marginBottom: 4 }}>
+                  <strong>Wave {w.wave_number}</strong>: {w.name} · {w.vm_ids.length} VMs · risk {w.risk_level || w.estimated_risk}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

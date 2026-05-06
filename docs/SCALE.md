@@ -10,7 +10,7 @@ scale.
 
 ---
 
-## Tested capacity (v0.1.x)
+## Tested capacity
 
 These numbers come from real test runs against the appliance, not
 theoretical analysis.
@@ -22,8 +22,10 @@ theoretical analysis.
 | Concurrent baseline captures    | 25             | Above this, BackgroundTasks queue; no failures, just slower. |
 | Concurrent validation runs      | 10             | Each holds a DB session + an SSH session + an LLM call. |
 | Inventory list page render      | 1,000 rows     | No virtualization yet — beyond this the page slows perceptibly. |
-| Level 1 categorization batch    | 200 VMs / call | Larger batches risk LLM context exhaustion + tail-of-list hallucinations. |
-| Level 1 full vCenter            | 5,000 VMs in ~50 batches sequential = 25 min on Ollama llama3:8b | KServe with vLLM is faster but untested at full scale. |
+| Level 1 categorization batch    | 10 VMs / call (default; configurable) | Sized so the prompt fits Llama 3 8B's 8192 context with response headroom. See `docs/LLM_TUNING.md`. |
+| Level 1 full vCenter            | 57 VMs in 6 batches sequential ≈ 22 min on Ollama llama3:8b | RHOAI/KServe is faster (parallel batches) but untested at full scale. |
+| Hierarchical plan generation    | 1,000 VMs (mocked LLM, unit-test); 57 VMs (live, Ollama) | Chunker is deterministic & sub-second; per-chunk LLM time scales linearly with chunk count. |
+| Hierarchical chunks per plan    | 30+ chunks for 1,000 VMs (Llama backend, max_size=15) | Each chunk ≤ backend's `max_planning_chunk_size`. |
 
 ## Designed-for capacity (not yet tested)
 
@@ -160,27 +162,33 @@ when `pg_total_relation_size('baseline_snapshots')` exceeds ~50 GB.
 These items are designed-for but not implemented. Don't promise
 them to customers without explicitly noting they're future work.
 
-### Hierarchical planner — Levels 2 + 3
+### Hierarchical plan-generation pipeline (shipped)
 
-The categorizer (Level 1) ships in v0.x. The full hierarchical
-planner (Levels 2 strategy + Level 3 wave detail) is targeted for
-v1.0:
+The plan generator now runs a hierarchical pipeline (Python chunker
+→ per-chunk LLM → Python assembly → cross-chunk review LLM).
+See `docs/PLANNING_ARCHITECTURE.md` for the full design.
 
-  - **Level 2** — single LLM call per program, sees group summaries
-    (not individual VMs), emits campaign + sequencing structure.
-    Persists into `migration_programs.strategy`.
-  - **Level 3** — one LLM call per campaign with full VM context,
-    emits MTV-shaped wave assignments. Persists into a new
-    `campaign_waves` table (schema not yet shipped).
-  - **Streaming UI** — Level 1 progress already polls every 3s.
-    Level 2/3 will benefit from server-sent events so the UI fills
-    in as each campaign completes.
+Per-backend chunk-size recommendations (`max_planning_chunk_size`):
 
-The data model (`MigrationProgram`) is shipped now so the migration
-to a streaming-aware UI doesn't need a schema break later. The
-categorizer's batched LLM-call infrastructure is the template for
-Level 3's per-campaign calls — expect the same shape, different
-prompts.
+  - **Ollama / Llama 3 8B** — 15 VMs/chunk, sequential. A 1K-VM plan
+    runs ~70 chunks at ~3 min/chunk = ~3.5 hours. Acceptable for
+    overnight runs; not ideal for interactive use.
+  - **KServe / RHOAI** — 50 VMs/chunk, 3-way parallel. Same 1K-VM
+    plan runs ~20 chunks in ~7 parallel batches = ~15 min.
+  - **vLLM (large context)** — 75 VMs/chunk, 5-way parallel. Same
+    plan in ~5 min.
+
+These numbers are validated against the chunker's unit tests; live
+end-to-end timing on a 1K-VM fleet hasn't been measured yet
+(scheduled for the RHOAI demo cluster's first full run).
+
+### Multi-program coordination (deferred)
+
+Cross-program / cross-appliance migration coordination ("two
+programs sharing a CMDB") needs a new `MigrationProgram`-level
+sequencing engine. Not on the v1.0 roadmap. The single-program
+hierarchical pipeline above covers customer-tier migrations; multi-
+program coordination is a v1.5+ concern.
 
 ### UI virtualization
 

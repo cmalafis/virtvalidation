@@ -52,6 +52,15 @@ def _approx_token_count(messages: list[dict]) -> int:
 class OllamaBackend(LLMBackend):
     backend_type = "ollama"
 
+    # Llama 3 8B on a single Ollama host. The 15-VM chunk fits the 8192
+    # context with ~2K tokens of headroom for the JSON wave output.
+    # Single-stream — Ollama serializes /api/chat across clients, so
+    # concurrent calls just queue.
+    max_planning_chunk_size = 15
+    max_context_tokens = 8192
+    supports_concurrent_calls = False
+    max_concurrent_calls = 1
+
     def __init__(
         self,
         base_url: str = "http://ollama:11434",

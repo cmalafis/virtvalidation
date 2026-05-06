@@ -26,6 +26,7 @@ from app.core.scheduler import shutdown_scheduler, start_scheduler
 from app.middleware.audit import AuditMiddleware
 from app.models import audit as _audit_models  # noqa: F401  (register models on Base)
 from app.models import grouping as _grouping_models  # noqa: F401  (register models on Base)
+from app.models import chunk as _chunk_models  # noqa: F401  (register models on Base)
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)
 from app.models import settings as _settings_models  # noqa: F401  (register models on Base)
 from app.models import storage_review as _storage_review_models  # noqa: F401  (register models on Base)

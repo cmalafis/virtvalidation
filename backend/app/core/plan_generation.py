@@ -26,9 +26,15 @@ from sqlalchemy.orm import Session
 from app.core import db as _db_module
 from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
-from app.core.strategy_planner import StrategyPlanner, StrategyPlannerError
+from app.core.chunked_planner import (
+    HierarchicalPlanResult,
+    generate_plan as run_hierarchical_plan,
+)
+from app.core.strategy_planner import StrategyPlannerError
+from app.models.chunk import PlanChunk
 from app.models.plan import MigrationPlan, PlanningStrategy
 from app.models.target import ResourceMapping
+from app.models.vcenter import VCenterSource
 from app.models.vm import VM, BaselineSnapshot
 
 logger = logging.getLogger(__name__)
@@ -38,7 +44,12 @@ PlanGenerationStatus = Literal["running", "completed", "failed"]
 PlanGenerationStep = Literal[
     "queued",
     "aggregating_data",
-    "llm_reasoning",
+    "chunking",
+    "planning_chunks",
+    "planning_single_shot",
+    "assembling",
+    "reviewing",
+    "llm_reasoning",  # legacy alias kept for back-compat with old UI
     "parsing_response",
     "validating",
     "persisting",
@@ -60,6 +71,14 @@ class PlanGenerationTask:
     completed_at: Optional[datetime] = None
     plan_id: Optional[int] = None
     error: Optional[str] = None
+    # Hierarchical-planner progress fields. Optional so the legacy
+    # single-shot path leaves them None.
+    chunks_total: Optional[int] = None
+    chunks_complete: Optional[int] = None
+    current_chunk: Optional[str] = None
+    elapsed_seconds: Optional[int] = None
+    estimated_remaining_seconds: Optional[int] = None
+    path_taken: Optional[str] = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -86,14 +105,24 @@ class PlanGenerationTaskStore:
             return self._tasks.get(task_id)
 
     def update(
-        self, task_id: str, *, current_step: PlanGenerationStep, progress_percent: int
+        self,
+        task_id: str,
+        *,
+        current_step: PlanGenerationStep | None = None,
+        progress_percent: int | None = None,
+        **fields: Any,
     ) -> None:
         with self._lock:
             t = self._tasks.get(task_id)
             if t is None:
                 return
-            t.current_step = current_step
-            t.progress_percent = progress_percent
+            if current_step is not None:
+                t.current_step = current_step
+            if progress_percent is not None:
+                t.progress_percent = progress_percent
+            for k, v in fields.items():
+                if hasattr(t, k):
+                    setattr(t, k, v)
 
     def mark_completed(self, task_id: str, *, plan_id: int) -> None:
         with self._lock:
@@ -236,39 +265,96 @@ def run_plan_generation(
             return
         profiles = assemble_vm_profiles(db, vms)
 
-        task_store.update(task_id, current_step="llm_reasoning", progress_percent=30)
+        # Build a vcenter-id → classification lookup so the chunker
+        # can hard-partition by classification without doing a second
+        # query per VM.
+        vc_rows = list(db.scalars(select(VCenterSource)).all())
+        classification_by_vc = {
+            row.id: row.classification_level.value for row in vc_rows
+        }
+
+        # Hand off to the hierarchical planner. Progress callbacks
+        # update the task store so the UI's poll endpoint reflects
+        # chunking → per-chunk → assembly → review stages.
+        def _progress(**kw) -> None:
+            stage = kw.get("stage")
+            chunks_total = kw.get("chunks_total")
+            chunks_complete = kw.get("chunks_complete")
+            current_chunk = kw.get("current_chunk")
+            elapsed = kw.get("elapsed_seconds")
+            # Map stage → progress_percent so the legacy progress bar
+            # still moves smoothly.
+            pct = _stage_to_percent(stage, chunks_total, chunks_complete)
+            update_kwargs: dict = {"current_step": stage}
+            if pct is not None:
+                update_kwargs["progress_percent"] = pct
+            if chunks_total is not None:
+                update_kwargs["chunks_total"] = chunks_total
+            if chunks_complete is not None:
+                update_kwargs["chunks_complete"] = chunks_complete
+            if current_chunk is not None:
+                update_kwargs["current_chunk"] = current_chunk
+            if elapsed is not None:
+                update_kwargs["elapsed_seconds"] = elapsed
+            task_store.update(task_id, **update_kwargs)
+
         try:
-            planner = StrategyPlanner()
-            result = planner.plan(strategy, profiles)
+            result: HierarchicalPlanResult = run_hierarchical_plan(
+                vms=vms,
+                vm_profiles=profiles,
+                strategy=strategy,
+                mappings=(
+                    db.get(ResourceMapping, mapping_id) if mapping_id else None
+                ),
+                classification_by_vcenter=classification_by_vc,
+                progress_cb=_progress,
+            )
         except StrategyPlannerError as e:
             logger.warning("plan generation failed: %s", e)
             task_store.mark_failed(task_id, error=str(e))
             return
 
-        task_store.update(task_id, current_step="parsing_response", progress_percent=70)
-        # Parser already ran inside planner.plan(); the explicit step
-        # update is here so the UI's progress bar advances visibly.
-        task_store.update(task_id, current_step="validating", progress_percent=85)
-
         task_store.update(task_id, current_step="persisting", progress_percent=95)
-        merged_warnings = list(result.get("warnings") or []) + mapping_warnings
+        merged_warnings = list(result.warnings) + mapping_warnings
         plan = MigrationPlan(
             name=plan_name,
             vm_ids=[p["vm_id"] for p in profiles],
-            waves=result["waves"],
-            summary=result.get("plan_summary") or None,
-            model=result.get("model") or "",
+            waves=result.waves,
+            summary=result.plan_summary or None,
+            model=result.model or "",
             strategy_id=strategy.id,
             mapping_id=mapping_id,
-            generation_prompt=result.get("generation_prompt"),
-            generation_response=result.get("generation_response"),
-            plan_summary=result.get("plan_summary") or None,
-            rationale=result.get("rationale") or None,
+            generation_prompt=result.generation_prompt or None,
+            generation_response=result.generation_response or None,
+            plan_summary=result.plan_summary or None,
+            rationale=result.rationale or None,
             warnings=merged_warnings,
-            next_actions=result.get("next_actions") or [],
+            next_actions=result.next_actions,
             revision_number=1,
         )
         db.add(plan)
+        db.flush()  # need plan.id before persisting chunks
+
+        for idx, chunk_dict in enumerate(result.chunks):
+            db.add(
+                PlanChunk(
+                    plan_id=plan.id,
+                    chunk_id=chunk_dict["chunk_id"],
+                    sequence_index=idx,
+                    label=chunk_dict.get("label") or "",
+                    reason_for_chunk=chunk_dict.get("reason_for_chunk") or "",
+                    partition_key=chunk_dict.get("partition_key") or {},
+                    sub_key=chunk_dict.get("sub_key") or {},
+                    hints=chunk_dict.get("hints") or {},
+                    vm_ids=chunk_dict.get("vm_ids") or [],
+                    sequence_dependencies=(
+                        chunk_dict.get("sequence_dependencies") or []
+                    ),
+                    chunk_rationale=chunk_dict.get("chunk_rationale") or None,
+                    chunk_risk_level=chunk_dict.get("chunk_risk_level") or None,
+                    wave_numbers=chunk_dict.get("wave_numbers") or [],
+                )
+            )
         db.commit()
         db.refresh(plan)
 
@@ -283,20 +369,50 @@ def run_plan_generation(
                 "strategy_id": strategy.id,
                 "vm_count": len(plan.vm_ids),
                 "wave_count": len(plan.waves),
+                "chunk_count": len(result.chunks),
                 "warning_count": len(plan.warnings),
+                "path_taken": result.path_taken,
             },
         )
         db.commit()
 
+        task_store.update(task_id, path_taken=result.path_taken)
         task_store.mark_completed(task_id, plan_id=plan.id)
         logger.info(
-            "plan %s generated: %d waves across %d VMs",
+            "plan %s generated via %s: %d waves across %d chunks for %d VMs",
             plan.id,
+            result.path_taken,
             len(plan.waves),
+            len(result.chunks),
             len(plan.vm_ids),
         )
     finally:
         db.close()
+
+
+def _stage_to_percent(
+    stage: str | None,
+    chunks_total: int | None,
+    chunks_complete: int | None,
+) -> int | None:
+    """Map the hierarchical-planner stage to a flat percent so the
+    existing UI progress bar keeps making sense across pipelines."""
+    if stage == "chunking":
+        return 5
+    if stage == "planning_single_shot":
+        return 50
+    if stage == "planning_chunks":
+        if chunks_total and chunks_total > 0 and chunks_complete is not None:
+            # Chunk planning owns 10-85% of the bar.
+            return 10 + int(75 * chunks_complete / chunks_total)
+        return 10
+    if stage == "assembling":
+        return 87
+    if stage == "reviewing":
+        return 92
+    if stage == "completed":
+        return 100
+    return None
 
 
 # ---------------------------------------------------------------------------

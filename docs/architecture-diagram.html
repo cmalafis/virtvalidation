@@ -949,6 +949,18 @@ const DATA = {
           },
           {
             "method": "GET",
+            "path": "/api/plans/{plan_id}/chunks",
+            "handler": "get_plan_chunks",
+            "summary": "Return the chunk breakdown for a hierarchically-planned plan."
+          },
+          {
+            "method": "POST",
+            "path": "/api/plans/preview-chunks",
+            "handler": "preview_chunks",
+            "summary": "Return what the chunker WOULD produce for a given scope without"
+          },
+          {
+            "method": "GET",
             "path": "/api/plans/{plan_id}/waves/{wave_number}/report",
             "handler": "wave_report",
             "summary": ""
@@ -1019,14 +1031,18 @@ const DATA = {
         "depends_on": [
           "app.core.audit",
           "app.core.baseline",
+          "app.core.chunker",
           "app.core.db",
+          "app.core.llm.factory",
           "app.core.mtv",
           "app.core.plan_generation",
           "app.core.planner",
           "app.core.reporter",
+          "app.models.chunk",
           "app.models.plan",
           "app.models.target",
           "app.models.validation",
+          "app.models.vcenter",
           "app.models.vm",
           "app.schemas.plan",
           "app.schemas.report"
@@ -1350,10 +1366,16 @@ const DATA = {
               "started_at",
               "completed_at",
               "plan_id",
-              "error"
+              "error",
+              "chunks_total",
+              "chunks_complete",
+              "current_chunk",
+              "elapsed_seconds",
+              "estimated_remaining_seconds",
+              "path_taken"
             ],
             "methods": [],
-            "summary": ""
+            "summary": "Status payload the wizard polls."
           },
           {
             "name": "WaveRead",
@@ -1373,6 +1395,27 @@ const DATA = {
             ],
             "methods": [],
             "summary": ""
+          },
+          {
+            "name": "PlanChunkRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "chunk_id",
+              "sequence_index",
+              "label",
+              "reason_for_chunk",
+              "partition_key",
+              "sub_key",
+              "hints",
+              "vm_ids",
+              "sequence_dependencies",
+              "chunk_rationale",
+              "chunk_risk_level",
+              "wave_numbers"
+            ],
+            "methods": [],
+            "summary": "One chunk row from the hierarchical plan. Surfaced to the UI's"
           },
           {
             "name": "PlanRead",
@@ -2404,6 +2447,135 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.chunked_planner",
+        "title": "app.core.chunked_planner",
+        "subtitle": "backend/app/core/chunked_planner.py",
+        "summary": "Hierarchical migration planner.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ChunkPlan",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "chunk_id",
+              "label",
+              "rationale",
+              "risk_level",
+              "waves",
+              "vm_ids"
+            ],
+            "methods": [],
+            "summary": "Per-chunk LLM output, parsed + validated."
+          },
+          {
+            "name": "HierarchicalPlanResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "plan_summary",
+              "rationale",
+              "warnings",
+              "next_actions",
+              "waves",
+              "chunks",
+              "model",
+              "generation_prompt",
+              "generation_response",
+              "path_taken"
+            ],
+            "methods": [],
+            "summary": "Final orchestrator output. Shaped to drop into the existing"
+          }
+        ],
+        "functions": [
+          {
+            "name": "generate_plan_async",
+            "summary": "Three-stage hierarchical plan."
+          },
+          {
+            "name": "generate_plan",
+            "summary": "Sync entry point for FastAPI BackgroundTasks. Wraps the async"
+          }
+        ],
+        "depends_on": [
+          "app.core.chunker",
+          "app.core.llm.base",
+          "app.core.llm.factory",
+          "app.core.strategy_planner",
+          "app.models.plan",
+          "app.models.target",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.chunker",
+        "title": "app.core.chunker",
+        "subtitle": "backend/app/core/chunker.py",
+        "summary": "Pure-Python chunking for hierarchical migration planning.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "Chunk",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "chunk_id",
+              "vm_ids",
+              "partition_key",
+              "sub_key",
+              "hints",
+              "reason_for_chunk",
+              "sequence_dependencies"
+            ],
+            "methods": [
+              {
+                "name": "size",
+                "summary": ""
+              },
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": "One partition of the inventory."
+          },
+          {
+            "name": "_ChunkContext",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "strategy",
+              "mappings",
+              "target_cluster_id",
+              "classification_by_vcenter",
+              "max_size"
+            ],
+            "methods": [],
+            "summary": "Internal carry-along so helpers don't take 6 args each."
+          }
+        ],
+        "functions": [
+          {
+            "name": "chunk_vms",
+            "summary": "Pure-Python chunker. Returns an ordered list of :class:`Chunk`"
+          },
+          {
+            "name": "validate_chunks",
+            "summary": "Raise AssertionError if the chunk set has an integrity issue."
+          }
+        ],
+        "depends_on": [
+          "app.models.plan",
+          "app.models.target",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.commands",
         "title": "app.core.commands",
         "subtitle": "backend/app/core/commands.py",
@@ -2618,7 +2790,11 @@ const DATA = {
             "kind": "class",
             "table": "",
             "fields": [
-              "backend_type"
+              "backend_type",
+              "max_planning_chunk_size",
+              "max_context_tokens",
+              "supports_concurrent_calls",
+              "max_concurrent_calls"
             ],
             "methods": [
               {
@@ -3099,7 +3275,13 @@ const DATA = {
               "started_at",
               "completed_at",
               "plan_id",
-              "error"
+              "error",
+              "chunks_total",
+              "chunks_complete",
+              "current_chunk",
+              "elapsed_seconds",
+              "estimated_remaining_seconds",
+              "path_taken"
             ],
             "methods": [
               {
@@ -3169,9 +3351,12 @@ const DATA = {
           "app.core",
           "app.core.audit",
           "app.core.baseline",
+          "app.core.chunked_planner",
           "app.core.strategy_planner",
+          "app.models.chunk",
           "app.models.plan",
           "app.models.target",
+          "app.models.vcenter",
           "app.models.vm"
         ]
       },
@@ -3499,6 +3684,45 @@ const DATA = {
           "app.models.settings",
           "app.models.validation",
           "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.chunk",
+        "title": "app.models.chunk",
+        "subtitle": "backend/app/models/chunk.py",
+        "summary": "Persisted plan chunks.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "PlanChunk",
+            "kind": "model",
+            "table": "plan_chunks",
+            "fields": [
+              "id",
+              "plan_id",
+              "chunk_id",
+              "sequence_index",
+              "label",
+              "reason_for_chunk",
+              "partition_key",
+              "sub_key",
+              "hints",
+              "vm_ids",
+              "sequence_dependencies",
+              "chunk_rationale",
+              "chunk_risk_level",
+              "wave_numbers",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
         ]
       },
       {
@@ -4981,6 +5205,7 @@ const DATA = {
         "category": "frontend",
         "api_calls": [
           "/api/plans/{id}",
+          "/api/plans/{id}/chunks",
           "/api/plans/{id}/waves/{id}/move-vm",
           "/api/vms?limit=500"
         ],
@@ -4991,6 +5216,10 @@ const DATA = {
           },
           {
             "name": "PlanView",
+            "kind": "component"
+          },
+          {
+            "name": "ChunkCard",
             "kind": "component"
           },
           {
@@ -5022,6 +5251,7 @@ const DATA = {
           "/api/mappings",
           "/api/plans/generate",
           "/api/plans/generate/{id}/status",
+          "/api/plans/preview-chunks",
           "/api/sources/vcenters",
           "/api/vms?{id}"
         ],
@@ -5032,6 +5262,10 @@ const DATA = {
           },
           {
             "name": "PlanWizard",
+            "kind": "component"
+          },
+          {
+            "name": "ChunkPreview",
             "kind": "component"
           },
           {

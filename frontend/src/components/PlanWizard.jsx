@@ -100,6 +100,8 @@ export default function PlanWizard() {
   const [mappingId, setMappingId] = useState("");
   const [vmCount, setVmCount] = useState(null);
   const [vmCountLoading, setVmCountLoading] = useState(false);
+  const [chunkPreview, setChunkPreview] = useState(null);
+  const [chunkPreviewLoading, setChunkPreviewLoading] = useState(false);
 
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(null);
@@ -152,6 +154,34 @@ export default function PlanWizard() {
   };
 
   const canGenerate = name.trim().length > 0 && !generating;
+
+  const previewChunks = async () => {
+    setChunkPreviewLoading(true);
+    setChunkPreview(null);
+    try {
+      const inline = {
+        name: name.trim() || "preview",
+        primary_grouping: primaryGrouping,
+        wave_size_target: waveSize,
+        wave_size_custom: waveSize === "custom" ? Number(waveSizeCustom) : null,
+        risk_approach: risk,
+        production_handling: prodHandling,
+        application_atomicity: atomicity,
+        freeform_constraints: freeform,
+      };
+      const body = { name: inline.name, inline_strategy: inline, scope: buildScope() };
+      if (mappingId) body.mapping_id = parseInt(mappingId, 10);
+      const result = await fetchJSON("/api/plans/preview-chunks", {
+        method: "POST",
+        body,
+      });
+      setChunkPreview(result);
+    } catch (err) {
+      toast.error(err.message || "Chunk preview failed", TOAST_OPTS);
+    } finally {
+      setChunkPreviewLoading(false);
+    }
+  };
 
   const submit = async (e) => {
     e?.preventDefault();
@@ -379,6 +409,24 @@ export default function PlanWizard() {
 
           {/* Step 9: Review + Generate */}
           <Step n={9} title="Review and generate" subtitle="Confirm the strategy. Generation runs in the background — you can navigate away and come back.">
+            {/* Chunk preview — shown before submission so the operator
+                sees how the chunker will partition the scope and how
+                long generation should take. */}
+            <div style={{ marginBottom: 14, padding: "12px 14px", border: "1px solid #1a1a2e", background: "#0a0a16" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 13, color: "#ccccee" }}>
+                  Preview the chunk breakdown before submission. Shows how
+                  the planner will partition your scope.
+                </div>
+                <button type="button" onClick={previewChunks}
+                  disabled={!canGenerate || vmCount === 0 || chunkPreviewLoading}
+                  style={{ ...btnGhost, opacity: chunkPreviewLoading ? 0.5 : 1 }}>
+                  {chunkPreviewLoading ? "Computing…" : "Preview chunks"}
+                </button>
+              </div>
+              {chunkPreview && <ChunkPreview preview={chunkPreview} />}
+            </div>
+
             {generating && progress && (
               <ProgressBar progress={progress} />
             )}
@@ -397,10 +445,67 @@ export default function PlanWizard() {
 }
 
 
+function ChunkPreview({ preview }) {
+  if (preview.vm_count === 0) {
+    return (
+      <div style={{ marginTop: 10, color: "#ff8888", fontSize: 13 }}>
+        Scope matched zero VMs — adjust the filter.
+      </div>
+    );
+  }
+  if (preview.single_shot) {
+    return (
+      <div style={{ marginTop: 10, fontSize: 13, color: "#ccccee" }}>
+        <strong>{preview.vm_count}</strong> VMs in scope · single-shot
+        plan (no chunking) · estimated 1-3 minutes.
+      </div>
+    );
+  }
+  const avg = preview.chunk_count
+    ? Math.round(preview.vm_count / preview.chunk_count)
+    : 0;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontSize: 13, color: "#ccccee" }}>
+        <strong>{preview.vm_count}</strong> VMs · <strong>{preview.chunk_count}</strong> chunks
+        {avg > 0 && <> · avg <strong>{avg}</strong> VMs/chunk</>}
+        {preview.max_chunk_size > 0 && (
+          <> · backend cap <strong>{preview.max_chunk_size}</strong></>
+        )}
+      </div>
+      {(preview.warnings || []).length > 0 && (
+        <ul style={{ marginTop: 6, color: "#ffaa00", fontSize: 12, paddingLeft: 18 }}>
+          {preview.warnings.map((w, i) => <li key={i}>{w}</li>)}
+        </ul>
+      )}
+      <details style={{ marginTop: 8 }}>
+        <summary style={{ fontSize: 12, color: "#aaaacc", cursor: "pointer" }}>
+          Show {preview.chunks?.length ?? 0} planned chunks
+        </summary>
+        <ul style={{ marginTop: 6, color: "#ccccee", fontSize: 12, paddingLeft: 16, lineHeight: 1.6 }}>
+          {(preview.chunks || []).map((c) => (
+            <li key={c.chunk_id}>
+              <strong>{c.label}</strong> ({c.size} VMs)
+              {c.is_foundation && <em style={{ marginLeft: 6, color: "#88aaff" }}>· foundation</em>}
+              <div style={{ color: "#888899", fontSize: 11 }}>{c.reason_for_chunk}</div>
+            </li>
+          ))}
+        </ul>
+      </details>
+    </div>
+  );
+}
+
+
 function ProgressBar({ progress }) {
   const stepLabels = {
     queued: "Queued",
     aggregating_data: "Aggregating VM data",
+    chunking: "Partitioning inventory into chunks",
+    planning_chunks: "Planning each chunk with the AI",
+    planning_single_shot: "AI reasoning (single-shot)",
+    assembling: "Assembling chunks into master plan",
+    reviewing: "AI review of cross-chunk concerns",
     llm_reasoning: "AI reasoning over your strategy",
     parsing_response: "Parsing AI response",
     validating: "Validating plan integrity",
@@ -425,6 +530,13 @@ function ProgressBar({ progress }) {
       <div style={{ height: 4, background: "#0a0a18", border: "1px solid #1a1a2e" }}>
         <div style={{ height: "100%", width: `${pct}%`, background: "#4488ff", transition: "width 0.4s ease" }} />
       </div>
+      {progress.chunks_total != null && progress.chunks_total > 0 && (
+        <div style={{ marginTop: 8, fontSize: 12, color: "#aaaacc" }}>
+          Chunks: <strong>{progress.chunks_complete ?? 0}/{progress.chunks_total}</strong>
+          {progress.current_chunk && <> · current: <em>{progress.current_chunk}</em></>}
+          {progress.elapsed_seconds != null && <> · elapsed {progress.elapsed_seconds}s</>}
+        </div>
+      )}
     </div>
   );
 }
@@ -518,4 +630,9 @@ const btnSecondary = {
   padding: "10px 18px", fontFamily: "'Barlow', sans-serif", fontSize: 12,
   letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
   cursor: "pointer", textDecoration: "none",
+};
+const btnGhost = {
+  background: "transparent", border: "1px solid #2a2a44", color: "#ccccee",
+  padding: "8px 14px", fontFamily: "'Barlow', sans-serif", fontSize: 11,
+  letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
 };

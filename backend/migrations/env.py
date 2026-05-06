@@ -15,6 +15,7 @@ from app.core.config import settings as app_settings
 from app.core.db import Base
 from app.models import (  # noqa: F401  (register models on Base)
     audit,
+    chunk,
     grouping,
     network_review,
     plan,

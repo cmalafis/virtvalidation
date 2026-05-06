@@ -222,7 +222,7 @@ LLM-driven wave planning + MTV/Forklift YAML generation.
 <details><summary><strong><code>app.api.plans</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/plans.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.db`, `app.core.mtv`, `app.core.plan_generation`, `app.core.planner`, `app.core.reporter`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
+Depends on: `app.core.audit`, `app.core.baseline`, `app.core.chunker`, `app.core.db`, `app.core.llm.factory`, `app.core.mtv`, `app.core.plan_generation`, `app.core.planner`, `app.core.reporter`, `app.models.chunk`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
 
 **Routes**
 
@@ -231,6 +231,8 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.db`, `app.core.mtv`
 | `POST` | `/api/plans` | `create_plan(payload, db)` | — |
 | `GET` | `/api/plans` | `list_plans(db, limit)` | — |
 | `GET` | `/api/plans/{plan_id}` | `get_plan(plan_id, db)` | — |
+| `GET` | `/api/plans/{plan_id}/chunks` | `get_plan_chunks(plan_id, db)` | Return the chunk breakdown for a hierarchically-planned plan. |
+| `POST` | `/api/plans/preview-chunks` | `preview_chunks(payload, db)` | Return what the chunker WOULD produce for a given scope without |
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/report` | `wave_report(request, plan_id, wave_number, format, db)` | — |
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/report/pdf` | `wave_report_pdf(request, plan_id, wave_number, db)` | Dedicated PDF endpoint — always returns Content-Type: application/pdf. |
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/mtv-yaml` | `wave_mtv_yaml(request, plan_id, wave_number, db)` | Render the wave as a multi-doc MTV/Forklift YAML for ``oc apply -f``. |
@@ -328,9 +330,13 @@ Depends on: `app.models.plan`
   - Wizard submission. Either references a saved strategy or embeds
   - Fields: `name`, `strategy_id`, `inline_strategy`, `scope`, `mapping_id`
 - **`PlanGenerationTaskRead`** (Pydantic schema)
-  - Fields: `task_id`, `status`, `current_step`, `progress_percent`, `started_at`, `completed_at`, `plan_id`, `error`
+  - Status payload the wizard polls.
+  - Fields: `task_id`, `status`, `current_step`, `progress_percent`, `started_at`, `completed_at`, `plan_id`, `error`, `chunks_total`, `chunks_complete`, `current_chunk`, `elapsed_seconds`, `estimated_remaining_seconds`, `path_taken`
 - **`WaveRead`** (Pydantic schema)
   - Fields: `wave_number`, `name`, `vm_ids`, `rationale`, `estimated_duration`, `estimated_risk`, `risk_level`, `considerations`, `applications_included`, `applications_split_warning`
+- **`PlanChunkRead`** (Pydantic schema)
+  - One chunk row from the hierarchical plan. Surfaced to the UI's
+  - Fields: `chunk_id`, `sequence_index`, `label`, `reason_for_chunk`, `partition_key`, `sub_key`, `hints`, `vm_ids`, `sequence_dependencies`, `chunk_rationale`, `chunk_risk_level`, `wave_numbers`
 - **`PlanRead`** (Pydantic schema)
   - Strategy-driven plans populate every field; legacy plans leave
   - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `created_at`
@@ -705,6 +711,51 @@ Depends on: `app.core`, `app.core.audit`, `app.core.config`, `app.core.llm.base`
 
 </details>
 
+<details><summary><strong><code>app.core.chunked_planner</code></strong> — <em>Business logic</em> · Hierarchical migration planner.</summary>
+
+Path: `backend/app/core/chunked_planner.py`  
+Depends on: `app.core.chunker`, `app.core.llm.base`, `app.core.llm.factory`, `app.core.strategy_planner`, `app.models.plan`, `app.models.target`, `app.models.vm`
+
+**Classes**
+
+- **`ChunkPlan`** (Class)
+  - Per-chunk LLM output, parsed + validated.
+  - Fields: `chunk_id`, `label`, `rationale`, `risk_level`, `waves`, `vm_ids`
+- **`HierarchicalPlanResult`** (Class)
+  - Final orchestrator output. Shaped to drop into the existing
+  - Fields: `plan_summary`, `rationale`, `warnings`, `next_actions`, `waves`, `chunks`, `model`, `generation_prompt`, `generation_response`, `path_taken`
+
+**Functions**
+
+- `generate_plan_async()` — Three-stage hierarchical plan.
+- `generate_plan()` — Sync entry point for FastAPI BackgroundTasks. Wraps the async
+
+</details>
+
+<details><summary><strong><code>app.core.chunker</code></strong> — <em>Business logic</em> · Pure-Python chunking for hierarchical migration planning.</summary>
+
+Path: `backend/app/core/chunker.py`  
+Depends on: `app.models.plan`, `app.models.target`, `app.models.vm`
+
+**Classes**
+
+- **`Chunk`** (Class)
+  - One partition of the inventory.
+  - Fields: `chunk_id`, `vm_ids`, `partition_key`, `sub_key`, `hints`, `reason_for_chunk`, `sequence_dependencies`
+  - Methods:
+    - `size(self)`
+    - `to_dict(self)`
+- **`_ChunkContext`** (Class)
+  - Internal carry-along so helpers don't take 6 args each.
+  - Fields: `strategy`, `mappings`, `target_cluster_id`, `classification_by_vcenter`, `max_size`
+
+**Functions**
+
+- `chunk_vms(vms)` — Pure-Python chunker. Returns an ordered list of :class:`Chunk`
+- `validate_chunks(chunks, expected_vm_ids)` — Raise AssertionError if the chunk set has an integrity issue.
+
+</details>
+
 <details><summary><strong><code>app.core.commands</code></strong> — <em>Business logic</em> · Per-OS command dispatch for the SSH collector.</summary>
 
 Path: `backend/app/core/commands.py`  
@@ -786,7 +837,7 @@ Path: `backend/app/core/llm/base.py`
   - Raised when a backend call fails — transport, parsing, or auth.
 - **`LLMBackend`** (Class)
   - Abstract base for all LLM inference backends.
-  - Fields: `backend_type`
+  - Fields: `backend_type`, `max_planning_chunk_size`, `max_context_tokens`, `supports_concurrent_calls`, `max_concurrent_calls`
   - Methods:
     - `chat(self, messages, model, temperature, max_tokens)` — Single completion request, returns full response.
     - `chat_stream(self, messages, model, temperature)` — Streaming completion — yields token chunks as they arrive.
@@ -979,19 +1030,19 @@ Path: `backend/app/core/os_profile.py`
 <details><summary><strong><code>app.core.plan_generation</code></strong> — <em>Business logic</em> · Async migration plan generation + revision tracking.</summary>
 
 Path: `backend/app/core/plan_generation.py`  
-Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.strategy_planner`, `app.models.plan`, `app.models.target`, `app.models.vm`
+Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.chunked_planner`, `app.core.strategy_planner`, `app.models.chunk`, `app.models.plan`, `app.models.target`, `app.models.vcenter`, `app.models.vm`
 
 **Classes**
 
 - **`PlanGenerationTask`** (Class)
-  - Fields: `task_id`, `status`, `current_step`, `progress_percent`, `started_at`, `completed_at`, `plan_id`, `error`
+  - Fields: `task_id`, `status`, `current_step`, `progress_percent`, `started_at`, `completed_at`, `plan_id`, `error`, `chunks_total`, `chunks_complete`, `current_chunk`, `elapsed_seconds`, `estimated_remaining_seconds`, `path_taken`
   - Methods:
     - `to_dict(self)`
 - **`PlanGenerationTaskStore`** (Class)
   - Methods:
     - `create(self)`
     - `get(self, task_id)`
-    - `update(self, task_id)`
+    - `update(self, task_id, **fields)`
     - `mark_completed(self, task_id)`
     - `mark_failed(self, task_id)`
 - **`PlanRevisionError`** (Class)
@@ -1118,6 +1169,18 @@ Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.a
 
 Path: `backend/app/models/__init__.py`  
 Depends on: `app.models.audit`, `app.models.network_review`, `app.models.plan`, `app.models.settings`, `app.models.validation`, `app.models.vm`
+
+</details>
+
+<details><summary><strong><code>app.models.chunk</code></strong> — <em>Data models / schemas</em> · Persisted plan chunks.</summary>
+
+Path: `backend/app/models/chunk.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`PlanChunk`** (SQLAlchemy model · table `plan_chunks`)
+  - Fields: `id`, `plan_id`, `chunk_id`, `sequence_index`, `label`, `reason_for_chunk`, `partition_key`, `sub_key`, `hints`, `vm_ids`, `sequence_dependencies`, `chunk_rationale`, `chunk_risk_level`, `wave_numbers`, `created_at`
 
 </details>
 
@@ -1486,12 +1549,14 @@ Exports / inner components:
 
 API calls:
 - `/api/plans/{id}`
+- `/api/plans/{id}/chunks`
 - `/api/plans/{id}/waves/{id}/move-vm`
 - `/api/vms?limit=500`
 
 Exports / inner components:
 - **`fetchJSON`** (helper)
 - **`PlanView`** (component)
+- **`ChunkCard`** (component)
 - **`WaveCard`** (component)
 - **`MoveVMPicker`** (component)
 - **`Section`** (component)
@@ -1505,12 +1570,14 @@ API calls:
 - `/api/mappings`
 - `/api/plans/generate`
 - `/api/plans/generate/{id}/status`
+- `/api/plans/preview-chunks`
 - `/api/sources/vcenters`
 - `/api/vms?{id}`
 
 Exports / inner components:
 - **`fetchJSON`** (helper)
 - **`PlanWizard`** (component)
+- **`ChunkPreview`** (component)
 - **`ProgressBar`** (component)
 - **`estimateWaveCount`** (helper)
 - **`Radio`** (component)

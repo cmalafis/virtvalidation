@@ -98,11 +98,24 @@ class PlanGenerateRequest(BaseModel):
 
 
 class PlanGenerationTaskRead(BaseModel):
+    """Status payload the wizard polls.
+
+    Multi-stage hierarchical planner emits ``current_step`` values
+    that map onto the stage names the chunker / chunked planner use.
+    Optional fields (``chunks_total`` etc) populate during the chunked
+    path; the legacy single-shot path leaves them ``None``.
+    """
+
     task_id: str
     status: Literal["running", "completed", "failed"]
     current_step: Literal[
         "queued",
         "aggregating_data",
+        "chunking",
+        "planning_chunks",
+        "planning_single_shot",
+        "assembling",
+        "reviewing",
         "llm_reasoning",
         "parsing_response",
         "validating",
@@ -115,6 +128,12 @@ class PlanGenerationTaskRead(BaseModel):
     completed_at: datetime | None = None
     plan_id: int | None = None
     error: str | None = None
+    chunks_total: int | None = None
+    chunks_complete: int | None = None
+    current_chunk: str | None = None
+    elapsed_seconds: int | None = None
+    estimated_remaining_seconds: int | None = None
+    path_taken: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +150,26 @@ class WaveRead(BaseModel):
     considerations: str = ""
     applications_included: list[str] = Field(default_factory=list)
     applications_split_warning: str | None = None
+
+
+class PlanChunkRead(BaseModel):
+    """One chunk row from the hierarchical plan. Surfaced to the UI's
+    chunk-navigation panel so operators see why each chunk exists."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    chunk_id: str
+    sequence_index: int
+    label: str
+    reason_for_chunk: str
+    partition_key: dict
+    sub_key: dict
+    hints: dict
+    vm_ids: list[int]
+    sequence_dependencies: list[str]
+    chunk_rationale: str | None = None
+    chunk_risk_level: str | None = None
+    wave_numbers: list[int]
 
 
 class PlanRead(BaseModel):

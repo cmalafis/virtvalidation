@@ -39,6 +39,26 @@ class LLMBackend(ABC):
     #: Human-readable identifier surfaced to the UI / health endpoints.
     backend_type: str = "abstract"
 
+    # ---- Capacity declarations consumed by the hierarchical planner ----
+    # These are class-level defaults; concrete backends override them
+    # with values that match the model + serving environment they
+    # represent. The planner reads them at runtime so the same code
+    # scales from a 4096-context Ollama appliance to a multi-pod KServe
+    # deployment without orchestrator changes.
+    #
+    # max_planning_chunk_size — VMs per per-chunk LLM call. Sized so the
+    #   chunk's prompt + JSON output stays comfortably inside
+    #   ``max_context_tokens``.
+    # max_context_tokens — model's effective context window in tokens.
+    # supports_concurrent_calls — True when the backend can serve >1
+    #   chat call concurrently (KServe with >1 replica, vLLM batching).
+    # max_concurrent_calls — upper bound on parallelism the planner
+    #   uses for chunks. Ignored when supports_concurrent_calls=False.
+    max_planning_chunk_size: int = 15
+    max_context_tokens: int = 4096
+    supports_concurrent_calls: bool = False
+    max_concurrent_calls: int = 1
+
     @abstractmethod
     async def chat(
         self,

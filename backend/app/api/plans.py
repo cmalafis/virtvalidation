@@ -30,11 +30,16 @@ from app.core.plan_generation import (
 from app.core.plan_generation import task_store as plan_task_store
 from app.core.planner import MigrationPlanner, PlannerError
 from app.core.reporter import ReporterError, WaveReporter, render_pdf
+from app.core.chunker import chunk_vms
+from app.core.llm.factory import get_llm_backend
+from app.models.chunk import PlanChunk
 from app.models.plan import MigrationPlan, PlanningStrategy
 from app.models.target import ResourceMapping
+from app.models.vcenter import VCenterSource
 from app.models.validation import ValidationResult
 from app.models.vm import VM, BaselineSnapshot
 from app.schemas.plan import (
+    PlanChunkRead,
     PlanCreate,
     PlanGenerateRequest,
     PlanGenerationTaskRead,
@@ -121,6 +126,130 @@ def get_plan(plan_id: int, db: Session = Depends(get_db)) -> MigrationPlan:
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
     return plan
+
+
+@router.get("/{plan_id}/chunks", response_model=list[PlanChunkRead])
+def get_plan_chunks(plan_id: int, db: Session = Depends(get_db)) -> list[PlanChunk]:
+    """Return the chunk breakdown for a hierarchically-planned plan.
+
+    Empty list for single-shot plans (the orchestrator persists no
+    chunks for inputs under :data:`SINGLE_SHOT_THRESHOLD`).
+    """
+    plan = db.get(MigrationPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+    return list(
+        db.scalars(
+            select(PlanChunk)
+            .where(PlanChunk.plan_id == plan_id)
+            .order_by(PlanChunk.sequence_index)
+        ).all()
+    )
+
+
+@router.post("/preview-chunks")
+def preview_chunks(
+    payload: PlanGenerateRequest, db: Session = Depends(get_db)
+) -> dict:
+    """Return what the chunker WOULD produce for a given scope without
+    invoking the LLM. The wizard calls this before submission so the
+    operator sees the planned chunk breakdown ("8 chunks, avg 12 VMs,
+    ~5-10 minutes") and can adjust scope if needed."""
+    matched = resolve_scope(db, payload.scope.model_dump())
+    if not matched:
+        return {
+            "vm_count": 0,
+            "chunk_count": 0,
+            "single_shot": False,
+            "max_chunk_size": 0,
+            "chunks": [],
+            "warnings": ["Scope filter matched zero VMs"],
+        }
+
+    backend = get_llm_backend()
+    vc_rows = list(db.scalars(select(VCenterSource)).all())
+    classification_by_vc = {row.id: row.classification_level.value for row in vc_rows}
+
+    # Inline the strategy if present so the preview matches what the
+    # orchestrator will see.
+    if payload.strategy_id is not None:
+        strategy = db.get(PlanningStrategy, payload.strategy_id)
+        if strategy is None:
+            raise HTTPException(
+                status_code=404, detail=f"Strategy {payload.strategy_id} not found"
+            )
+    elif payload.inline_strategy is not None:
+        strategy = PlanningStrategy(**payload.inline_strategy.model_dump())
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide either strategy_id or inline_strategy",
+        )
+
+    mapping = (
+        db.get(ResourceMapping, payload.mapping_id)
+        if payload.mapping_id is not None
+        else None
+    )
+
+    from app.core.chunker import SINGLE_SHOT_THRESHOLD
+
+    if len(matched) < SINGLE_SHOT_THRESHOLD:
+        return {
+            "vm_count": len(matched),
+            "chunk_count": 1,
+            "single_shot": True,
+            "max_chunk_size": backend.max_planning_chunk_size,
+            "chunks": [],
+            "warnings": [
+                f"Scope is below the single-shot threshold "
+                f"({SINGLE_SHOT_THRESHOLD} VMs). Plan will use one LLM call "
+                "instead of the chunked pipeline."
+            ],
+        }
+
+    chunks = chunk_vms(
+        matched,
+        mappings=mapping,
+        strategy=strategy,
+        max_size=backend.max_planning_chunk_size,
+        classification_by_vcenter=classification_by_vc,
+    )
+    warnings: list[str] = []
+    oversized_apps: list[str] = []
+    for c in chunks:
+        # Detect a chunk that hit the cap because of an over-large
+        # application. Surface the application name so the operator
+        # knows which one will be subdivided.
+        if c.size == backend.max_planning_chunk_size and (
+            c.sub_key.get("application_hint") and c.sub_key["application_hint"] != "_unspecified_"
+        ):
+            app = c.sub_key["application_hint"]
+            if app not in oversized_apps:
+                oversized_apps.append(app)
+    if oversized_apps:
+        warnings.append(
+            f"Backend max is {backend.max_planning_chunk_size} VMs per chunk; "
+            f"these applications will be subdivided: {', '.join(oversized_apps)}."
+        )
+
+    return {
+        "vm_count": len(matched),
+        "chunk_count": len(chunks),
+        "single_shot": False,
+        "max_chunk_size": backend.max_planning_chunk_size,
+        "chunks": [
+            {
+                "chunk_id": c.chunk_id,
+                "label": c.sub_key.get("label") or "unlabeled",
+                "size": c.size,
+                "reason_for_chunk": c.reason_for_chunk,
+                "is_foundation": bool(c.sub_key.get("is_foundation")),
+            }
+            for c in chunks
+        ],
+        "warnings": warnings,
+    }
 
 
 def _latest_validations_for(db: Session, vm_ids: list[int]) -> dict[int, ValidationResult]:

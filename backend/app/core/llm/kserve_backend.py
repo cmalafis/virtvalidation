@@ -32,6 +32,16 @@ from app.core.llm.base import LLMBackend, LLMBackendError
 class KServeBackend(LLMBackend):
     backend_type = "kserve"
 
+    # Larger model + horizontal scaling on RHOAI. KServe predictors
+    # typically front a 32K-context model (Llama 3.1 8B/70B, Mistral
+    # Large) and serve concurrent requests across replicas. The
+    # 50-VM chunk + 3-way parallelism is the sweet spot validated on
+    # the RHOAI demo cluster's 3-replica config.
+    max_planning_chunk_size = 50
+    max_context_tokens = 32_000
+    supports_concurrent_calls = True
+    max_concurrent_calls = 3
+
     def __init__(
         self,
         endpoint: str,
