@@ -27,7 +27,7 @@ spec:
           image: virtvalidate-frontend
           ports:
             - name: http
-              containerPort: 3000
+              containerPort: 8080
               protocol: TCP
           securityContext:
             allowPrivilegeEscalation: false
@@ -57,14 +57,14 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: nginx-cache
-              mountPath: /var/cache/nginx
+            - name: nginx-lib
+              mountPath: /var/lib/nginx
             - name: nginx-run
-              mountPath: /var/run
+              mountPath: /run
       volumes:
         - name: tmp
           emptyDir: {}
-        - name: nginx-cache
+        - name: nginx-lib
           emptyDir: {}
         - name: nginx-run
           emptyDir: {}

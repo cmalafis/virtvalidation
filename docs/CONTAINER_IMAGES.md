@@ -1,0 +1,250 @@
+# Container Images
+
+VirtValidate ships two container images. Both are built on
+**Red Hat Universal Base Image 9 (UBI 9)**:
+
+| Component | Base | Tag |
+|-----------|------|-----|
+| Backend (FastAPI) | `registry.access.redhat.com/ubi9/python-312:latest` | `latest` |
+| Frontend builder (Vite) | `registry.access.redhat.com/ubi9/nodejs-20:latest` | `latest` |
+| Frontend runtime (nginx) | `registry.access.redhat.com/ubi9/nginx-124:latest` | `latest` |
+
+This document explains why UBI is the only supported base, how the
+images are laid out, how to scan them, and how to update versions.
+
+---
+
+## Why UBI is required
+
+Three reasons this product cannot ship on Docker Hub community
+images:
+
+1. **Federal / DoD security reviews reject Docker Hub bases.** The
+   product's primary customer is federal — DoD, FedRAMP, civilian
+   agencies — and every one of them has a "no Docker Hub in
+   production" rule. Red Hat UBI is on the approved list.
+
+2. **FIPS 140-3 compliance requires UBI.** The host kernel's FIPS
+   module is only certified to pair with Red Hat-built userspace.
+   Running `python:3.12-slim` (Debian) on a FIPS-enabled RHEL host
+   gives you an OpenSSL inside the container that *isn't* in the
+   validated boundary. The product's `FIPS_MODE` flag would be
+   meaningless. See `docs/FIPS_DEPLOYMENT.md` for the full chain.
+
+3. **Red Hat partnership commitments.** This product is positioned
+   as a Red Hat-aligned tool for vSphere → OpenShift Virtualization
+   migration. Shipping community-base containers undercuts the
+   partnership story and triggers questions on every customer call.
+
+UBI is freely redistributable (no Red Hat subscription needed to
+pull or run), but the supply chain is Red Hat's — every layer is
+signed, every CVE backport is published in their advisories.
+
+---
+
+## Image layout
+
+### Backend
+
+```
+/opt/app-root/src/             ← UBI canonical workdir + WORKDIR
+├── alembic.ini
+├── app/                        FastAPI source
+├── migrations/                 Alembic versions
+├── templates/                  Static assets (CSV inventory template)
+└── keys/                       SSH private keys (mode 700, gid 0)
+
+/app  →  /opt/app-root/src      Symlink kept for back-compat with
+                                podman-compose / Quadlet / Helm
+                                volume mounts that still reference
+                                /app/keys.
+```
+
+**Runtime user:** UID 1001 / GID 0 (UBI default). OpenShift's
+`restricted-v2` SCC assigns an arbitrary high UID with primary
+GID 0; chgrp 0 + chmod g=u on every directory the runtime writes
+to keeps the SCC happy.
+
+**Installed packages** (via `dnf` from UBI 9 BaseOS + AppStream):
+
+- `openssh-clients` — SSH collector + paramiko
+- `pango`, `cairo`, `gdk-pixbuf2`, `shared-mime-info` — weasyprint runtime
+- `dejavu-sans-fonts` — weasyprint default font face
+
+### Frontend
+
+Two-stage build:
+
+| Stage | Base | Purpose |
+|-------|------|---------|
+| `builder` | `ubi9/nodejs-20` | `npm ci` + `npm run build` |
+| runtime | `ubi9/nginx-124` | Serves `/opt/app-root/src` on port 8080 |
+
+**Runtime user:** UID 1001 / GID 0.
+
+**Listen port:** 8080 (UBI nginx convention). The host port stays at
+3000 via podman-compose port-mapping (`3000:8080`), the Service
+publishes on 3000, and the Quadlet `PublishPort=3000:8080` keeps the
+operator-facing URL unchanged.
+
+The `nginx.conf` we ship replaces UBI's stock `/etc/nginx/nginx.conf`
+wholesale. Earlier versions dropped a config into `conf.d/` which UBI
+didn't include — silently breaking proxy and SPA fallback.
+
+---
+
+## Image sizes
+
+Captured at v0.x (UBI 9.7 / Python 3.12 / nginx 1.24):
+
+| Image | Compressed | On-disk |
+|-------|-----------:|--------:|
+| `virtvalidate-backend` | ~520 MB | **1.42 GB** |
+| `virtvalidate-frontend` | ~120 MB | **361 MB** |
+
+These are bigger than the v0.1 Docker Hub bases (Python slim was
+~120 MB, Alpine nginx ~50 MB). The size delta is the price of UBI's
+broader package set + Red Hat's signed supply chain. Federal
+deployments accept the trade-off; lab benches can mirror the UBI
+images locally to dodge per-CI pull bandwidth.
+
+---
+
+## Building locally
+
+```bash
+./scripts/build-images.sh                    # build both, no scan, no push
+./scripts/build-images.sh -b backend         # build just the backend
+./scripts/build-images.sh -s                 # build + trivy scan
+./scripts/build-images.sh -p                 # build + push to ghcr.io
+./scripts/build-images.sh -p -s -m           # full release pipeline
+```
+
+The script preflights a `podman pull` of every UBI base before
+building so a connectivity issue surfaces immediately rather than
+five minutes into the layer cache.
+
+---
+
+## Updating base image versions
+
+UBI tags follow `ubi9/<package>-<version>:latest`. Pinning to
+`latest` matches Red Hat's published supply chain — they only update
+the tag for security errata, not for breaking changes within
+the same major version.
+
+When Red Hat ships a new minor (e.g., python-312 → python-313, nginx
+1.24 → nginx 1.26), update the `FROM` lines in:
+
+- `backend/Containerfile`
+- `frontend/Containerfile` (both stages)
+- This document
+- The `UBI_BASE_IMAGES` array in `scripts/build-images.sh`
+
+Then run:
+
+```bash
+./scripts/build-images.sh -s     # rebuild + scan
+podman-compose down
+podman-compose up -d --build
+podman exec virtvalidation_backend_1 cat /etc/os-release  # verify
+```
+
+The integration suite (`backend/tests/`) runs against the new image
+in CI. Expect to fix one or two compatibility nicks per UBI minor
+bump (paramiko + cryptography are the usual suspects).
+
+---
+
+## Security scanning
+
+The build script's `-s` flag runs **trivy** (preferred) or **grype**
+against the freshly built image and fails the build on
+HIGH/CRITICAL findings.
+
+### Local install
+
+```bash
+brew install aquasecurity/trivy/trivy
+# or
+brew install grype
+```
+
+### CI integration
+
+`.github/workflows/release-images.yml` runs trivy on every push and
+gates the publish step on a clean scan. UBI base images carry their
+own CVE feed (`vuln-listings.redhat.com`) which trivy consumes
+automatically — VEX statements published by Red Hat suppress
+findings already known to be non-exploitable in the product.
+
+### What we do *not* scan
+
+- Build-stage layers (`ubi9/nodejs-20`). Those layers don't ship in
+  the runtime image, so a CVE in a node devDep doesn't reach
+  production. Trivy is invoked against the final tag only.
+- Application Python dependencies. Those are tracked separately by
+  Dependabot via `requirements.txt` PRs.
+
+---
+
+## FIPS implications + verification
+
+UBI is the necessary container layer for FIPS, but **not sufficient
+on its own**. The host kernel must be in FIPS mode for the
+in-container OpenSSL to operate inside the validated boundary.
+
+To verify the runtime is actually using FIPS-validated crypto:
+
+```bash
+# 1. Host kernel
+cat /proc/sys/crypto/fips_enabled         # → 1
+
+# 2. Inside the backend container
+podman exec virtvalidation_backend_1 \
+    python -c "import ssl; print(ssl.OPENSSL_VERSION)"
+# → "OpenSSL 3.0.7 1 Nov 2022 (Red Hat Enterprise Linux)"
+
+# 3. VirtValidate FIPS posture
+curl -s http://localhost:8000/api/system/fips-status | jq
+# → {"fips_mode": true, "host_fips_enabled": true,
+#    "ssh_key_algorithm": "rsa-3072", ...}
+```
+
+Full requirements + recovery procedures live in
+[`docs/FIPS_DEPLOYMENT.md`](./FIPS_DEPLOYMENT.md).
+
+---
+
+## Air-gapped deployments
+
+Federal classified labs typically can't reach
+`registry.access.redhat.com`. Mirror the three UBI bases through a
+local registry once, then point the build script at the mirror:
+
+```bash
+# On a connected host, save the bases
+for tag in ubi9/python-312:latest ubi9/nodejs-20:latest ubi9/nginx-124:latest; do
+    podman pull "registry.access.redhat.com/$tag"
+    podman save -o "${tag//\//-}.tar" "registry.access.redhat.com/$tag"
+done
+
+# Move to the air-gapped lab, load + retag
+for f in *.tar; do podman load -i "$f"; done
+
+# Override the FROM in the Containerfiles via build args, or edit
+# Containerfiles to point at your mirror directly.
+```
+
+Don't republish UBI images on a public registry — Red Hat's UBI EULA
+permits redistribution but the OpenContainers labels embed the
+`com.redhat.license_terms` URL operators are expected to honor.
+
+---
+
+## Related docs
+
+- [`docs/FIPS_DEPLOYMENT.md`](./FIPS_DEPLOYMENT.md) — FIPS chain of custody.
+- [`docs/INSTALLATION.md`](./INSTALLATION.md) — operator-facing install.
+- [`deploy/README.md`](../deploy/README.md) — Helm + Kustomize deployment.
+- `backend/Containerfile` and `frontend/Containerfile` — the source of truth.

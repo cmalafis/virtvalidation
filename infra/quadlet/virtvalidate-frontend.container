@@ -6,7 +6,7 @@ After=virtvalidate-backend.service
 Image=localhost/virtvalidate-frontend:latest
 ContainerName=virtvalidate-frontend
 Network=virtvalidate.network
-PublishPort=3000:3000
+PublishPort=3000:8080
 
 [Service]
 Restart=always

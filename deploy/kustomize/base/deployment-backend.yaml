@@ -42,6 +42,10 @@ spec:
             - name: DATABASE_URL
               value: "postgresql+psycopg2://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@virtvalidate-postgres:5432/$(POSTGRES_DB)"
             - name: SSH_KEY_PATH
+              # /app symlinks to /opt/app-root/src in the UBI image,
+              # so this path resolves to /opt/app-root/src/keys/id_ed25519
+              # at runtime. Kept as /app/keys/... for back-compat with
+              # operator-set SSH_KEY_PATH overrides.
               value: /app/keys/id_ed25519
             - name: OLLAMA_HOST
               value: http://virtvalidate-ollama:11434
@@ -79,7 +83,10 @@ spec:
               memory: 1Gi
           volumeMounts:
             - name: ssh-keys
-              mountPath: /app/keys
+              # Mount onto the UBI canonical path. /app/keys
+              # (referenced by SSH_KEY_PATH) is a symlink to this
+              # directory inside the image.
+              mountPath: /opt/app-root/src/keys
             - name: tmp
               mountPath: /tmp
       volumes:

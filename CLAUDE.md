@@ -24,6 +24,17 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
 - Use Podman — NOT Docker. Containerfiles NOT Dockerfiles.
 - Volume mounts use :Z SELinux label for RHEL/Fedora compatibility
 - Images always reference docker.io/ or registry.access.redhat.com/ explicitly
+- **Container base images MUST be Red Hat UBI 9.** Federal customer
+  security reviews reject Docker Hub bases, and FIPS validation
+  requires the in-container OpenSSL to come from the same supply
+  chain as the FIPS-enabled host kernel. Don't swap to community
+  images even temporarily — the FIPS posture quietly breaks. The
+  three blessed bases are:
+  - `registry.access.redhat.com/ubi9/python-312:latest` (backend)
+  - `registry.access.redhat.com/ubi9/nodejs-20:latest` (frontend builder)
+  - `registry.access.redhat.com/ubi9/nginx-124:latest` (frontend runtime)
+  See `docs/CONTAINER_IMAGES.md` for the full rationale, image
+  layout, scanning procedure, and air-gapped mirroring guidance.
 
 ## Architecture documentation
 - `docs/ARCHITECTURE.md` and `docs/architecture-diagram.html` are

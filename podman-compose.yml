@@ -10,7 +10,10 @@ services:
       context: ./frontend
       dockerfile: Containerfile
     ports:
-      - "3000:3000"
+      # Host port 3000 keeps the dev workflow unchanged. UBI nginx
+      # listens on 8080 inside the container; the host port stays
+      # arbitrary.
+      - "3000:8080"
     environment:
       - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
     depends_on:
@@ -32,7 +35,10 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - SSH_KEY_PATH=${SSH_KEY_PATH:-/app/keys/id_ed25519}
     volumes:
-      - ./backend/app/keys:/app/keys:Z
+      # /app is a symlink to /opt/app-root/src inside the UBI image,
+      # so the existing /app/keys path keeps working without forcing
+      # operators to update SSH_KEY_PATH defaults or .env files.
+      - ./backend/app/keys:/opt/app-root/src/keys:Z
       # ----- DEVELOPMENT-ONLY bind mounts -----
       # Mount the source tree on top of the baked image so uvicorn's
       # --reload flag picks up edits without a container rebuild. Save a
@@ -43,8 +49,8 @@ services:
       # production must run the immutable baked image so the deployed code
       # matches the signed/attested artifact. The Quadlet units intentionally
       # only mount /app/keys and the Postgres/Ollama data volumes.
-      - ./backend/app:/app/app:Z
-      - ./backend/migrations:/app/migrations:Z
+      - ./backend/app:/opt/app-root/src/app:Z
+      - ./backend/migrations:/opt/app-root/src/migrations:Z
     depends_on:
       - postgres
       - ollama

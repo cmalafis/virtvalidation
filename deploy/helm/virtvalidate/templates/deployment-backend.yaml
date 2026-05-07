@@ -86,7 +86,10 @@ spec:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           volumeMounts:
             - name: ssh-keys
-              mountPath: /app/keys
+              # Canonical UBI path. /app/keys (referenced by
+              # SSH_KEY_PATH above) is a symlink to this directory
+              # inside the image.
+              mountPath: /opt/app-root/src/keys
             - name: tmp
               mountPath: /tmp
       volumes:

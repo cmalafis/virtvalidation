@@ -2,7 +2,7 @@
 # Build (and optionally push) VirtValidate container images.
 #
 # Usage:
-#   scripts/build-images.sh [-r registry] [-v version] [-p] [-m] [-b backend|frontend|all]
+#   scripts/build-images.sh [-r registry] [-v version] [-p] [-m] [-s] [-b backend|frontend|all]
 #
 #   -r registry  Image registry prefix (default: ghcr.io/virtvalidate).
 #   -v version   Version tag (default: derived from git describe).
@@ -10,12 +10,24 @@
 #   -m           Build multi-arch (amd64 + arm64) via buildx.
 #                Requires Docker buildx or Podman 4.0+ with --platform.
 #                Skipped by default — local builds target the host arch.
+#   -s           Scan built images with trivy (or grype) before push.
+#                Fails the build if HIGH/CRITICAL vulnerabilities show up.
+#                Skipped by default; CI typically sets -s.
 #   -b target    Which image(s) to build (backend, frontend, all). Default: all.
 #
 # Tagged images:
 #   <registry>/virtvalidate-<component>:<version>
 #   <registry>/virtvalidate-<component>:<git-sha>     (always)
 #   <registry>/virtvalidate-<component>:latest        (push-only, on main)
+#
+# Base images:
+#   Both Containerfiles use Red Hat UBI 9. The script preflight-pulls
+#   each base so a build never fails 5 minutes in because the registry
+#   was unreachable. UBI is published unauthenticated at
+#   registry.access.redhat.com — no Red Hat subscription required to
+#   pull, only to receive errata. See docs/CONTAINER_IMAGES.md for
+#   the rationale and what to do if the registry is unreachable in an
+#   air-gapped lab.
 #
 # This script is the canonical local equivalent of the release-images.yml
 # CI workflow — keep them in sync. CI uses Docker buildx; locally we
@@ -27,21 +39,31 @@ set -euo pipefail
 REGISTRY="ghcr.io/virtvalidate"
 PUSH=0
 MULTIARCH=0
+SCAN=0
 TARGET="all"
 VERSION=""
+
+# Base images consumed by the Containerfiles. Keep in sync with both
+# backend/Containerfile and frontend/Containerfile.
+UBI_BASE_IMAGES=(
+    "registry.access.redhat.com/ubi9/python-312:latest"
+    "registry.access.redhat.com/ubi9/nodejs-20:latest"
+    "registry.access.redhat.com/ubi9/nginx-124:latest"
+)
 
 usage() {
     sed -n '2,/^$/p' "$0"
     exit 1
 }
 
-while getopts ":r:v:b:pmh" opt; do
+while getopts ":r:v:b:pmsh" opt; do
     case "$opt" in
         r) REGISTRY="$OPTARG" ;;
         v) VERSION="$OPTARG" ;;
         b) TARGET="$OPTARG" ;;
         p) PUSH=1 ;;
         m) MULTIARCH=1 ;;
+        s) SCAN=1 ;;
         h) usage ;;
         \?) echo "Unknown option: -$OPTARG" >&2; usage ;;
         :) echo "Option -$OPTARG requires an argument" >&2; usage ;;
@@ -84,6 +106,49 @@ if [[ $MULTIARCH -eq 1 ]]; then
     fi
 fi
 
+preflight_bases() {
+    # Pre-pull every UBI base so a build never fails 5 minutes in
+    # because the registry was unreachable. Skipped on multi-arch
+    # builds because buildx pulls per-platform on its own.
+    if [[ $MULTIARCH -eq 1 ]]; then
+        return 0
+    fi
+    echo "==> Preflight: pulling UBI base images"
+    for img in "${UBI_BASE_IMAGES[@]}"; do
+        echo "    - ${img}"
+        if ! "$ENGINE" pull "$img"; then
+            echo "ERROR: failed to pull ${img}." >&2
+            echo "       Check connectivity to registry.access.redhat.com" >&2
+            echo "       (no auth required, but the registry must be reachable)." >&2
+            echo "       For air-gapped lab builds, mirror the UBI images first" >&2
+            echo "       — see docs/CONTAINER_IMAGES.md." >&2
+            exit 5
+        fi
+    done
+}
+
+scan_image() {
+    local image="$1"
+    if [[ $SCAN -ne 1 ]]; then
+        return 0
+    fi
+    if command -v trivy >/dev/null 2>&1; then
+        echo "==> Scanning ${image} with trivy (HIGH/CRITICAL only)"
+        trivy image --severity HIGH,CRITICAL --exit-code 1 --no-progress "$image"
+        return $?
+    fi
+    if command -v grype >/dev/null 2>&1; then
+        echo "==> Scanning ${image} with grype (HIGH/CRITICAL only)"
+        grype "$image" --fail-on high
+        return $?
+    fi
+    echo "WARNING: -s requested but neither trivy nor grype is on PATH" >&2
+    echo "         Install one before relying on the scan gate:" >&2
+    echo "           brew install aquasecurity/trivy/trivy" >&2
+    echo "           brew install grype" >&2
+    return 0
+}
+
 build_one() {
     local name="$1"          # virtvalidate-backend / virtvalidate-frontend
     local containerfile="$2" # backend/Containerfile / frontend/Containerfile
@@ -125,6 +190,11 @@ build_one() {
             "$context"
     fi
 
+    # Run the optional vulnerability scan against the freshly built
+    # version tag. On scan failure the script exits non-zero before
+    # any push so we never publish an image we'd flag in CI.
+    scan_image "${image}:${VERSION}"
+
     if [[ $PUSH -eq 1 ]]; then
         for t in "${tags[@]}"; do
             echo "==> Pushing ${t}"
@@ -138,6 +208,8 @@ build_one() {
         "$ENGINE" push "${latest}"
     fi
 }
+
+preflight_bases
 
 case "$TARGET" in
     backend)

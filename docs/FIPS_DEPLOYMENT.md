@@ -15,7 +15,7 @@ operator's responsibility.
 | Layer | What | Who owns it |
 |-------|------|-------------|
 | Host OS kernel + OpenSSL | FIPS 140-3 validated module set | Operator (RHEL / RHCOS install) |
-| Container base image | Compatible with the host's FIPS module set | Operator (UBI base image swap) |
+| Container base image | Compatible with the host's FIPS module set | VirtValidate (UBI 9 is the default) |
 | Application crypto choices | SSH algos, TLS verify, hash families | VirtValidate (`FIPS_MODE` flag) |
 | Storage encryption | At-rest data on FIPS-encrypted volumes | Operator (LUKS / CSI driver) |
 | Network policies | Egress / ingress restrictions | Operator (NetworkPolicy / firewall) |
@@ -51,16 +51,53 @@ the same way: kernel mode + validated OpenSSL.
 
 ### 2. Container base image
 
-Swap the default `docker.io/python:3.12-slim` base for a UBI image so
-the container's OpenSSL matches the host's validated module:
+The shipped images already use Red Hat UBI 9 — no swap required:
 
 ```dockerfile
+# backend/Containerfile
 FROM registry.access.redhat.com/ubi9/python-312:latest
+# frontend/Containerfile
+FROM registry.access.redhat.com/ubi9/nodejs-20:latest AS builder
+FROM registry.access.redhat.com/ubi9/nginx-124:latest
 ```
 
-UBI alone does **not** make the deployment compliant — the host OS in
-step 1 is what activates the validated module. Without step 1 in
-place, UBI is just another Python distribution.
+UBI ships the same OpenSSL build that's part of the validated RHEL
+module set, so when the host is in FIPS mode (step 1) the
+in-container OpenSSL operates inside the validated boundary.
+
+**UBI alone does not make the deployment compliant** — the host OS
+in step 1 is what activates the validated module. Without step 1 in
+place, UBI is just another distribution choice.
+
+See `docs/CONTAINER_IMAGES.md` for the full image-layout details and
+how to verify which OpenSSL the running container actually loaded.
+
+### 2a. Verifying FIPS is actually active
+
+```bash
+# Host kernel must report FIPS enabled.
+cat /proc/sys/crypto/fips_enabled                # → 1
+
+# In-container OpenSSL must come from RHEL.
+podman exec virtvalidation_backend_1 \
+    python -c "import ssl; print(ssl.OPENSSL_VERSION)"
+# → "OpenSSL 3.0.7 ... (Red Hat Enterprise Linux)"
+
+# Application FIPS posture.
+curl -s http://localhost:8000/api/system/fips-status | jq
+# → {
+#     "fips_mode_configured": true,
+#     "host_fips_enabled": true,
+#     "ssh_key_algorithm": "rsa-3072",
+#     "approved": true
+#   }
+```
+
+If `host_fips_enabled` is false but `fips_mode_configured` is true,
+the application thinks it's in FIPS mode but the host isn't —
+`/api/system/fips-status` will surface this mismatch and the audit
+log records it at startup. **Treat that state as non-compliant**
+and fix the host before deployment.
 
 ### 3. Application FIPS mode
 

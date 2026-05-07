@@ -23,7 +23,10 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: 3000
+              # UBI nginx-124 listens on 8080. The Service still
+              # publishes on 3000 (see service-frontend.yaml) — only
+              # the in-pod port changed.
+              containerPort: 8080
               protocol: TCP
           securityContext:
             {{- toYaml .Values.security.containerSecurityContext | nindent 12 }}
@@ -42,19 +45,20 @@ spec:
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
           volumeMounts:
-            # nginx-unprivileged writes its temp files under /tmp; OCP's
-            # readOnlyRootFilesystem means we have to provide a writable
-            # mount. Same emptyDir pattern as the backend.
+            # UBI nginx writes its temp files under /tmp + /var/lib/nginx;
+            # OCP's readOnlyRootFilesystem means we have to provide a
+            # writable mount for each. emptyDir pattern matches the
+            # backend's writable scratch volumes.
             - name: tmp
               mountPath: /tmp
-            - name: nginx-cache
-              mountPath: /var/cache/nginx
+            - name: nginx-lib
+              mountPath: /var/lib/nginx
             - name: nginx-run
-              mountPath: /var/run
+              mountPath: /run
       volumes:
         - name: tmp
           emptyDir: {}
-        - name: nginx-cache
+        - name: nginx-lib
           emptyDir: {}
         - name: nginx-run
           emptyDir: {}

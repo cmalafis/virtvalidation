@@ -95,7 +95,7 @@ def create_vms_bulk(payload: BulkVMCreate, db: Session = Depends(get_db)) -> dic
 def list_vms(
     db: Session = Depends(get_db),
     status_filter: VMStatus | None = Query(default=None, alias="status"),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=10000),
     offset: int = Query(default=0, ge=0),
 ) -> list[VM]:
     stmt = select(VM).order_by(VM.created_at.desc()).limit(limit).offset(offset)
