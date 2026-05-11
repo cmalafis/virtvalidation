@@ -21,6 +21,10 @@ export const HEADER_ALIASES = {
   target_namespace:           ["targetnamespace", "namespace"],
   target_storage_class:       ["targetstorageclass", "storageclass"],
   target_network_attachment:  ["targetnetworkattachment", "networkattachment", "nad"],
+  // The vCenter column on the vInfo sheet — used to auto-detect
+  // multi-vCenter uploads. Lives separately from source_hostname
+  // (which is the *VM's* hostname, not the vCenter's).
+  source_vcenter_hostname:    ["vcenter", "vc", "vcenterserver", "vcserver"],
 };
 
 // vsphere_networks and vsphere_datastores are list-typed; CSV operators put
@@ -87,6 +91,7 @@ export function rowToPayload(rawRow) {
   const sourceHost = get("source_hostname") || "";
   const name = get("name") || (sourceHost ? sourceHost.split(".")[0] : "");
   if (!name && !sourceHost) return null;
+  const vcenterHost = get("source_vcenter_hostname");
   return {
     name: cap(name || sourceHost, "name"),
     source_hostname: cap(sourceHost || name, "source_hostname"),
@@ -100,7 +105,44 @@ export function rowToPayload(rawRow) {
     target_namespace: cap(get("target_namespace"), "target_namespace"),
     target_storage_class: cap(get("target_storage_class"), "target_storage_class"),
     target_network_attachment: cap(get("target_network_attachment"), "target_network_attachment"),
+    // RVTools per-VM vCenter — drives the auto-link flow. Normalized
+    // to lowercase + trailing-dot-stripped so equivalent values
+    // ("vc-east-01.dha.mil." vs "VC-EAST-01.DHA.MIL") cluster
+    // together when grouping.
+    source_vcenter_hostname: normalizeHostname(vcenterHost),
   };
+}
+
+
+export function normalizeHostname(raw) {
+  if (!raw) return null;
+  return String(raw).trim().toLowerCase().replace(/\.+$/, "") || null;
+}
+
+
+/**
+ * Group a parsed VM list by the source_vcenter_hostname field.
+ *
+ * Returns an array of { hostname, vm_count, sample_vm_names } in
+ * decreasing-count order so the UI's "which vCenter is this?" prompt
+ * surfaces the biggest cluster first. VMs without a vCenter column
+ * land under the synthetic "_unspecified_" bucket — the operator
+ * picks where they go.
+ */
+export function groupByVCenter(vms) {
+  const buckets = new Map();
+  for (const vm of vms) {
+    const key = vm.source_vcenter_hostname || "_unspecified_";
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(vm.name);
+  }
+  return [...buckets.entries()]
+    .map(([hostname, names]) => ({
+      hostname,
+      vm_count: names.length,
+      sample_vm_names: names.slice(0, 5),
+    }))
+    .sort((a, b) => b.vm_count - a.vm_count);
 }
 
 // Minimal CSV parser supporting quoted fields with embedded commas + escaped

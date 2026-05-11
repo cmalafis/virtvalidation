@@ -165,3 +165,100 @@ def llm_info() -> dict:
         "config": backend.info(),
         "health": backend.health_check_sync(),
     }
+
+
+@system_router.get("/llm-usage")
+def llm_usage(hours: int = 24, db: Session = Depends(get_db)) -> dict:
+    """Rolled-up usage metrics for the admin dashboard.
+
+    Returns:
+        - operation-level call counts + token totals over the last
+          ``hours`` window
+        - validation-specific tier distribution + cache hit rate
+        - estimated USD cost (configurable rate; 0 by default for
+          locally-hosted Ollama)
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from app.core.config import settings as cfg
+    from app.core.validation_cache import stats as cache_stats
+    from app.models.audit import AuditLog
+    from app.models.llm_usage import LLMUsage
+
+    since = datetime.now(timezone.utc) - timedelta(hours=max(1, hours))
+    rows = list(
+        db.scalars(
+            select(LLMUsage).where(LLMUsage.created_at >= since)
+        ).all()
+    )
+
+    by_operation: dict[str, dict] = {}
+    total_in = 0
+    total_out = 0
+    for r in rows:
+        bucket = by_operation.setdefault(
+            r.operation,
+            {"calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        )
+        bucket["calls"] += 1
+        bucket["input_tokens"] += r.input_tokens or 0
+        bucket["output_tokens"] += r.output_tokens or 0
+        bucket["total_tokens"] += r.total_tokens or 0
+        total_in += r.input_tokens or 0
+        total_out += r.output_tokens or 0
+
+    # Pull recent validation.completed audit rows to derive tier
+    # distribution + cache-hit rate. The rows carry tier / cached /
+    # needs_manual_review in their details JSON.
+    audit_rows = list(
+        db.scalars(
+            select(AuditLog)
+            .where(AuditLog.action == "validation.completed")
+            .where(AuditLog.timestamp >= since)
+        ).all()
+    )
+    tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0}
+    cached = 0
+    manual = 0
+    for a in audit_rows:
+        details = a.details or {}
+        tier = details.get("tier")
+        if tier in tier_counts:
+            tier_counts[tier] += 1
+        if details.get("cached"):
+            cached += 1
+        if details.get("needs_manual_review"):
+            manual += 1
+
+    validations_total = sum(tier_counts.values())
+    cache_hit_rate = (
+        round(100 * cached / validations_total, 1) if validations_total else 0.0
+    )
+
+    cost_usd = (
+        total_in * (cfg.llm_cost_per_million_input_tokens / 1_000_000.0)
+        + total_out * (cfg.llm_cost_per_million_output_tokens / 1_000_000.0)
+    )
+
+    return {
+        "window_hours": hours,
+        "since": since.isoformat(),
+        "by_operation": by_operation,
+        "totals": {
+            "input_tokens": total_in,
+            "output_tokens": total_out,
+            "estimated_cost_usd": round(cost_usd, 4),
+            "rate_per_1m_input": cfg.llm_cost_per_million_input_tokens,
+            "rate_per_1m_output": cfg.llm_cost_per_million_output_tokens,
+        },
+        "validations": {
+            "total": validations_total,
+            "tier_distribution": tier_counts,
+            "cached_count": cached,
+            "cache_hit_rate_percent": cache_hit_rate,
+            "needs_manual_review_count": manual,
+        },
+        "cache": cache_stats(db),
+    }

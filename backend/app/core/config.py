@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     # hallucinated tail entries.
     categorizer_batch_size: int = 10
 
+    # ----- LLM pricing (cost estimation) -----
+    # USD per 1M tokens. Defaults match Llama 3 8B on local Ollama —
+    # zero marginal cost because the model is locally hosted. Federal
+    # customers running KServe/vLLM on shared infrastructure can set
+    # non-zero values to surface estimated compute cost in the admin
+    # dashboard. The cost is computed at query time so updating these
+    # doesn't require a restart.
+    llm_cost_per_million_input_tokens: float = 0.0
+    llm_cost_per_million_output_tokens: float = 0.0
+
     # ----- KServe backend (RHOAI / OpenShift inference) -----
     # Endpoint must point at an InferenceService that exposes the
     # OpenAI-compatible /v1/chat/completions surface (vLLM and TGIS

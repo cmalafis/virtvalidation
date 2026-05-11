@@ -1,7 +1,7 @@
 import { useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate } from "react-router-dom";
-import { throwForResponse } from "../utils/apiError";
+import { fetchJSON } from "../utils/fetchJSON";
 
 // New Network Design Review wizard. Single-page form: name → notes upload
 // or paste → YAML upload or paste → "Analyze now" CTA. Files are read
@@ -70,16 +70,6 @@ spec:
               tier: edge
 `;
 
-async function fetchJSON(url, opts = {}) {
-  const init = { method: "GET", ...opts };
-  if (init.body !== undefined && typeof init.body !== "string") {
-    init.headers = { "Content-Type": "application/json", ...(init.headers || {}) };
-    init.body = JSON.stringify(init.body);
-  }
-  const r = await fetch(url, init);
-  if (!r.ok) await throwForResponse(r);
-  return r.json();
-}
 
 export default function NetworkReviewNew() {
   const navigate = useNavigate();

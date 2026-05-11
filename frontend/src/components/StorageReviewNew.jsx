@@ -1,7 +1,7 @@
 import { useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate } from "react-router-dom";
-import { throwForResponse } from "../utils/apiError";
+import { fetchJSON } from "../utils/fetchJSON";
 
 // New Storage Design Review wizard. Sister page to NetworkReviewNew —
 // same single-page form pattern (name → notes → YAML → analyze) but
@@ -69,16 +69,6 @@ Example:
   RAC cluster shares VMDKs across 3 nodes on prod-array-tier1.
 `;
 
-async function fetchJSON(url, opts = {}) {
-  const init = { method: "GET", ...opts };
-  if (init.body !== undefined && typeof init.body !== "string") {
-    init.headers = { "Content-Type": "application/json", ...(init.headers || {}) };
-    init.body = JSON.stringify(init.body);
-  }
-  const r = await fetch(url, init);
-  if (!r.ok) await throwForResponse(r);
-  return r.json();
-}
 
 export default function StorageReviewNew() {
   const navigate = useNavigate();

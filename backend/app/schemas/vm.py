@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.limits import MAX_VMS_PER_BULK_CREATE, MAX_VMS_PER_BULK_DELETE
 from app.models.vm import VMStatus
 
 
@@ -68,7 +69,10 @@ class VMRead(VMBase):
 
 
 class BulkVMCreate(BaseModel):
-    vms: list[VMCreate] = Field(min_length=1, max_length=500)
+    # See app.core.limits.MAX_VMS_PER_BULK_CREATE — sized for federal
+    # customer scale (10K VMs in one RVTools import). Override via
+    # MAX_VMS_PER_BULK_CREATE env var when running smaller deployments.
+    vms: list[VMCreate] = Field(min_length=1, max_length=MAX_VMS_PER_BULK_CREATE)
 
 
 class BulkVMSkipped(BaseModel):
@@ -83,7 +87,8 @@ class BulkVMResult(BaseModel):
 
 
 class BulkVMDelete(BaseModel):
-    vm_ids: list[int] = Field(min_length=1, max_length=500)
+    # Same cap as BulkVMCreate — see app.core.limits.MAX_VMS_PER_BULK_DELETE.
+    vm_ids: list[int] = Field(min_length=1, max_length=MAX_VMS_PER_BULK_DELETE)
 
 
 class BulkVMDeleteResult(BaseModel):

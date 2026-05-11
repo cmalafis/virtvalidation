@@ -378,6 +378,7 @@ const DATA = {
           "app.core.baseline",
           "app.core.capture",
           "app.core.db",
+          "app.core.limits",
           "app.core.validation",
           "app.models.validation",
           "app.models.vm",
@@ -690,6 +691,7 @@ const DATA = {
         ],
         "functions": [],
         "depends_on": [
+          "app.core.limits",
           "app.models.vm"
         ]
       }
@@ -700,7 +702,7 @@ const DATA = {
         "id": "app.api.snapshots",
         "title": "app.api.snapshots",
         "subtitle": "backend/app/api/snapshots.py",
-        "summary": "Cross-VM snapshot operations \u2014 currently just bulk on-demand capture.",
+        "summary": "Cross-VM snapshot operations: legacy ``capture-all`` (per-VM tasks)",
         "category": "api",
         "routes": [
           {
@@ -708,14 +710,46 @@ const DATA = {
             "path": "/api/snapshots/capture-all",
             "handler": "capture_all",
             "summary": "Spawn an immediate capture against every enrolled VM."
+          },
+          {
+            "method": "POST",
+            "path": "/api/snapshots/capture-bulk",
+            "handler": "capture_bulk",
+            "summary": "Spawn a rate-limited bulk capture against a selected fleet."
+          },
+          {
+            "method": "GET",
+            "path": "/api/snapshots/capture-bulk/{task_id}",
+            "handler": "get_bulk_capture_status",
+            "summary": ""
           }
         ],
-        "classes": [],
+        "classes": [
+          {
+            "name": "BulkCaptureScope",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids",
+              "source_vcenter_id",
+              "environment",
+              "application_hint",
+              "only_status",
+              "name_contains",
+              "max_parallel",
+              "per_vcenter_parallel"
+            ],
+            "methods": [],
+            "summary": "Selection axes for the bulk-capture endpoint. Stack any subset;"
+          }
+        ],
         "functions": [],
         "depends_on": [
           "app.core.audit",
+          "app.core.bulk_capture",
           "app.core.capture",
           "app.core.db",
+          "app.core.limits",
           "app.models.vm",
           "app.schemas.vm"
         ]
@@ -1466,6 +1500,7 @@ const DATA = {
         ],
         "functions": [],
         "depends_on": [
+          "app.core.limits",
           "app.models.plan"
         ]
       }
@@ -2009,6 +2044,74 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.api.rvtools",
+        "title": "app.api.rvtools",
+        "subtitle": "backend/app/api/rvtools.py",
+        "summary": "Top-level RVTools upload endpoint that routes per-VM into the",
+        "category": "api",
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/api/rvtools/upload-multi-vcenter",
+            "handler": "upload_multi_vcenter",
+            "summary": "Auto-link RVTools VMs to vCenter sources based on the parser's"
+          }
+        ],
+        "classes": [
+          {
+            "name": "MultiVCenterImportRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vms",
+              "vcenter_mapping",
+              "default_vcenter_id"
+            ],
+            "methods": [],
+            "summary": "Payload for the auto-link upload flow."
+          },
+          {
+            "name": "PerVCenterResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vcenter_id",
+              "vcenter_name",
+              "created",
+              "updated",
+              "marked_missing",
+              "unchanged"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "MultiVCenterImportResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "imported_per_vcenter",
+              "skipped",
+              "errors",
+              "total_vms",
+              "elapsed_seconds"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.db",
+          "app.core.limits",
+          "app.core.rvtools_import",
+          "app.models.vcenter",
+          "app.schemas.vcenter"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.api.settings",
         "title": "app.api.settings",
         "subtitle": "backend/app/api/settings.py",
@@ -2050,6 +2153,12 @@ const DATA = {
             "path": "/api/system/llm-info",
             "handler": "llm_info",
             "summary": "Active LLM backend snapshot \u2014 what's wired up + live status."
+          },
+          {
+            "method": "GET",
+            "path": "/api/system/llm-usage",
+            "handler": "llm_usage",
+            "summary": "Rolled-up usage metrics for the admin dashboard."
           }
         ],
         "classes": [],
@@ -2241,10 +2350,134 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.api.validation_schedules",
+        "title": "app.api.validation_schedules",
+        "subtitle": "backend/app/api/validation_schedules.py",
+        "summary": "CRUD for ValidationSchedule + an on-demand \"fire now\" endpoint.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/validation-schedules",
+            "handler": "list_schedules",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/validation-schedules",
+            "handler": "create_schedule",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/validation-schedules/{schedule_id}",
+            "handler": "get_schedule",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/validation-schedules/{schedule_id}",
+            "handler": "update_schedule",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/validation-schedules/{schedule_id}",
+            "handler": "delete_schedule",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/validation-schedules/{schedule_id}/fire",
+            "handler": "fire_schedule",
+            "summary": "Trigger a schedule immediately, bypassing its cron timing."
+          }
+        ],
+        "classes": [
+          {
+            "name": "ScheduleScope",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids",
+              "source_vcenter_id",
+              "environment",
+              "application_hint"
+            ],
+            "methods": [],
+            "summary": "Same shape as :class:`BulkValidationScope` in"
+          },
+          {
+            "name": "ScheduleCreate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "cron_expression",
+              "timezone",
+              "scope",
+              "notes",
+              "status"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ScheduleUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "cron_expression",
+              "timezone",
+              "scope",
+              "notes",
+              "status",
+              "runtime_paused"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ScheduleRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "name",
+              "cron_expression",
+              "timezone",
+              "scope",
+              "status",
+              "notes",
+              "last_fired_at",
+              "last_task_id",
+              "next_fire_at",
+              "runtime_paused",
+              "created_by_actor",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.bulk_validation",
+          "app.core.db",
+          "app.core.limits",
+          "app.models.validation_schedule",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.api.validations",
         "title": "app.api.validations",
         "subtitle": "backend/app/api/validations.py",
-        "summary": "Cross-VM validation operations \u2014 currently bulk on-demand validate.",
+        "summary": "Cross-VM validation operations: legacy ``run-all`` (per-VM tasks)",
         "category": "api",
         "routes": [
           {
@@ -2252,13 +2485,50 @@ const DATA = {
             "path": "/api/validations/run-all",
             "handler": "validate_all",
             "summary": "Spawn a validation against every enrolled VM that has a baseline."
+          },
+          {
+            "method": "POST",
+            "path": "/api/validations/preview-tiers",
+            "handler": "preview_tiers",
+            "summary": "Estimate the LLM-call cost of a bulk validation before running."
+          },
+          {
+            "method": "POST",
+            "path": "/api/validations/run-bulk",
+            "handler": "run_bulk",
+            "summary": "Spawn a tier-aware bulk validation."
+          },
+          {
+            "method": "GET",
+            "path": "/api/validations/run-bulk/{task_id}",
+            "handler": "get_bulk_validation_status",
+            "summary": ""
           }
         ],
-        "classes": [],
+        "classes": [
+          {
+            "name": "BulkValidationScope",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids",
+              "source_vcenter_id",
+              "environment",
+              "application_hint",
+              "only_migrated",
+              "not_validated_within_hours",
+              "use_cache"
+            ],
+            "methods": [],
+            "summary": "Selection axes the operator can stack. At least one must match"
+          }
+        ],
         "functions": [],
         "depends_on": [
           "app.core.audit",
+          "app.core.bulk_validation",
           "app.core.db",
+          "app.core.limits",
           "app.core.validation",
           "app.models.vm",
           "app.schemas.validation"
@@ -2301,6 +2571,12 @@ const DATA = {
             "path": "/api/sources/vcenters/{vcenter_id}",
             "handler": "delete_vcenter",
             "summary": "Delete a vCenter source. Member VMs keep existing \u2014 their"
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/vcenters/auto-match",
+            "handler": "auto_match_vcenters",
+            "summary": "Resolve a list of RVTools-detected vCenter hostnames to registered"
           },
           {
             "method": "POST",
@@ -2350,6 +2626,206 @@ const DATA = {
           "app.models.vcenter",
           "app.models.vm",
           "app.schemas.vcenter"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.bulk_capture",
+        "title": "app.core.bulk_capture",
+        "subtitle": "backend/app/core/bulk_capture.py",
+        "summary": "Bulk baseline-capture orchestrator.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "VMResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "vm_name",
+              "status",
+              "error",
+              "elapsed_seconds"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkCaptureTask",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "task_id",
+              "status",
+              "started_at",
+              "completed_at",
+              "total",
+              "completed",
+              "failed",
+              "current_vm",
+              "per_vm",
+              "max_parallel",
+              "per_vcenter_parallel"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "BulkCaptureTaskStore",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "create",
+                "summary": ""
+              },
+              {
+                "name": "get",
+                "summary": ""
+              },
+              {
+                "name": "set_vm_status",
+                "summary": ""
+              },
+              {
+                "name": "finalize",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "run_bulk_capture_async",
+            "summary": "Drive a bulk-capture run to completion."
+          },
+          {
+            "name": "run_bulk_capture",
+            "summary": "Sync entry point for FastAPI BackgroundTasks. Wraps the async"
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.core.capture",
+          "app.core.config",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.bulk_validation",
+        "title": "app.core.bulk_validation",
+        "subtitle": "backend/app/core/bulk_validation.py",
+        "summary": "Bulk validation orchestrator.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "VMValidationResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "vm_name",
+              "status",
+              "verdict",
+              "tier",
+              "cached",
+              "needs_manual_review",
+              "error",
+              "elapsed_seconds"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkValidationTask",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "task_id",
+              "status",
+              "started_at",
+              "completed_at",
+              "total",
+              "completed",
+              "failed",
+              "current_vm",
+              "tier_distribution",
+              "llm_calls",
+              "cache_hits",
+              "per_vm"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "BulkValidationTaskStore",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "create",
+                "summary": ""
+              },
+              {
+                "name": "get",
+                "summary": ""
+              },
+              {
+                "name": "queue_vm",
+                "summary": ""
+              },
+              {
+                "name": "start_vm",
+                "summary": ""
+              },
+              {
+                "name": "complete_vm",
+                "summary": ""
+              },
+              {
+                "name": "fail_vm",
+                "summary": ""
+              },
+              {
+                "name": "finalize",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "run_bulk_validation",
+            "summary": "Drive a bulk validation run to completion."
+          },
+          {
+            "name": "preview_tier_distribution",
+            "summary": "Inspect every VM's diff and report estimated tier counts."
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.core.validation",
+          "app.models.vm"
         ]
       },
       {
@@ -2652,6 +3128,8 @@ const DATA = {
               "llm_connect_timeout",
               "llm_max_retries",
               "categorizer_batch_size",
+              "llm_cost_per_million_input_tokens",
+              "llm_cost_per_million_output_tokens",
               "kserve_endpoint",
               "kserve_model_name",
               "kserve_token",
@@ -2748,6 +3226,18 @@ const DATA = {
         "depends_on": [
           "app.core.config"
         ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.limits",
+        "title": "app.core.limits",
+        "subtitle": "backend/app/core/limits.py",
+        "summary": "Centralized limits for bulk operations and pagination.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [],
+        "depends_on": []
       },
       {
         "kind": "module",
@@ -2863,7 +3353,12 @@ const DATA = {
             "summary": "Validation orchestrator."
           }
         ],
-        "functions": [],
+        "functions": [
+          {
+            "name": "compute_diff",
+            "summary": "Module-level alias for :meth:`LLMClient._diff_state`."
+          }
+        ],
         "depends_on": [
           "app.core.llm.base",
           "app.core.llm.factory"
@@ -3611,7 +4106,7 @@ const DATA = {
         "functions": [
           {
             "name": "run_validation",
-            "summary": "Drive one VM through the full validation pipeline."
+            "summary": "Drive one VM through the validation pipeline with tier-aware"
           },
           {
             "name": "run_validation_task",
@@ -3626,9 +4121,82 @@ const DATA = {
           "app.core.config",
           "app.core.llm",
           "app.core.ssh",
+          "app.core.validation_cache",
+          "app.core.validation_tiers",
           "app.models.validation",
           "app.models.vm"
         ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.validation_cache",
+        "title": "app.core.validation_cache",
+        "subtitle": "backend/app/core/validation_cache.py",
+        "summary": "Cache lookups + writes for :class:`ValidationLLMCache`.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "compute_cache_key",
+            "summary": "SHA-256 of canonical-JSON-encoded ``(diff, os_family)``."
+          },
+          {
+            "name": "lookup",
+            "summary": "Return the cached verdict for this diff, or ``None``."
+          },
+          {
+            "name": "store",
+            "summary": "Persist an LLM verdict for future cache hits."
+          },
+          {
+            "name": "evict_expired",
+            "summary": "Delete expired rows. Returns the deleted count."
+          },
+          {
+            "name": "stats",
+            "summary": "Aggregate cache statistics for the admin dashboard."
+          }
+        ],
+        "depends_on": [
+          "app.models.validation_cache"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.validation_tiers",
+        "title": "app.core.validation_tiers",
+        "subtitle": "backend/app/core/validation_tiers.py",
+        "summary": "Tiered validation classifier \u2014 decides whether a diff needs the LLM.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "TierClassification",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "tier",
+              "llm_required",
+              "rationale",
+              "verdict",
+              "matched_rules"
+            ],
+            "methods": [],
+            "summary": "Result of running a diff through the classifier."
+          }
+        ],
+        "functions": [
+          {
+            "name": "classify",
+            "summary": "Decide which tier handles this diff."
+          },
+          {
+            "name": "estimate_tier_distribution",
+            "summary": "Count classifications across a batch of (diff, environment) pairs."
+          }
+        ],
+        "depends_on": []
       },
       {
         "kind": "module",
@@ -3651,11 +4219,13 @@ const DATA = {
           "app.api.network_reviews",
           "app.api.plans",
           "app.api.reports",
+          "app.api.rvtools",
           "app.api.settings",
           "app.api.snapshots",
           "app.api.storage_reviews",
           "app.api.targets",
           "app.api.templates",
+          "app.api.validation_schedules",
           "app.api.validations",
           "app.api.vcenters",
           "app.api.vms",
@@ -3790,6 +4360,42 @@ const DATA = {
             ],
             "methods": [],
             "summary": "A migration program is the top-level container an operator runs."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.llm_usage",
+        "title": "app.models.llm_usage",
+        "subtitle": "backend/app/models/llm_usage.py",
+        "summary": "LLM usage telemetry.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "LLMUsage",
+            "kind": "model",
+            "table": "llm_usage",
+            "fields": [
+              "id",
+              "operation",
+              "backend_type",
+              "model",
+              "input_tokens",
+              "output_tokens",
+              "total_tokens",
+              "latency_ms",
+              "resource_type",
+              "resource_id",
+              "vm_id",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
           }
         ],
         "functions": [],
@@ -4103,6 +4709,87 @@ const DATA = {
         "depends_on": [
           "app.core.db",
           "app.models.vcenter"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.validation_cache",
+        "title": "app.models.validation_cache",
+        "subtitle": "backend/app/models/validation_cache.py",
+        "summary": "Diff-keyed cache for LLM validation verdicts.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ValidationLLMCache",
+            "kind": "model",
+            "table": "validation_llm_cache",
+            "fields": [
+              "id",
+              "cache_key",
+              "os_family",
+              "verdict",
+              "hit_count",
+              "last_hit_at",
+              "source_vm_id",
+              "source_model",
+              "diff_summary",
+              "created_at",
+              "expires_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.validation_schedule",
+        "title": "app.models.validation_schedule",
+        "subtitle": "backend/app/models/validation_schedule.py",
+        "summary": "Scheduled validation runs.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ScheduleStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ValidationSchedule",
+            "kind": "model",
+            "table": "validation_schedules",
+            "fields": [
+              "id",
+              "name",
+              "cron_expression",
+              "timezone",
+              "scope",
+              "status",
+              "notes",
+              "last_fired_at",
+              "last_task_id",
+              "next_fire_at",
+              "runtime_paused",
+              "created_by_actor",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
         ]
       },
       {
@@ -4905,7 +5592,8 @@ const DATA = {
               "owner",
               "application_hint",
               "vsphere_networks",
-              "vsphere_datastores"
+              "vsphere_datastores",
+              "source_vcenter_hostname"
             ],
             "methods": [],
             "summary": "The minimal shape the delta-detector reads."
@@ -5012,6 +5700,7 @@ const DATA = {
         ],
         "functions": [],
         "depends_on": [
+          "app.core.limits",
           "app.models.vcenter"
         ]
       }
@@ -5034,6 +5723,45 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/components/BulkOperations.jsx",
+        "title": "BulkOperations.jsx",
+        "subtitle": "frontend/src/components/BulkOperations.jsx",
+        "summary": "Bulk operations page \u2014 selection-driven capture + validation.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/sources/vcenters",
+          "/api/validations/preview-tiers",
+          "/api/vms?limit=10000"
+        ],
+        "members": [
+          {
+            "name": "BulkOperations",
+            "kind": "component"
+          },
+          {
+            "name": "FiltersPanel",
+            "kind": "component"
+          },
+          {
+            "name": "TierPreviewCard",
+            "kind": "component"
+          },
+          {
+            "name": "TaskStatusCard",
+            "kind": "component"
+          },
+          {
+            "name": "Field",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/components/NetworkReviewDetail.jsx",
         "title": "NetworkReviewDetail.jsx",
         "subtitle": "frontend/src/components/NetworkReviewDetail.jsx",
@@ -5045,10 +5773,6 @@ const DATA = {
           "/api/network-reviews/{id}/findings/{id}"
         ],
         "members": [
-          {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
           {
             "name": "NetworkReviewDetail",
             "kind": "component"
@@ -5112,10 +5836,6 @@ const DATA = {
         ],
         "members": [
           {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
-          {
             "name": "NetworkReviewNew",
             "kind": "component"
           },
@@ -5154,10 +5874,6 @@ const DATA = {
           "/api/sources/targets/{id}/discover"
         ],
         "members": [
-          {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
           {
             "name": "OCPTargets",
             "kind": "component"
@@ -5211,10 +5927,6 @@ const DATA = {
         ],
         "members": [
           {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
-          {
             "name": "PlanView",
             "kind": "component"
           },
@@ -5257,10 +5969,6 @@ const DATA = {
         ],
         "members": [
           {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
-          {
             "name": "PlanWizard",
             "kind": "component"
           },
@@ -5292,6 +6000,49 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/components/RVToolsUpload.jsx",
+        "title": "RVToolsUpload.jsx",
+        "subtitle": "frontend/src/components/RVToolsUpload.jsx",
+        "summary": "Top-level RVTools upload \u2014 auto-detects vCenter per VM, matches to",
+        "category": "frontend",
+        "api_calls": [
+          "/api/rvtools/upload-multi-vcenter",
+          "/api/sources/vcenters",
+          "/api/sources/vcenters/auto-match"
+        ],
+        "members": [
+          {
+            "name": "RVToolsUpload",
+            "kind": "component"
+          },
+          {
+            "name": "ImportErrorBanner",
+            "kind": "component"
+          },
+          {
+            "name": "PickStage",
+            "kind": "component"
+          },
+          {
+            "name": "ParseStatsCard",
+            "kind": "component"
+          },
+          {
+            "name": "ConfirmStage",
+            "kind": "component"
+          },
+          {
+            "name": "DoneStage",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/components/ReportView.jsx",
         "title": "ReportView.jsx",
         "subtitle": "frontend/src/components/ReportView.jsx",
@@ -5299,10 +6050,6 @@ const DATA = {
         "category": "frontend",
         "api_calls": [],
         "members": [
-          {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
           {
             "name": "ReportView",
             "kind": "component"
@@ -5377,10 +6124,6 @@ const DATA = {
         ],
         "members": [
           {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
-          {
             "name": "ResourceMappings",
             "kind": "component"
           },
@@ -5447,10 +6190,6 @@ const DATA = {
           "/api/system/ssh-public-key"
         ],
         "members": [
-          {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
           {
             "name": "NextRunIndicator",
             "kind": "component"
@@ -5531,10 +6270,6 @@ const DATA = {
         ],
         "members": [
           {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
-          {
             "name": "StorageReviewDetail",
             "kind": "component"
           },
@@ -5597,10 +6332,6 @@ const DATA = {
         ],
         "members": [
           {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
-          {
             "name": "StorageReviewNew",
             "kind": "component"
           },
@@ -5635,10 +6366,6 @@ const DATA = {
           "/api/sources/vcenters/{id}/rvtools/preview"
         ],
         "members": [
-          {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
           {
             "name": "VCenterSources",
             "kind": "component"
@@ -5705,10 +6432,6 @@ const DATA = {
           "/api/vms/{id}/validation/latest"
         ],
         "members": [
-          {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
           {
             "name": "classifyCaptureError",
             "kind": "helper"
@@ -5950,6 +6673,21 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/utils/fetchJSON.js",
+        "title": "fetchJSON.js",
+        "subtitle": "frontend/src/utils/fetchJSON.js",
+        "summary": "Shared fetch helper. Every component used to copy a slightly",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "fetchJSON",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/utils/parseRVTools.js",
         "title": "parseRVTools.js",
         "subtitle": "frontend/src/utils/parseRVTools.js",
@@ -5963,6 +6701,14 @@ const DATA = {
           },
           {
             "name": "rowToPayload",
+            "kind": "helper"
+          },
+          {
+            "name": "normalizeHostname",
+            "kind": "helper"
+          },
+          {
+            "name": "groupByVCenter",
             "kind": "helper"
           },
           {

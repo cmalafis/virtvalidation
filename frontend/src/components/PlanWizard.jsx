@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate } from "react-router-dom";
-import { throwForResponse } from "../utils/apiError";
+import { fetchJSON } from "../utils/fetchJSON";
 
 // Strategy-driven migration planning wizard. 8 conceptual steps
 // flattened into a scrollable single-page form so operators don't
@@ -67,16 +67,6 @@ const ATOMICITY_OPTIONS = [
     desc: "AI looks at each application's architecture and decides." },
 ];
 
-async function fetchJSON(url, opts = {}) {
-  const init = { method: "GET", ...opts };
-  if (init.body !== undefined && typeof init.body !== "string") {
-    init.headers = { "Content-Type": "application/json", ...(init.headers || {}) };
-    init.body = JSON.stringify(init.body);
-  }
-  const r = await fetch(url, init);
-  if (!r.ok) await throwForResponse(r);
-  return r.json();
-}
 
 
 export default function PlanWizard() {

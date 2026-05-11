@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.limits import MAX_VMS_PER_RVTOOLS_IMPORT
 from app.models.vcenter import ClassificationLevel, VCenterStatus
 
 
@@ -69,10 +70,15 @@ class RVToolsVMRow(BaseModel):
     application_hint: str | None = Field(default=None, max_length=128)
     vsphere_networks: list[str] = Field(default_factory=list)
     vsphere_datastores: list[str] = Field(default_factory=list)
+    # The RVTools vCenter column for this row. Populated by the
+    # frontend parser when the upload contains the column; lets the
+    # upload-multi-vcenter endpoint auto-route VMs without an
+    # operator-supplied per-row override.
+    source_vcenter_hostname: str | None = Field(default=None, max_length=255)
 
 
 class RVToolsDeltaRequest(BaseModel):
-    vms: list[RVToolsVMRow] = Field(min_length=1, max_length=10000)
+    vms: list[RVToolsVMRow] = Field(min_length=1, max_length=MAX_VMS_PER_RVTOOLS_IMPORT)
 
 
 class RVToolsDeltaItem(BaseModel):

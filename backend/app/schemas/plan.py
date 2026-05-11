@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.limits import MAX_VMS_PER_PLAN_SCOPE
 from app.models.plan import (
     ApplicationAtomicity,
     PrimaryGrouping,
@@ -74,7 +75,7 @@ class PlanScopeFilter(BaseModel):
     source_vcenter_id, then environment / application_hint, then
     'all VMs')."""
 
-    vm_ids: list[int] = Field(default_factory=list, max_length=10_000)
+    vm_ids: list[int] = Field(default_factory=list, max_length=MAX_VMS_PER_PLAN_SCOPE)
     source_vcenter_id: int | None = None
     environment: str | None = Field(default=None, max_length=64)
     application_hint: str | None = Field(default=None, max_length=128)

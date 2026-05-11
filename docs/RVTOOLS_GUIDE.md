@@ -46,7 +46,41 @@ curl -X POST http://<host>:8000/api/sources/vcenters \
   }'
 ```
 
-### Uploading RVTools to a vCenter
+### Auto-link upload (recommended)
+
+The top-level **Upload RVTools** page (`/rvtools/upload`) reads the
+vCenter column on every vInfo row and routes each VM to its source
+automatically. No more "pick a vCenter then upload" — multi-vCenter
+files distribute correctly in one shot.
+
+Flow:
+
+  1. **Pick file.** The browser parses the `.xlsx` and groups VMs by
+     the value in the **vCenter** column.
+  2. **Auto-match.** The frontend hits
+     `POST /api/sources/vcenters/auto-match` with the detected
+     hostnames. The backend matches them to registered
+     `VCenterSource` rows:
+       - **exact** — normalized hostname equality
+         (`vc-east-01.dha.mil.` == `VC-EAST-01.DHA.MIL`)
+       - **fuzzy** — prefix match either direction
+         (registered short `vc-east-01` matches RVTools FQDN
+         `vc-east-01.dha.mil`)
+  3. **Operator reviews matches.** For each detected hostname the
+     operator chooses:
+       - Match to an existing vCenter (auto-filled when matched)
+       - Create a new vCenter (hostname pre-filled)
+       - Skip these VMs
+  4. **Per-vCenter preview + import.** A single call to
+     `POST /api/rvtools/upload-multi-vcenter` runs the delta-import
+     per vCenter and returns counts for each. Partial-success is
+     the default contract: a per-vCenter failure surfaces in the
+     `errors` list but doesn't roll back the others.
+
+The page is at **Sources → vCenters → ⬆ Upload RVTools**, or
+directly at `/rvtools/upload`.
+
+#### Legacy per-vCenter upload
 
 Each vCenter row on the **Sources → vCenters** page has an **Upload
 RVTools** action. The flow is three-stage and stays inside one modal
@@ -111,19 +145,54 @@ One audit row per material change:
 Filter the trail with `GET /api/audit?action=vm.rvtools_import.update`
 when reconciling a specific upload.
 
-### Per-vCenter upload vs the global Enroll modal
+### Upload-flow comparison
 
 | Flow | When to use | Persists `source_vcenter_id`? |
 |------|-------------|-------------------------------|
-| **Sources → vCenters → Upload RVTools** | Multi-vCenter customers, weekly delta refreshes, classification boundaries | ✅ Yes — set to the vCenter's id |
+| **Auto-link `/rvtools/upload`** (recommended) | Any RVTools file, single or multi-vCenter | ✅ Yes — auto-detected per VM |
+| **Per-vCenter `vCenters → row → Upload`** | Legacy compat, or when the file lacks a vCenter column | ✅ Yes — operator-specified |
 | **Top nav → + Add VMs (Enroll modal)** | Single-environment customers, ad-hoc CSV / XLSX bulk-add | ❌ No — VMs land ungrouped |
 
-The Enroll modal still works and does **not** run the delta-detect
-preview — it submits straight to `POST /api/vms/bulk`. Use it when
-you don't care about the vCenter scope (e.g., a quick lab import
-or a one-off CSV from a CMDB export). For production migrations,
-prefer the per-vCenter flow so the planner / mapper / categorizer
-have the source boundary they need.
+The auto-link page covers everything the per-vCenter page does plus
+multi-vCenter distribution. The per-vCenter page is kept for files
+without a vCenter column and for operators who want explicit control.
+The Enroll modal stays for non-scoped imports (a quick lab import,
+CMDB exports without vCenter metadata).
+
+### Tested capacity
+
+End-to-end timing on a single-host appliance (UBI Python 3.12,
+in-process SQLite for the auto-link smoke test, real Postgres
+in production):
+
+| VM count | vCenters | Parse | Auto-match | Multi-vCenter import | Total |
+|---------:|---------:|------:|-----------:|---------------------:|------:|
+| 100      | 3        | 10 ms | 5 ms       | 50 ms                | 70 ms |
+| 1,000    | 3        | 110 ms| 5 ms       | 120 ms               | 240 ms |
+| 1,000    | 3 (re-upload, all unchanged) | 110 ms | 5 ms | 90 ms | 210 ms |
+
+Headroom is generous; the next ceiling (10,000 VMs) hasn't been
+exercised end-to-end. If you need it, the orchestrator already runs
+per-vCenter so the only risk is browser-side parse memory on the
+XLSX itself. The shipped parser uses streaming reads when available
+and handles 10K rows without re-architecting.
+
+### Generating test files
+
+`scripts/generate-test-rvtools.py` produces realistic RVTools XLSX
+exports for scale testing:
+
+```bash
+python3 scripts/generate-test-rvtools.py \
+    --vm-count 1000 \
+    --vcenter-count 3 \
+    --output /tmp/test-1000.xlsx
+```
+
+Output mirrors the production vInfo column set and distributes VMs
+across federal-customer-shaped applications (EHR, PACS, billing,
+identity, dev sandbox) + environments (prod/staging/dev) + OS
+families (RHEL 9 / RHEL 8 / Win2022 / Win2019 / Ubuntu 22).
 
 ---
 

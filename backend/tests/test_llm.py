@@ -77,11 +77,23 @@ def test_parse_verdict_accepts_minimal_valid_object():
 
 
 def test_parse_verdict_preserves_findings_and_remediation():
+    """Validation v0.x tightened the schema: every finding must carry
+    source_evidence / current_evidence / remediation / confidence."""
     raw = json.dumps(
         {
             "status": "warn",
             "summary": "cosmetic drift",
-            "findings": [{"severity": "info", "category": "services", "message": "nginx missing"}],
+            "findings": [
+                {
+                    "severity": "info",
+                    "category": "services",
+                    "title": "nginx missing",
+                    "source_evidence": "nginx.service active in baseline",
+                    "current_evidence": "nginx.service absent in current",
+                    "remediation": "systemctl start nginx",
+                    "confidence": "medium",
+                }
+            ],
             "remediation": [
                 {"step": 1, "action": "restart nginx", "command": "systemctl start nginx"}
             ],
@@ -91,6 +103,41 @@ def test_parse_verdict_preserves_findings_and_remediation():
     assert verdict["summary"] == "cosmetic drift"
     assert verdict["findings"][0]["category"] == "services"
     assert verdict["remediation"][0]["command"] == "systemctl start nginx"
+
+
+def test_parse_verdict_requires_evidence_fields_per_finding():
+    """Findings missing source_evidence / current_evidence / remediation
+    are rejected so the retry loop can re-prompt the LLM."""
+    raw = json.dumps(
+        {
+            "status": "warn",
+            "findings": [{"severity": "low", "title": "x", "confidence": "medium"}],
+        }
+    )
+    with pytest.raises(LLMError, match="source_evidence"):
+        LLMClient._parse_verdict(raw)
+
+
+def test_parse_verdict_enforces_status_severity_consistency():
+    """A 'pass' verdict with a critical finding is internally
+    inconsistent — the parser rejects so the retry loop can correct."""
+    raw = json.dumps(
+        {
+            "status": "pass",
+            "findings": [
+                {
+                    "severity": "critical",
+                    "title": "DB down",
+                    "source_evidence": "x",
+                    "current_evidence": "y",
+                    "remediation": "z",
+                    "confidence": "high",
+                }
+            ],
+        }
+    )
+    with pytest.raises(LLMError, match="must be 'fail'"):
+        LLMClient._parse_verdict(raw)
 
 
 def test_parse_verdict_rejects_invalid_status():
@@ -210,9 +257,28 @@ def test_validate_raises_on_backend_error():
         client.validate({}, {}, "web")
 
 
-def test_validate_raises_when_response_content_empty():
+def test_validate_returns_manual_review_when_retries_exhausted():
+    """Behavior change from v0.x retry loop: when the LLM produces
+    unparseable content twice in a row (initial + 1 retry), the
+    pipeline returns a 'manual review needed' verdict instead of
+    raising so the bulk path can skip the bad VM without aborting
+    every other one."""
     stub = StubBackend(response={"content": "", "model": "stub-model"})
     client = LLMClient(backend=stub)
 
-    with pytest.raises(LLMError, match="not valid JSON"):
+    verdict = client.validate({}, {}, "web")
+    assert verdict["needs_manual_review"] is True
+    assert verdict["status"] == "warn"
+    # diff still attached so the UI can render the raw signal.
+    assert "diff" in verdict
+    # Stub was hit twice: initial attempt + 1 retry.
+    assert len(stub.calls) == 2
+
+
+def test_validate_raises_only_on_backend_transport_error():
+    """LLMBackendError (transport-layer) is still fatal — the retry
+    loop only swallows structural validation failures."""
+    stub = StubBackend(raise_on_call=LLMBackendError("backend offline"))
+    client = LLMClient(backend=stub)
+    with pytest.raises(LLMError, match="backend offline"):
         client.validate({}, {}, "web")

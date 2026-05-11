@@ -7,6 +7,7 @@ from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
 from app.core.capture import run_capture_task, task_store
 from app.core.db import get_db
+from app.core.limits import MAX_PAGE_SIZE
 from app.core.validation import run_validation_task
 from app.core.validation import task_store as validation_task_store
 from app.models.validation import ValidationResult
@@ -95,7 +96,10 @@ def create_vms_bulk(payload: BulkVMCreate, db: Session = Depends(get_db)) -> dic
 def list_vms(
     db: Session = Depends(get_db),
     status_filter: VMStatus | None = Query(default=None, alias="status"),
-    limit: int = Query(default=100, ge=1, le=10000),
+    # See app.core.limits.MAX_PAGE_SIZE. Default 100 keeps first-render
+    # fast; the ceiling lets power-users pull a whole inventory in one
+    # round-trip when scripting.
+    limit: int = Query(default=100, ge=1, le=MAX_PAGE_SIZE),
     offset: int = Query(default=0, ge=0),
 ) -> list[VM]:
     stmt = select(VM).order_by(VM.created_at.desc()).limit(limit).offset(offset)

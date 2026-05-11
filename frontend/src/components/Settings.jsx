@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link } from "react-router-dom";
-import { throwForResponse } from "../utils/apiError";
+import { fetchJSON } from "../utils/fetchJSON";
 
 const TOAST_OPTS = {
   style: {
@@ -42,24 +42,6 @@ const HOST_KEY_POLICIES = [
   },
 ];
 
-async function fetchJSON(url, { signal, method = "GET", body } = {}) {
-  const opts = { signal, method };
-  if (body !== undefined) {
-    opts.headers = { "Content-Type": "application/json" };
-    opts.body = JSON.stringify(body);
-  }
-  const res = await fetch(url, opts);
-  if (!res.ok) {
-    try {
-      await throwForResponse(res);
-    } catch (err) {
-      err.status = res.status;
-      throw err;
-    }
-  }
-  if (res.status === 204) return null;
-  return res.json();
-}
 
 const Spinner = ({ size = 14, color = "#4488ff" }) => (
   <span aria-hidden="true" style={{

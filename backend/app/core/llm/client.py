@@ -9,10 +9,13 @@ pre-refactor module so existing call sites keep working.
 from __future__ import annotations
 
 import json
-from typing import Any
+import logging
+from typing import Any, Optional
 
 from app.core.llm.base import LLMBackend, LLMBackendError
 from app.core.llm.factory import get_llm_backend
+
+logger = logging.getLogger(__name__)
 
 
 class LLMError(RuntimeError):
@@ -105,7 +108,104 @@ Respond with a SINGLE JSON object and nothing else. Schema:
 Order findings most-critical first. Mark "low" confidence whenever the
 diff is ambiguous (e.g. a service replaced with what looks like a
 renamed but functionally-equivalent service). No markdown fences. No
-commentary outside the JSON."""
+commentary outside the JSON.
+
+## Example outputs
+
+These are the shape and depth of analysis we expect. Three flavors:
+
+### Example A — critical issue, correctly flagged
+
+Diff (excerpt):
+  services.removed = ["postgresql.service", "redis.service"]
+  services.added = ["kubevirt-agent.service"]
+  ports.removed = [{proto:"tcp", port:5432, address:"0.0.0.0"}]
+
+Verdict:
+{
+  "status": "fail",
+  "summary": "Production database services (PostgreSQL, Redis) are not running. The 5432 port that the database normally listens on has disappeared. Migration validated successfully for OS-level state but the database workload itself is offline and requires immediate intervention.",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "services",
+      "title": "PostgreSQL service is not running",
+      "description": "postgresql.service was active in the baseline snapshot and is absent from the current state. Port 5432 has also disappeared, confirming the database itself isn't accepting connections.",
+      "source_evidence": "services[].unit == 'postgresql.service' (active, running) in baseline",
+      "current_evidence": "postgresql.service absent from current services list; tcp:5432 not in ports",
+      "remediation": "systemctl status postgresql; check journalctl -u postgresql for startup failure. Common causes: missing pg_hba.conf, data directory permissions, SELinux booleans not migrated.",
+      "confidence": "high"
+    },
+    {
+      "severity": "critical",
+      "category": "services",
+      "title": "Redis service is not running",
+      "description": "redis.service was active in the baseline snapshot and is absent post-migration.",
+      "source_evidence": "services[].unit == 'redis.service' in baseline",
+      "current_evidence": "redis.service absent from current services list",
+      "remediation": "systemctl start redis; check journal for the failure root cause.",
+      "confidence": "high"
+    }
+  ],
+  "remediation": [
+    {"step": 1, "action": "Restart database tier", "command": "systemctl start postgresql redis"},
+    {"step": 2, "action": "Verify on app tier", "command": null}
+  ]
+}
+
+### Example B — expected post-migration change, correctly NOT flagged as concerning
+
+Diff (excerpt):
+  services.added = ["kubevirt-agent.service", "qemu-guest-agent.service"]
+  network.interfaces = {"eth0":{ipv4_removed:["10.0.0.5"]}, "ens192":{ipv4_added:["10.0.0.5"]}}
+
+Verdict:
+{
+  "status": "pass",
+  "summary": "Migration completed cleanly. The kubevirt-agent and qemu-guest-agent services were added as expected (MTV conversion step). The eth0 → ens192 interface rename is the standard VirtIO naming switch on RHEL guests and preserves the same IP address.",
+  "findings": [
+    {
+      "severity": "info",
+      "category": "network",
+      "title": "Network interface renamed eth0 → ens192 (expected)",
+      "description": "VirtIO networking on KubeVirt produces predictable ens* interface names. The IP address 10.0.0.5 transferred to the new interface without change.",
+      "source_evidence": "eth0 with 10.0.0.5/24 in baseline",
+      "current_evidence": "ens192 with 10.0.0.5/24 in current state",
+      "remediation": "No action required. Verify application configs don't pin the interface name.",
+      "confidence": "high"
+    }
+  ],
+  "remediation": []
+}
+
+### Example C — ambiguous case, low confidence with uncertainty
+
+Diff (excerpt):
+  services.added = ["myapp-worker.service"]
+  services.removed = ["app-worker.service"]
+
+Verdict:
+{
+  "status": "warn",
+  "summary": "An application service appears to have been renamed (app-worker → myapp-worker). The naming change is plausible but I cannot verify the new service actually provides the same functionality without inspecting the unit file.",
+  "findings": [
+    {
+      "severity": "medium",
+      "category": "services",
+      "title": "Application service may have been renamed",
+      "description": "app-worker.service is no longer present and myapp-worker.service appeared. The renamed service is plausibly the same workload but the rename was not done by the standard migration toolchain.",
+      "source_evidence": "app-worker.service active in baseline",
+      "current_evidence": "app-worker.service absent; myapp-worker.service present",
+      "remediation": "Verify myapp-worker provides the same workload (compare ExecStart lines, port bindings). If equivalent, document the rename and acknowledge this finding.",
+      "confidence": "low"
+    }
+  ],
+  "remediation": [
+    {"step": 1, "action": "Compare service unit files", "command": "systemctl cat myapp-worker | diff - <(systemctl cat app-worker)"}
+  ]
+}
+
+Use these examples for shape and depth — do NOT copy their text verbatim. Your actual analysis must reflect the diff in this specific request."""
 
 
 class LLMClient:
@@ -118,8 +218,23 @@ class LLMClient:
     def __init__(self, backend: LLMBackend | None = None) -> None:
         self.backend = backend or get_llm_backend()
 
-    def validate(self, baseline: dict, current_state: dict, vm_role: str) -> dict:
-        """Reason over pre/post migration diff and return a structured verdict."""
+    def validate(
+        self,
+        baseline: dict,
+        current_state: dict,
+        vm_role: str,
+        *,
+        max_retries: int = 1,
+    ) -> dict:
+        """Reason over pre/post migration diff and return a structured verdict.
+
+        On structural validation failure (missing evidence fields,
+        invalid status, bad JSON) the call retries once with a
+        targeted feedback message explaining what was wrong. If the
+        retry also fails, the verdict is marked ``manual_review`` so
+        the bulk pipeline can flag it for an operator without
+        blocking other VMs.
+        """
         diff = self._diff_state(baseline, current_state)
         # The OS profile is captured at baseline time; surface it in the
         # prompt so the LLM uses Windows terminology for Windows VMs and
@@ -127,22 +242,89 @@ class LLMClient:
         # per-OS prompt templates.
         os_profile = (baseline.get("meta") or {}).get("os_profile") or {}
         user_prompt = self._render_prompt(vm_role, os_profile, diff)
-        try:
-            response = self.backend.chat_sync(
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.1,
-            )
-        except LLMBackendError as e:
-            raise LLMError(str(e)) from e
-        verdict = self._parse_verdict(response.get("content", ""))
-        verdict["diff"] = diff
-        return verdict
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+        last_validation_error: Optional[str] = None
+        for attempt in range(max_retries + 1):
+            if attempt > 0 and last_validation_error:
+                # Append the previous reply + a corrective message so
+                # the model can see what went wrong and produce a
+                # well-formed response on the retry.
+                messages = messages + [
+                    {"role": "assistant", "content": last_raw or "(empty)"},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous response was rejected by the validator:\n"
+                            f"  {last_validation_error}\n"
+                            "Please re-emit the JSON object honoring the schema in the "
+                            "system prompt. Every finding MUST include non-empty "
+                            "`source_evidence`, `current_evidence`, `remediation`, and "
+                            "`confidence`. Output a single JSON object only — no markdown, "
+                            "no commentary."
+                        ),
+                    },
+                ]
+            try:
+                response = self.backend.chat_sync(messages=messages, temperature=0.1)
+            except LLMBackendError as e:
+                raise LLMError(str(e)) from e
+            last_raw = response.get("content", "")
+            try:
+                verdict = self._parse_verdict(last_raw)
+                verdict["diff"] = diff
+                verdict["model"] = response.get("model") or ""
+                verdict["needs_manual_review"] = False
+                return verdict
+            except LLMError as e:
+                last_validation_error = str(e)
+                logger.warning(
+                    "Validation LLM output rejected on attempt %d/%d: %s",
+                    attempt + 1,
+                    max_retries + 1,
+                    e,
+                )
+
+        # All retries exhausted — surface a "manual review" verdict
+        # rather than failing the whole bulk run.
+        return {
+            "status": "warn",
+            "summary": (
+                "LLM output did not match the required schema after retry. "
+                f"Last validator error: {last_validation_error}. Manual "
+                "operator review required."
+            ),
+            "findings": [],
+            "remediation": [],
+            "confidence": "low",
+            "diff": diff,
+            "model": "",
+            "needs_manual_review": True,
+        }
 
     @staticmethod
     def _parse_verdict(raw: str) -> dict:
+        """Parse + structurally validate the LLM output.
+
+        Validation rules — every one of these is a production-day bug
+        if the LLM gets it wrong, so we reject hard and let the retry
+        loop give the model another shot at producing a well-formed
+        response:
+
+          - JSON must be well-formed.
+          - Top level is an object with status / summary / findings /
+            remediation keys.
+          - status ∈ {pass, warn, fail}.
+          - Every finding has non-empty source_evidence + current_evidence +
+            remediation + confidence + severity.
+          - Verdict status matches the worst finding's severity:
+              fail   ⇒ at least one critical finding
+              warn   ⇒ at least one high/medium finding (and no critical)
+              pass   ⇒ no critical/high/medium findings
+        """
         try:
             verdict = json.loads(raw)
         except json.JSONDecodeError as e:
@@ -158,11 +340,56 @@ class LLMClient:
         verdict.setdefault("summary", "")
         verdict.setdefault("findings", [])
         verdict.setdefault("remediation", [])
+        verdict.setdefault("confidence", "medium")
 
         if not isinstance(verdict["findings"], list):
             raise LLMError("findings must be a list")
         if not isinstance(verdict["remediation"], list):
             raise LLMError("remediation must be a list")
+
+        allowed_severity = {"critical", "high", "medium", "low", "info"}
+        allowed_confidence = {"high", "medium", "low"}
+        worst_rank = 0
+        rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+        for idx, finding in enumerate(verdict["findings"]):
+            if not isinstance(finding, dict):
+                raise LLMError(f"findings[{idx}] is not an object")
+            severity = (finding.get("severity") or "").lower()
+            if severity not in allowed_severity:
+                raise LLMError(
+                    f"findings[{idx}].severity must be one of {sorted(allowed_severity)}, "
+                    f"got {severity!r}"
+                )
+            confidence = (finding.get("confidence") or "").lower()
+            if confidence not in allowed_confidence:
+                raise LLMError(
+                    f"findings[{idx}].confidence must be one of {sorted(allowed_confidence)}, "
+                    f"got {confidence!r}"
+                )
+            for required in ("source_evidence", "current_evidence", "remediation", "title"):
+                value = (finding.get(required) or "").strip() if isinstance(
+                    finding.get(required), str
+                ) else finding.get(required)
+                if not value:
+                    raise LLMError(
+                        f"findings[{idx}].{required} is required and must be non-empty"
+                    )
+            worst_rank = max(worst_rank, rank[severity])
+
+        # Verdict-vs-findings consistency. The model is occasionally
+        # over-confident in its summary; if it says "pass" but emitted
+        # a critical finding, the parser overrides the verdict to fail.
+        if worst_rank >= rank["critical"] and status != "fail":
+            raise LLMError(
+                "verdict.status must be 'fail' when at least one finding "
+                "has severity 'critical'"
+            )
+        if status == "pass" and worst_rank >= rank["medium"]:
+            raise LLMError(
+                "verdict.status must be 'warn' or 'fail' when any finding "
+                "has severity 'medium' or higher"
+            )
 
         return verdict
 
@@ -212,15 +439,29 @@ class LLMClient:
 
     @staticmethod
     def _diff_state(baseline: dict, current: dict) -> dict:
-        return {
-            "services": _diff_services(
-                baseline.get("services", []), current.get("services", [])
-            ),
-            "ports": _diff_ports(baseline.get("ports", []), current.get("ports", [])),
-            "mounts": _diff_mounts(baseline.get("mounts", []), current.get("mounts", [])),
-            "network": _diff_network(baseline.get("network", {}), current.get("network", {})),
-            "cron": _diff_cron(baseline.get("cron", {}), current.get("cron", {})),
-        }
+        return compute_diff(baseline, current)
+
+
+def compute_diff(baseline: dict, current: dict) -> dict:
+    """Module-level alias for :meth:`LLMClient._diff_state`.
+
+    Exposed for the tier classifier + bulk validation preview, which
+    need the diff without instantiating an LLM client (and the
+    expensive backend resolution that comes with it).
+    """
+    return {
+        "services": _diff_services(
+            baseline.get("services", []), current.get("services", [])
+        ),
+        "ports": _diff_ports(baseline.get("ports", []), current.get("ports", [])),
+        "mounts": _diff_mounts(baseline.get("mounts", []), current.get("mounts", [])),
+        "network": _diff_network(baseline.get("network", {}), current.get("network", {})),
+        "cron": _diff_cron(baseline.get("cron", {}), current.get("cron", {})),
+    }
+
+
+# Back-compat alias for callers that already import this name.
+_diff_state_for_validation = compute_diff
 
 
 # ---------------------------------------------------------------------------

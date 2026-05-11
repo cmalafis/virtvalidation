@@ -225,6 +225,93 @@ def delete_vcenter(
 
 
 # ---------------------------------------------------------------------------
+# vCenter hostname auto-match
+# ---------------------------------------------------------------------------
+def _normalize_hostname(raw: str | None) -> str:
+    """Lowercase + strip trailing dots. Mirrors the JS normalizer so
+    both sides cluster `vc.corp.` and `VC.CORP` to the same key."""
+    if not raw:
+        return ""
+    return str(raw).strip().lower().rstrip(".")
+
+
+@router.post("/auto-match")
+def auto_match_vcenters(
+    payload: dict, db: Session = Depends(get_db)
+) -> dict:
+    """Resolve a list of RVTools-detected vCenter hostnames to registered
+    VCenterSource rows.
+
+    Matching strategy:
+
+      1. **Exact** — normalized hostname equals row.hostname (normalized).
+      2. **Fuzzy** — the detected hostname is a prefix of a registered
+         hostname (or vice versa). Covers ``vc-east-01`` vs
+         ``vc-east-01.dha.mil`` mismatches the operator routinely
+         creates by trimming the FQDN on registration.
+
+    Returns:
+        ``{matches: [{hostname, normalized, matched_vcenter_id,
+                       matched_vcenter_name, confidence}],
+           unmatched: [...]}``
+    """
+    hostnames = payload.get("hostnames") or []
+    if not isinstance(hostnames, list):
+        raise HTTPException(
+            status_code=422, detail="`hostnames` must be a list"
+        )
+
+    rows = list(db.scalars(select(VCenterSource)).all())
+    by_norm: dict[str, VCenterSource] = {
+        _normalize_hostname(r.hostname): r for r in rows if r.hostname
+    }
+
+    matches: list[dict] = []
+    unmatched: list[str] = []
+
+    for raw in hostnames:
+        norm = _normalize_hostname(raw)
+        if not norm:
+            continue
+        # Exact normalized match.
+        exact = by_norm.get(norm)
+        if exact is not None:
+            matches.append(
+                {
+                    "hostname": raw,
+                    "normalized": norm,
+                    "matched_vcenter_id": exact.id,
+                    "matched_vcenter_name": exact.name,
+                    "confidence": "exact",
+                }
+            )
+            continue
+        # Fuzzy: prefix-equivalent. We accept either direction so
+        # short vs FQDN-registered both resolve.
+        fuzzy_match: VCenterSource | None = None
+        for reg_norm, row in by_norm.items():
+            if not reg_norm:
+                continue
+            if norm.startswith(reg_norm + ".") or reg_norm.startswith(norm + "."):
+                fuzzy_match = row
+                break
+        if fuzzy_match is not None:
+            matches.append(
+                {
+                    "hostname": raw,
+                    "normalized": norm,
+                    "matched_vcenter_id": fuzzy_match.id,
+                    "matched_vcenter_name": fuzzy_match.name,
+                    "confidence": "fuzzy",
+                }
+            )
+        else:
+            unmatched.append(raw)
+
+    return {"matches": matches, "unmatched": unmatched}
+
+
+# ---------------------------------------------------------------------------
 # RVTools delta preview
 # ---------------------------------------------------------------------------
 @router.post(

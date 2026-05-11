@@ -29,7 +29,7 @@ Enrolling, listing, editing, and deleting VMs.
 <details><summary><strong><code>app.api.vms</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/vms.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.validation`, `app.models.validation`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
+Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.limits`, `app.core.validation`, `app.models.validation`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
 
 **Routes**
 
@@ -73,7 +73,7 @@ Depends on: `app.core.db`
 <details><summary><strong><code>app.schemas.vm</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/schemas/vm.py`  
-Depends on: `app.models.vm`
+Depends on: `app.core.limits`, `app.models.vm`
 
 **Classes**
 
@@ -119,16 +119,24 @@ Depends on: `app.models.vm`
 
 SSH state capture, on-demand triggers, scheduled cadence.
 
-<details><summary><strong><code>app.api.snapshots</code></strong> — <em>API endpoints</em> · Cross-VM snapshot operations — currently just bulk on-demand capture.</summary>
+<details><summary><strong><code>app.api.snapshots</code></strong> — <em>API endpoints</em> · Cross-VM snapshot operations: legacy ``capture-all`` (per-VM tasks)</summary>
 
 Path: `backend/app/api/snapshots.py`  
-Depends on: `app.core.audit`, `app.core.capture`, `app.core.db`, `app.models.vm`, `app.schemas.vm`
+Depends on: `app.core.audit`, `app.core.bulk_capture`, `app.core.capture`, `app.core.db`, `app.core.limits`, `app.models.vm`, `app.schemas.vm`
 
 **Routes**
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
 | `POST` | `/api/snapshots/capture-all` | `capture_all(request, background_tasks, db)` | Spawn an immediate capture against every enrolled VM. |
+| `POST` | `/api/snapshots/capture-bulk` | `capture_bulk(request, payload, background_tasks, db)` | Spawn a rate-limited bulk capture against a selected fleet. |
+| `GET` | `/api/snapshots/capture-bulk/{task_id}` | `get_bulk_capture_status(task_id)` | — |
+
+**Classes**
+
+- **`BulkCaptureScope`** (Pydantic schema)
+  - Selection axes for the bulk-capture endpoint. Stack any subset;
+  - Fields: `vm_ids`, `source_vcenter_id`, `environment`, `application_hint`, `only_status`, `name_contains`, `max_parallel`, `per_vcenter_parallel`
 
 </details>
 
@@ -313,7 +321,7 @@ Depends on: `app.core.db`
 <details><summary><strong><code>app.schemas.plan</code></strong> — <em>Data models / schemas</em> · Pydantic schemas for migration plans + strategies.</summary>
 
 Path: `backend/app/schemas/plan.py`  
-Depends on: `app.models.plan`
+Depends on: `app.core.limits`, `app.models.plan`
 
 **Classes**
 
@@ -583,6 +591,29 @@ Depends on: `app.core.config`, `app.core.db`, `app.models.plan`, `app.models.val
 
 </details>
 
+<details><summary><strong><code>app.api.rvtools</code></strong> — <em>API endpoints</em> · Top-level RVTools upload endpoint that routes per-VM into the</summary>
+
+Path: `backend/app/api/rvtools.py`  
+Depends on: `app.core.audit`, `app.core.db`, `app.core.limits`, `app.core.rvtools_import`, `app.models.vcenter`, `app.schemas.vcenter`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `POST` | `/api/rvtools/upload-multi-vcenter` | `upload_multi_vcenter(request, payload, db)` | Auto-link RVTools VMs to vCenter sources based on the parser&#x27;s |
+
+**Classes**
+
+- **`MultiVCenterImportRequest`** (Pydantic schema)
+  - Payload for the auto-link upload flow.
+  - Fields: `vms`, `vcenter_mapping`, `default_vcenter_id`
+- **`PerVCenterResult`** (Pydantic schema)
+  - Fields: `vcenter_id`, `vcenter_name`, `created`, `updated`, `marked_missing`, `unchanged`
+- **`MultiVCenterImportResult`** (Pydantic schema)
+  - Fields: `imported_per_vcenter`, `skipped`, `errors`, `total_vms`, `elapsed_seconds`
+
+</details>
+
 <details><summary><strong><code>app.api.settings</code></strong> — <em>API endpoints</em> · Settings + system-info endpoints powering the /settings page.</summary>
 
 Path: `backend/app/api/settings.py`  
@@ -598,6 +629,7 @@ Depends on: `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.fac
 | `GET` | `/api/system/ollama-models` | `ollama_models()` | List models available on the active LLM backend. |
 | `GET` | `/api/system/fips-status` | `fips_status_endpoint()` | FIPS 140-3 compliance posture — configured + detected + per-op status. |
 | `GET` | `/api/system/llm-info` | `llm_info()` | Active LLM backend snapshot — what&#x27;s wired up + live status. |
+| `GET` | `/api/system/llm-usage` | `llm_usage(hours, db)` | Rolled-up usage metrics for the admin dashboard. |
 
 </details>
 
@@ -647,16 +679,55 @@ Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.
 
 </details>
 
-<details><summary><strong><code>app.api.validations</code></strong> — <em>API endpoints</em> · Cross-VM validation operations — currently bulk on-demand validate.</summary>
+<details><summary><strong><code>app.api.validation_schedules</code></strong> — <em>API endpoints</em> · CRUD for ValidationSchedule + an on-demand &quot;fire now&quot; endpoint.</summary>
+
+Path: `backend/app/api/validation_schedules.py`  
+Depends on: `app.core.audit`, `app.core.bulk_validation`, `app.core.db`, `app.core.limits`, `app.models.validation_schedule`, `app.models.vm`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `GET` | `/api/validation-schedules` | `list_schedules(db)` | — |
+| `POST` | `/api/validation-schedules` | `create_schedule(request, payload, db)` | — |
+| `GET` | `/api/validation-schedules/{schedule_id}` | `get_schedule(schedule_id, db)` | — |
+| `PATCH` | `/api/validation-schedules/{schedule_id}` | `update_schedule(request, schedule_id, payload, db)` | — |
+| `DELETE` | `/api/validation-schedules/{schedule_id}` | `delete_schedule(request, schedule_id, db)` | — |
+| `POST` | `/api/validation-schedules/{schedule_id}/fire` | `fire_schedule(request, schedule_id, background_tasks, db)` | Trigger a schedule immediately, bypassing its cron timing. |
+
+**Classes**
+
+- **`ScheduleScope`** (Pydantic schema)
+  - Same shape as :class:`BulkValidationScope` in
+  - Fields: `vm_ids`, `source_vcenter_id`, `environment`, `application_hint`
+- **`ScheduleCreate`** (Pydantic schema)
+  - Fields: `name`, `cron_expression`, `timezone`, `scope`, `notes`, `status`
+- **`ScheduleUpdate`** (Pydantic schema)
+  - Fields: `name`, `cron_expression`, `timezone`, `scope`, `notes`, `status`, `runtime_paused`
+- **`ScheduleRead`** (Pydantic schema)
+  - Fields: `id`, `name`, `cron_expression`, `timezone`, `scope`, `status`, `notes`, `last_fired_at`, `last_task_id`, `next_fire_at`, `runtime_paused`, `created_by_actor`, `created_at`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.api.validations</code></strong> — <em>API endpoints</em> · Cross-VM validation operations: legacy ``run-all`` (per-VM tasks)</summary>
 
 Path: `backend/app/api/validations.py`  
-Depends on: `app.core.audit`, `app.core.db`, `app.core.validation`, `app.models.vm`, `app.schemas.validation`
+Depends on: `app.core.audit`, `app.core.bulk_validation`, `app.core.db`, `app.core.limits`, `app.core.validation`, `app.models.vm`, `app.schemas.validation`
 
 **Routes**
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
 | `POST` | `/api/validations/run-all` | `validate_all(request, background_tasks, db)` | Spawn a validation against every enrolled VM that has a baseline. |
+| `POST` | `/api/validations/preview-tiers` | `preview_tiers(payload, db)` | Estimate the LLM-call cost of a bulk validation before running. |
+| `POST` | `/api/validations/run-bulk` | `run_bulk(request, payload, background_tasks, db)` | Spawn a tier-aware bulk validation. |
+| `GET` | `/api/validations/run-bulk/{task_id}` | `get_bulk_validation_status(task_id)` | — |
+
+**Classes**
+
+- **`BulkValidationScope`** (Pydantic schema)
+  - Selection axes the operator can stack. At least one must match
+  - Fields: `vm_ids`, `source_vcenter_id`, `environment`, `application_hint`, `only_migrated`, `not_validated_within_hours`, `use_cache`
 
 </details>
 
@@ -674,12 +745,70 @@ Depends on: `app.core.audit`, `app.core.categorizer`, `app.core.db`, `app.core.r
 | `GET` | `/api/sources/vcenters/{vcenter_id}` | `get_vcenter(vcenter_id, db)` | — |
 | `PATCH` | `/api/sources/vcenters/{vcenter_id}` | `update_vcenter(request, vcenter_id, payload, db)` | — |
 | `DELETE` | `/api/sources/vcenters/{vcenter_id}` | `delete_vcenter(request, vcenter_id, db)` | Delete a vCenter source. Member VMs keep existing — their |
+| `POST` | `/api/sources/vcenters/auto-match` | `auto_match_vcenters(payload, db)` | Resolve a list of RVTools-detected vCenter hostnames to registered |
 | `POST` | `/api/sources/vcenters/{vcenter_id}/rvtools/preview` | `rvtools_delta_preview(vcenter_id, payload, db)` | Compare an uploaded RVTools VM list against current inventory. |
 | `POST` | `/api/sources/vcenters/{vcenter_id}/rvtools/import` | `rvtools_import(request, vcenter_id, payload, background_tasks, db)` | Persist an RVTools delta against a vCenter scope. |
 | `GET` | `/api/sources/vcenters/{vcenter_id}/rvtools/import/{task_id}` | `get_rvtools_import_status(vcenter_id, task_id)` | — |
 | `POST` | `/api/sources/vcenters/{vcenter_id}/categorize` | `trigger_categorization(request, vcenter_id, background_tasks, batch_size, db)` | Spawn a Level 1 categorization run as a BackgroundTask. |
 | `GET` | `/api/sources/vcenters/{vcenter_id}/categorize/{task_id}` | `get_categorization_status(vcenter_id, task_id)` | — |
 | `GET` | `/api/sources/vcenters/{vcenter_id}/groups` | `list_groups(vcenter_id, kind, db)` | List the groups Level 1 categorization produced for a vCenter. |
+
+</details>
+
+<details><summary><strong><code>app.core.bulk_capture</code></strong> — <em>Business logic</em> · Bulk baseline-capture orchestrator.</summary>
+
+Path: `backend/app/core/bulk_capture.py`  
+Depends on: `app.core`, `app.core.audit`, `app.core.capture`, `app.core.config`, `app.models.vm`
+
+**Classes**
+
+- **`VMResult`** (Class)
+  - Fields: `vm_id`, `vm_name`, `status`, `error`, `elapsed_seconds`
+- **`BulkCaptureTask`** (Class)
+  - Fields: `task_id`, `status`, `started_at`, `completed_at`, `total`, `completed`, `failed`, `current_vm`, `per_vm`, `max_parallel`, `per_vcenter_parallel`
+  - Methods:
+    - `to_dict(self)`
+- **`BulkCaptureTaskStore`** (Class)
+  - Methods:
+    - `create(self)`
+    - `get(self, task_id)`
+    - `set_vm_status(self, task_id)`
+    - `finalize(self, task_id)`
+
+**Functions**
+
+- `run_bulk_capture_async(task_id)` — Drive a bulk-capture run to completion.
+- `run_bulk_capture(task_id)` — Sync entry point for FastAPI BackgroundTasks. Wraps the async
+
+</details>
+
+<details><summary><strong><code>app.core.bulk_validation</code></strong> — <em>Business logic</em> · Bulk validation orchestrator.</summary>
+
+Path: `backend/app/core/bulk_validation.py`  
+Depends on: `app.core`, `app.core.audit`, `app.core.validation`, `app.models.vm`
+
+**Classes**
+
+- **`VMValidationResult`** (Class)
+  - Fields: `vm_id`, `vm_name`, `status`, `verdict`, `tier`, `cached`, `needs_manual_review`, `error`, `elapsed_seconds`
+- **`BulkValidationTask`** (Class)
+  - Fields: `task_id`, `status`, `started_at`, `completed_at`, `total`, `completed`, `failed`, `current_vm`, `tier_distribution`, `llm_calls`, `cache_hits`, `per_vm`
+  - Methods:
+    - `to_dict(self)`
+- **`BulkValidationTaskStore`** (Class)
+  - Methods:
+    - `create(self)`
+    - `get(self, task_id)`
+    - `queue_vm(self, task_id, vm_id, vm_name)`
+    - `start_vm(self, task_id, vm_id, vm_name)`
+    - `complete_vm(self, task_id, vm_id)`
+    - `fail_vm(self, task_id, vm_id)`
+    - `finalize(self, task_id)`
+
+**Functions**
+
+- `run_bulk_validation(task_id)` — Drive a bulk validation run to completion.
+- `preview_tier_distribution(db)` — Inspect every VM's diff and report estimated tier counts.
 
 </details>
 
@@ -780,7 +909,7 @@ Path: `backend/app/core/config.py`
 **Classes**
 
 - **`Settings`** (Class)
-  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `categorizer_batch_size`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
+  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
 
 </details>
 
@@ -817,6 +946,12 @@ Depends on: `app.core.config`
 - `validate_ssh_key(key_type, key_size_bits)` — Enforce :func:`assess_ssh_key` when ``fips_mode`` is active.
 - `fips_status(cfg)` — Build the structured status payload exposed to operators.
 - `log_startup_warning()` — Emit a one-shot startup log line summarizing the FIPS posture.
+
+</details>
+
+<details><summary><strong><code>app.core.limits</code></strong> — <em>Business logic</em> · Centralized limits for bulk operations and pagination.</summary>
+
+Path: `backend/app/core/limits.py`  
 
 </details>
 
@@ -862,6 +997,10 @@ Depends on: `app.core.llm.base`, `app.core.llm.factory`
   - Validation orchestrator.
   - Methods:
     - `validate(self, baseline, current_state, vm_role)` — Reason over pre/post migration diff and return a structured verdict.
+
+**Functions**
+
+- `compute_diff(baseline, current)` — Module-level alias for :meth:`LLMClient._diff_state`.
 
 </details>
 
@@ -1128,7 +1267,7 @@ Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.models.plan`
 <details><summary><strong><code>app.core.validation</code></strong> — <em>Business logic</em> · On-demand post-migration validation.</summary>
 
 Path: `backend/app/core/validation.py`  
-Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.config`, `app.core.llm`, `app.core.ssh`, `app.models.validation`, `app.models.vm`
+Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.config`, `app.core.llm`, `app.core.ssh`, `app.core.validation_cache`, `app.core.validation_tiers`, `app.models.validation`, `app.models.vm`
 
 **Classes**
 
@@ -1149,15 +1288,47 @@ Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.capture
 
 **Functions**
 
-- `run_validation(db, vm)` — Drive one VM through the full validation pipeline.
+- `run_validation(db, vm)` — Drive one VM through the validation pipeline with tier-aware
 - `run_validation_task(task_id, vm_id)` — Body of the FastAPI BackgroundTask spawned by the manual-validate endpoint.
+
+</details>
+
+<details><summary><strong><code>app.core.validation_cache</code></strong> — <em>Business logic</em> · Cache lookups + writes for :class:`ValidationLLMCache`.</summary>
+
+Path: `backend/app/core/validation_cache.py`  
+Depends on: `app.models.validation_cache`
+
+**Functions**
+
+- `compute_cache_key(diff, os_family)` — SHA-256 of canonical-JSON-encoded ``(diff, os_family)``.
+- `lookup(db)` — Return the cached verdict for this diff, or ``None``.
+- `store(db)` — Persist an LLM verdict for future cache hits.
+- `evict_expired(db)` — Delete expired rows. Returns the deleted count.
+- `stats(db)` — Aggregate cache statistics for the admin dashboard.
+
+</details>
+
+<details><summary><strong><code>app.core.validation_tiers</code></strong> — <em>Business logic</em> · Tiered validation classifier — decides whether a diff needs the LLM.</summary>
+
+Path: `backend/app/core/validation_tiers.py`  
+
+**Classes**
+
+- **`TierClassification`** (Class)
+  - Result of running a diff through the classifier.
+  - Fields: `tier`, `llm_required`, `rationale`, `verdict`, `matched_rules`
+
+**Functions**
+
+- `classify(diff)` — Decide which tier handles this diff.
+- `estimate_tier_distribution(diffs)` — Count classifications across a batch of (diff, environment) pairs.
 
 </details>
 
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.settings`, `app.api.snapshots`, `app.api.storage_reviews`, `app.api.targets`, `app.api.templates`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.core.db`, `app.core.fips`, `app.core.migrations`, `app.core.scheduler`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.storage_reviews`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.core.db`, `app.core.fips`, `app.core.migrations`, `app.core.scheduler`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -1202,6 +1373,18 @@ Depends on: `app.core.db`
 - **`MigrationProgram`** (SQLAlchemy model · table `migration_programs`)
   - A migration program is the top-level container an operator runs.
   - Fields: `id`, `name`, `description`, `source_vcenter_ids`, `strategy`, `created_at`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.models.llm_usage</code></strong> — <em>Data models / schemas</em> · LLM usage telemetry.</summary>
+
+Path: `backend/app/models/llm_usage.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`LLMUsage`** (SQLAlchemy model · table `llm_usage`)
+  - Fields: `id`, `operation`, `backend_type`, `model`, `input_tokens`, `output_tokens`, `total_tokens`, `latency_ms`, `resource_type`, `resource_id`, `vm_id`, `created_at`
 
 </details>
 
@@ -1276,6 +1459,31 @@ Depends on: `app.core.db`, `app.models.vcenter`
 - **`ResourceMapping`** (SQLAlchemy model · table `resource_mappings`)
   - Concrete network/storage/namespace mapping between a vCenter
   - Fields: `id`, `name`, `vcenter_source_id`, `ocp_target_id`, `status`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`, `last_used_at`, `created_at`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.models.validation_cache</code></strong> — <em>Data models / schemas</em> · Diff-keyed cache for LLM validation verdicts.</summary>
+
+Path: `backend/app/models/validation_cache.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`ValidationLLMCache`** (SQLAlchemy model · table `validation_llm_cache`)
+  - Fields: `id`, `cache_key`, `os_family`, `verdict`, `hit_count`, `last_hit_at`, `source_vm_id`, `source_model`, `diff_summary`, `created_at`, `expires_at`
+
+</details>
+
+<details><summary><strong><code>app.models.validation_schedule</code></strong> — <em>Data models / schemas</em> · Scheduled validation runs.</summary>
+
+Path: `backend/app/models/validation_schedule.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`ScheduleStatus`** (Class)
+- **`ValidationSchedule`** (SQLAlchemy model · table `validation_schedules`)
+  - Fields: `id`, `name`, `cron_expression`, `timezone`, `scope`, `status`, `notes`, `last_fired_at`, `last_task_id`, `next_fire_at`, `runtime_paused`, `created_by_actor`, `created_at`, `updated_at`
 
 </details>
 
@@ -1433,7 +1641,7 @@ Depends on: `app.models.target`, `app.models.vcenter`
 <details><summary><strong><code>app.schemas.vcenter</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/schemas/vcenter.py`  
-Depends on: `app.models.vcenter`
+Depends on: `app.core.limits`, `app.models.vcenter`
 
 **Classes**
 
@@ -1446,7 +1654,7 @@ Depends on: `app.models.vcenter`
   - Fields: `id`, `created_at`, `updated_at`, `vm_count`
 - **`RVToolsVMRow`** (Pydantic schema)
   - The minimal shape the delta-detector reads.
-  - Fields: `name`, `source_hostname`, `ip_address`, `os_family`, `role`, `environment`, `owner`, `application_hint`, `vsphere_networks`, `vsphere_datastores`
+  - Fields: `name`, `source_hostname`, `ip_address`, `os_family`, `role`, `environment`, `owner`, `application_hint`, `vsphere_networks`, `vsphere_datastores`, `source_vcenter_hostname`
 - **`RVToolsDeltaRequest`** (Pydantic schema)
   - Fields: `vms`
 - **`RVToolsDeltaItem`** (Pydantic schema)
@@ -1483,6 +1691,23 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/components/BulkOperations.jsx</code></strong> — <em>Frontend component</em> · Bulk operations page — selection-driven capture + validation.</summary>
+
+API calls:
+- `/api/sources/vcenters`
+- `/api/validations/preview-tiers`
+- `/api/vms?limit=10000`
+
+Exports / inner components:
+- **`BulkOperations`** (component)
+- **`FiltersPanel`** (component)
+- **`TierPreviewCard`** (component)
+- **`TaskStatusCard`** (component)
+- **`Field`** (component)
+- **`Shell`** (component)
+
+</details>
+
 <details><summary><strong><code>frontend/src/components/NetworkReviewDetail.jsx</code></strong> — <em>Frontend component</em> · Per-review detail page. Renders the full report view + lets operators</summary>
 
 API calls:
@@ -1491,7 +1716,6 @@ API calls:
 - `/api/network-reviews/{id}/findings/{id}`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`NetworkReviewDetail`** (component)
 - **`FindingCard`** (component)
 - **`ConfidenceTag`** (component)
@@ -1514,7 +1738,6 @@ API calls:
 - `/api/network-reviews/{id}/analyze`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`NetworkReviewNew`** (component)
 - **`Section`** (component)
 - **`Field`** (component)
@@ -1532,7 +1755,6 @@ API calls:
 - `/api/sources/targets/{id}/discover`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`OCPTargets`** (component)
 - **`Row`** (component)
 - **`CreateModal`** (component)
@@ -1554,7 +1776,6 @@ API calls:
 - `/api/vms?limit=500`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`PlanView`** (component)
 - **`ChunkCard`** (component)
 - **`WaveCard`** (component)
@@ -1575,7 +1796,6 @@ API calls:
 - `/api/vms?{id}`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`PlanWizard`** (component)
 - **`ChunkPreview`** (component)
 - **`ProgressBar`** (component)
@@ -1586,10 +1806,27 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/components/RVToolsUpload.jsx</code></strong> — <em>Frontend component</em> · Top-level RVTools upload — auto-detects vCenter per VM, matches to</summary>
+
+API calls:
+- `/api/rvtools/upload-multi-vcenter`
+- `/api/sources/vcenters`
+- `/api/sources/vcenters/auto-match`
+
+Exports / inner components:
+- **`RVToolsUpload`** (component)
+- **`ImportErrorBanner`** (component)
+- **`PickStage`** (component)
+- **`ParseStatsCard`** (component)
+- **`ConfirmStage`** (component)
+- **`DoneStage`** (component)
+- **`Shell`** (component)
+
+</details>
+
 <details><summary><strong><code>frontend/src/components/ReportView.jsx</code></strong> — <em>Frontend component</em> · Inline report viewer. Mirrors the dashboard aesthetic exactly so users</summary>
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`ReportView`** (component)
 - **`ExecutiveSummaryView`** (component)
 - **`ValidationListView`** (component)
@@ -1620,7 +1857,6 @@ API calls:
 - `/api/vms?source_vcenter_id={id}&limit=10000`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`ResourceMappings`** (component)
 - **`CreateModal`** (component)
 - **`ResourceMappingDetail`** (component)
@@ -1648,7 +1884,6 @@ API calls:
 - `/api/system/ssh-public-key`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`NextRunIndicator`** (component)
 - **`SSHKeyViewer`** (component)
 - **`ConnectionStatus`** (component)
@@ -1676,7 +1911,6 @@ API calls:
 - `/api/storage-reviews/{id}/findings/{id}`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`StorageReviewDetail`** (component)
 - **`FindingCard`** (component)
 - **`ConfidenceTag`** (component)
@@ -1699,7 +1933,6 @@ API calls:
 - `/api/storage-reviews/{id}/analyze`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`StorageReviewNew`** (component)
 - **`FileUpload`** (component)
 - **`Section`** (component)
@@ -1719,7 +1952,6 @@ API calls:
 - `/api/sources/vcenters/{id}/rvtools/preview`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`VCenterSources`** (component)
 - **`Row`** (component)
 - **`CreateModal`** (component)
@@ -1749,7 +1981,6 @@ API calls:
 - `/api/vms/{id}/validation/latest`
 
 Exports / inner components:
-- **`fetchJSON`** (helper)
 - **`classifyCaptureError`** (helper)
 - **`VMDetailBody`** (component)
 - **`Shell`** (component)
@@ -1834,11 +2065,20 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/utils/fetchJSON.js</code></strong> — <em>Frontend component</em> · Shared fetch helper. Every component used to copy a slightly</summary>
+
+Exports / inner components:
+- **`fetchJSON`** (helper)
+
+</details>
+
 <details><summary><strong><code>frontend/src/utils/parseRVTools.js</code></strong> — <em>Frontend component</em> · Shared RVTools / CSV parser. Two surfaces consume this:</summary>
 
 Exports / inner components:
 - **`shortenOSFamily`** (helper)
 - **`rowToPayload`** (helper)
+- **`normalizeHostname`** (helper)
+- **`groupByVCenter`** (helper)
 - **`parseCSV`** (helper)
 - **`_loadXLSX`** (helper)
 - **`parseXLSXRows`** (helper)

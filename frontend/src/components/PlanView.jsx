@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useParams } from "react-router-dom";
-import { throwForResponse } from "../utils/apiError";
+import { fetchJSON } from "../utils/fetchJSON";
 
 // Strategy-driven plan detail page. Surfaces the LLM's rationale +
 // per-wave reasoning prominently — that's the consultative output the
@@ -18,17 +18,6 @@ const TOAST_OPTS = {
 
 const RISK_COLOR = { low: "#00ff88", medium: "#ffaa00", high: "#ff5577" };
 
-async function fetchJSON(url, opts = {}) {
-  const init = { method: "GET", ...opts };
-  if (init.body !== undefined && typeof init.body !== "string") {
-    init.headers = { "Content-Type": "application/json", ...(init.headers || {}) };
-    init.body = JSON.stringify(init.body);
-  }
-  const r = await fetch(url, init);
-  if (!r.ok) await throwForResponse(r);
-  if (r.status === 204) return null;
-  return r.json();
-}
 
 
 export default function PlanView() {

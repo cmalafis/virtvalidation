@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
+import BulkOperations from "./components/BulkOperations";
 import NetworkReviewDetail from "./components/NetworkReviewDetail";
 import NetworkReviewNew from "./components/NetworkReviewNew";
 import OCPTargets from "./components/OCPTargets";
@@ -7,6 +8,7 @@ import PlanView from "./components/PlanView";
 import PlanWizard from "./components/PlanWizard";
 import ReportView from "./components/ReportView";
 import ResourceMappings, { ResourceMappingDetail } from "./components/ResourceMappings";
+import RVToolsUpload from "./components/RVToolsUpload";
 import Settings from "./components/Settings";
 import StorageReviewDetail from "./components/StorageReviewDetail";
 import StorageReviewNew from "./components/StorageReviewNew";
@@ -34,6 +36,10 @@ export default function App() {
         <Route path="/sources/targets" element={<OCPTargets />} />
         <Route path="/mappings" element={<ResourceMappings />} />
         <Route path="/mappings/:id" element={<ResourceMappingDetail />} />
+        <Route path="/operations" element={<BulkOperations />} />
+        <Route path="/capture-baselines" element={<BulkOperations />} />
+        <Route path="/validate-batch" element={<BulkOperations />} />
+        <Route path="/rvtools/upload" element={<RVToolsUpload />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

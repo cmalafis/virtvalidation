@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link } from "react-router-dom";
-import { throwForResponse } from "../utils/apiError";
+import { fetchJSON } from "../utils/fetchJSON";
 
 import { parseRVToolsXLSX } from "../utils/parseRVTools";
 
@@ -40,17 +40,6 @@ const STATUS_LABEL = {
   archived: { label: "ARCHIVED", color: "#aaaacc" },
 };
 
-async function fetchJSON(url, opts = {}) {
-  const init = { method: "GET", ...opts };
-  if (init.body !== undefined && typeof init.body !== "string") {
-    init.headers = { "Content-Type": "application/json", ...(init.headers || {}) };
-    init.body = JSON.stringify(init.body);
-  }
-  const r = await fetch(url, init);
-  if (!r.ok) await throwForResponse(r);
-  if (r.status === 204) return null;
-  return await r.json();
-}
 
 
 export default function VCenterSources() {

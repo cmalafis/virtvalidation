@@ -17,8 +17,11 @@ theoretical analysis.
 
 | Dimension                       | Tested ceiling | Notes |
 |---------------------------------|----------------|-------|
-| Single vCenter                  | 1,000 VMs      | RVTools upload + bulk enrollment confirmed. |
-| Multiple vCenters               | 5 sources × 1,000 VMs each = 5,000 total | Tested with delta uploads weekly over a 4-week window. |
+| Single vCenter                  | 1,000 VMs      | RVTools auto-link upload validated end-to-end in <1s on UBI/SQLite TestClient; ~2-5s with real Postgres + network round-trip. |
+| Multiple vCenters               | 5 sources × 1,000 VMs each = 5,000 total | Tested with delta uploads weekly over a 4-week window. Auto-link upload routes per-VM by the file's vCenter column. |
+| Single RVTools upload (auto-link) | 1,000 VMs across 3 vCenters | Parse + auto-match + multi-vCenter import; budget 60s, observed 0.5-2s. No chunking required at this scale. See `docs/RVTOOLS_GUIDE.md` for the timing table. |
+| Bulk POST body cap                | 10,000 VMs per request | Centralized in `app.core.limits` — `MAX_VMS_PER_BULK_CREATE` / `MAX_VMS_PER_BULK_DELETE` / `MAX_VMS_PER_RVTOOLS_IMPORT`. Env-var overridable for very large fleets. See `docs/LIMITS.md`. |
+| Inventory paginated read          | 1,000 rows per page | `MAX_PAGE_SIZE` cap; default first-render uses 50 (`DEFAULT_PAGE_SIZE`). |
 | Concurrent baseline captures    | 25             | Above this, BackgroundTasks queue; no failures, just slower. |
 | Concurrent validation runs      | 10             | Each holds a DB session + an SSH session + an LLM call. |
 | Inventory list page render      | 1,000 rows     | No virtualization yet — beyond this the page slows perceptibly. |
@@ -59,6 +62,10 @@ and categorization all run on a single host. The appliance is
 stateful — backup the Postgres + SSH-keys volumes per
 [deploy/README.md](../deploy/README.md).
 
+**Recommended limit settings:** defaults are correct (no
+override). 10K bulk caps cover the largest reasonable single
+upload. See [`docs/LIMITS.md`](./LIMITS.md).
+
 ### Tier 2 — OpenShift + Ollama (≤ 5,000 VMs)
 
 | Component | Configuration |
@@ -74,6 +81,10 @@ simplicity choice — one model, one PVC, no platform team needed.
 At 5,000 VMs the categorizer takes ~30 minutes; the operator runs it
 weekly.
 
+**Recommended limit settings:** defaults. The 10K bulk caps fit
+in one HTTP request; categorization itself runs in chunks of 10
+internally.
+
 ### Tier 3 — OpenShift + KServe (≤ 50,000 VMs)
 
 | Component | Configuration |
@@ -88,6 +99,21 @@ Sweet spot: federal customer with RHOAI, multi-vCenter inventory,
 weekly delta uploads. The KServe runtime gives the categorizer real
 parallelism — the same 50,000-VM run that takes hours on Tier 2
 finishes in 10–15 minutes.
+
+**Recommended limit settings:** raise bulk caps to 25,000 so
+operators can upload a full vCenter delta in one request. Keep
+`MAX_PAGE_SIZE` at 1,000 (UI lacks virtualization). Example:
+
+```env
+MAX_VMS_PER_BULK_CREATE=25000
+MAX_VMS_PER_BULK_DELETE=25000
+MAX_VMS_PER_BULK_ACTION=25000
+MAX_VMS_PER_PLAN_SCOPE=25000
+MAX_VMS_PER_RVTOOLS_IMPORT=25000
+```
+
+Beyond 25K per single request, split the RVTools export per
+vCenter — see [`docs/LIMITS.md`](./LIMITS.md) for the rationale.
 
 ### Upgrade triggers
 

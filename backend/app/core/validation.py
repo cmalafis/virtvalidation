@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -41,6 +42,9 @@ from app.core.capture import (
 from app.core.config import settings
 from app.core.llm import LLMClient, LLMError
 from app.core.ssh import SSHCollectionError, SSHCollector
+from app.core.validation_cache import lookup as cache_lookup
+from app.core.validation_cache import store as cache_store
+from app.core.validation_tiers import TierClassification, classify
 from app.models.validation import ValidationResult, ValidationStatus
 from app.models.vm import VM, BaselineSnapshot, VMStatus
 
@@ -229,12 +233,26 @@ def run_validation(
     llm_client: Optional[LLMClient] = None,
     progress: Optional[ValidationTaskStore] = None,
     task_id: Optional[str] = None,
+    use_cache: bool = True,
 ) -> ValidationResult:
-    """Drive one VM through the full validation pipeline.
+    """Drive one VM through the validation pipeline with tier-aware
+    LLM usage.
 
-    The optional ``progress`` + ``task_id`` arguments let the BackgroundTask
-    wrapper bubble per-phase progress into the in-memory task store; the
-    bulk ``run-all`` path invokes this synchronously without progress updates.
+    Pipeline:
+
+      1. Collect post-migration state via SSH (always).
+      2. Compute structured diff in Python (always).
+      3. Run the tier classifier:
+         - Tier 1 (empty/trivial diff) → return pass verdict, no LLM.
+         - Tier 2 (deterministic rule match) → return rule verdict, no LLM.
+         - Tier 3 (ambiguous) → fall through to LLM.
+      4. (Tier 3 only) Check the diff-hash cache. Cache hit → reuse the
+         persisted LLM verdict, mark ``cached=True`` in the result.
+      5. (Tier 3 only, cache miss) Call the LLM. Persist the verdict
+         into the cache for future hits, record a usage row.
+
+    The result row's ``diff`` column carries the structured diff so
+    the UI can render it regardless of which tier produced the verdict.
     """
 
     def _step(step: CurrentStep, percent: int) -> None:
@@ -253,16 +271,82 @@ def run_validation(
     except CaptureError as e:  # defensive — _collect_current_state raises ValidationError
         raise ValidationError(str(e)) from e
 
-    _step("llm_reasoning", 60)
-    client = llm_client or LLMClient()
-    try:
-        verdict = client.validate(baseline, current, vm_role=vm.role or "")
-    except LLMError as e:
-        raise ValidationError(f"LLM reasoning failed: {e}") from e
+    # Stage 1+2: structured diff + tier classification (pure Python,
+    # no LLM call).
+    from app.core.llm.client import compute_diff  # local import avoids cycle
+    diff = compute_diff(baseline, current)
+    os_family = ((baseline.get("meta") or {}).get("os_profile") or {}).get(
+        "distro_family"
+    ) or "unknown"
+
+    _step("llm_reasoning", 50)
+    tier: TierClassification = classify(diff, environment=vm.environment)
+
+    verdict: dict
+    cached = False
+    usage_recorded = False
+
+    if not tier.llm_required:
+        # Tier 1 or 2 produced the verdict. Stamp it with diff +
+        # tier metadata before persisting.
+        verdict = dict(tier.verdict or {})
+        verdict["diff"] = diff
+        verdict["tier"] = tier.tier
+        verdict["matched_rules"] = list(tier.matched_rules)
+    else:
+        # Tier 3: try the cache first.
+        if use_cache:
+            hit = cache_lookup(db, diff=diff, os_family=os_family)
+        else:
+            hit = None
+        if hit is not None:
+            verdict = dict(hit)
+            verdict["diff"] = diff
+            verdict["tier"] = "tier3"
+            verdict["matched_rules"] = []
+            cached = True
+        else:
+            client = llm_client or LLMClient()
+            llm_started = time.monotonic()
+            try:
+                verdict = client.validate(baseline, current, vm_role=vm.role or "")
+            except LLMError as e:
+                raise ValidationError(f"LLM reasoning failed: {e}") from e
+            latency_ms = int((time.monotonic() - llm_started) * 1000)
+            verdict["tier"] = "tier3"
+            verdict["matched_rules"] = []
+            # Persist for future cache hits unless the verdict itself
+            # needed manual review — bad responses shouldn't poison
+            # the cache.
+            if not verdict.get("needs_manual_review"):
+                cache_store(
+                    db,
+                    diff=diff,
+                    os_family=os_family,
+                    verdict={
+                        k: v
+                        for k, v in verdict.items()
+                        if k not in {"diff", "tier", "matched_rules", "cached", "cache_key"}
+                    },
+                    source_vm_id=vm.id,
+                    source_model=verdict.get("model"),
+                )
+            # Record one LLMUsage row per real LLM call (cache hits
+            # don't count toward usage).
+            _record_llm_usage(
+                db,
+                backend=getattr(client, "backend", None),
+                model=verdict.get("model") or "",
+                vm_id=vm.id,
+                latency_ms=latency_ms,
+                input_tokens=verdict.get("input_tokens") or 0,
+                output_tokens=verdict.get("output_tokens") or 0,
+            )
+            usage_recorded = True
 
     status_str = verdict.get("status", "warn")
     if status_str not in _VERDICT_TO_ENUM:
-        raise ValidationError(f"Invalid verdict status from LLM: {status_str!r}")
+        raise ValidationError(f"Invalid verdict status: {status_str!r}")
 
     _step("storing", 90)
     row = ValidationResult(
@@ -293,10 +377,50 @@ def run_validation(
             "vm_name": vm.name,
             "verdict": status_str,
             "finding_count": len(row.findings),
+            "tier": verdict.get("tier"),
+            "cached": cached,
+            "matched_rules": verdict.get("matched_rules") or [],
+            "llm_called": usage_recorded,
+            "needs_manual_review": bool(verdict.get("needs_manual_review")),
         },
     )
     db.commit()
     return row
+
+
+def _record_llm_usage(
+    db: Session,
+    *,
+    backend,
+    model: str,
+    vm_id: int,
+    latency_ms: int,
+    input_tokens: int,
+    output_tokens: int,
+) -> None:
+    """Persist one LLMUsage row per real LLM validation call.
+
+    Token counts pass through as 0 when the backend doesn't surface
+    them (Ollama doesn't); the admin dashboard surfaces "(estimated)"
+    in that case instead of refusing to render.
+    """
+    from app.models.llm_usage import LLMUsage  # local import: model registers on Base
+    backend_type = getattr(backend, "backend_type", "unknown")
+    db.add(
+        LLMUsage(
+            operation="validation",
+            backend_type=backend_type,
+            model=model or "",
+            input_tokens=int(input_tokens or 0),
+            output_tokens=int(output_tokens or 0),
+            total_tokens=int((input_tokens or 0) + (output_tokens or 0)),
+            latency_ms=int(latency_ms or 0),
+            resource_type="vm",
+            resource_id=vm_id,
+            vm_id=vm_id,
+        )
+    )
+    db.commit()
 
 
 # ---------------------------------------------------------------------------

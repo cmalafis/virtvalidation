@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { throwForResponse } from "../utils/apiError";
+import { fetchJSON } from "../utils/fetchJSON";
 
 // Per-review detail page. Renders the full report view + lets operators
 // triage findings (open / accepted / dismissed) and re-run analysis.
@@ -51,18 +51,6 @@ const STATUS_COLOR = {
   failed: "#ff5577",
 };
 
-async function fetchJSON(url, opts = {}) {
-  const init = { method: "GET", ...opts };
-  if (init.body !== undefined && typeof init.body !== "string") {
-    init.headers = { "Content-Type": "application/json", ...(init.headers || {}) };
-    init.body = JSON.stringify(init.body);
-  }
-  const r = await fetch(url, init);
-  if (r.status === 404) return { status: 404, data: null };
-  if (!r.ok) await throwForResponse(r);
-  if (r.status === 204) return { status: 204, data: null };
-  return { status: r.status, data: await r.json() };
-}
 
 export default function StorageReviewDetail() {
   const { id } = useParams();

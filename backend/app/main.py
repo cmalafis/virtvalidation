@@ -13,9 +13,11 @@ from app.api.targets import targets_router as ocp_targets_router
 from app.api.plans import router as plans_router
 from app.api.plans import strategies_router as planning_strategies_router
 from app.api.reports import router as reports_router
+from app.api.rvtools import router as rvtools_router
 from app.api.settings import settings_router, system_router
 from app.api.snapshots import router as snapshots_router
 from app.api.templates import router as templates_router
+from app.api.validation_schedules import router as validation_schedules_router
 from app.api.validations import router as validations_router
 from app.api.vcenters import router as vcenters_router
 from app.api.vms import router as vms_router
@@ -27,7 +29,10 @@ from app.middleware.audit import AuditMiddleware
 from app.models import audit as _audit_models  # noqa: F401  (register models on Base)
 from app.models import grouping as _grouping_models  # noqa: F401  (register models on Base)
 from app.models import chunk as _chunk_models  # noqa: F401  (register models on Base)
+from app.models import llm_usage as _llm_usage_models  # noqa: F401  (register models on Base)
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)
+from app.models import validation_cache as _validation_cache_models  # noqa: F401  (register models on Base)
+from app.models import validation_schedule as _validation_schedule_models  # noqa: F401  (register models on Base)
 from app.models import settings as _settings_models  # noqa: F401  (register models on Base)
 from app.models import storage_review as _storage_review_models  # noqa: F401  (register models on Base)
 from app.models import target as _target_models  # noqa: F401  (register models on Base)
@@ -93,9 +98,11 @@ app.include_router(settings_router, prefix="/api/settings")
 app.include_router(audit_router, prefix="/api/audit")
 app.include_router(templates_router, prefix="/api/templates")
 app.include_router(reports_router, prefix="/api/reports")
+app.include_router(rvtools_router, prefix="/api/rvtools")
 app.include_router(network_reviews_router, prefix="/api/network-reviews")
 app.include_router(storage_reviews_router, prefix="/api/storage-reviews")
 app.include_router(ocp_targets_router, prefix="/api/sources/targets")
 app.include_router(resource_mappings_router, prefix="/api/mappings")
 app.include_router(validations_router, prefix="/api/validations")
+app.include_router(validation_schedules_router, prefix="/api/validation-schedules")
 app.include_router(vcenters_router, prefix="/api/sources/vcenters")
