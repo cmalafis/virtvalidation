@@ -2202,6 +2202,24 @@ const DATA = {
           },
           {
             "method": "GET",
+            "path": "/api/system/ssh-key",
+            "handler": "ssh_key_status",
+            "summary": "Return the appliance SSH key in a wrapped ``{status, ...}`` shape."
+          },
+          {
+            "method": "POST",
+            "path": "/api/system/ssh-key/generate",
+            "handler": "ssh_key_generate",
+            "summary": "Materialize a new keypair on the appliance."
+          },
+          {
+            "method": "POST",
+            "path": "/api/system/ssh-key/rotate",
+            "handler": "ssh_key_rotate",
+            "summary": "Replace the existing appliance keypair with a freshly generated one."
+          },
+          {
+            "method": "GET",
             "path": "/api/system/ssh-public-key",
             "handler": "ssh_public_key",
             "summary": "Return the OpenSSH public key VirtValidate uses. Never the private key."
@@ -2234,11 +2252,13 @@ const DATA = {
         "classes": [],
         "functions": [],
         "depends_on": [
+          "app.core.audit",
           "app.core.config",
           "app.core.db",
           "app.core.fips",
           "app.core.llm.factory",
           "app.core.scheduler",
+          "app.core.ssh_key",
           "app.models.settings",
           "app.schemas.settings"
         ]
@@ -4068,6 +4088,89 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.ssh_key",
+        "title": "app.core.ssh_key",
+        "subtitle": "backend/app/core/ssh_key.py",
+        "summary": "SSH key generation + rotation for the appliance.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "KeyExistsError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised by ``generate`` when a key already exists at the target path."
+          },
+          {
+            "name": "KeyMissingError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised by ``rotate`` when there's no existing key to rotate."
+          },
+          {
+            "name": "UnsupportedAlgorithmError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised on ``algorithm`` values outside :data:`SUPPORTED_ALGORITHMS`."
+          },
+          {
+            "name": "KeyInfo",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "algorithm",
+              "fingerprint",
+              "public_key",
+              "created_at",
+              "path"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "validate_algorithm_for_fips",
+            "summary": "Reject FIPS-incompatible algorithms when ``FIPS_MODE=true``."
+          },
+          {
+            "name": "normalize_algorithm",
+            "summary": "Resolve + validate the algorithm string from request/env input."
+          },
+          {
+            "name": "expected_path",
+            "summary": "Resolve the on-disk path for a given algorithm."
+          },
+          {
+            "name": "load_key_info",
+            "summary": "Inspect an existing key + return its public-key info or None."
+          },
+          {
+            "name": "generate",
+            "summary": "Materialize a new keypair at ``expected_path(algorithm)``."
+          },
+          {
+            "name": "rotate",
+            "summary": "Replace the existing key with a freshly generated one."
+          }
+        ],
+        "depends_on": [
+          "app.core.fips"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.storage_review",
         "title": "app.core.storage_review",
         "subtitle": "backend/app/core/storage_review.py",
@@ -5162,6 +5265,61 @@ const DATA = {
               "public_key",
               "fingerprint",
               "type"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SSHKeyStatus",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "status",
+              "algorithm",
+              "fingerprint",
+              "public_key",
+              "created_at",
+              "configured_algorithm",
+              "expected_path"
+            ],
+            "methods": [],
+            "summary": "Response shape for ``GET /api/system/ssh-key``."
+          },
+          {
+            "name": "SSHKeyGenerateRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "algorithm"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SSHKeyGenerateResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "algorithm",
+              "fingerprint",
+              "public_key",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SSHKeyRotateResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "algorithm",
+              "fingerprint",
+              "public_key",
+              "created_at",
+              "previous_fingerprint",
+              "backups",
+              "warning"
             ],
             "methods": [],
             "summary": ""
@@ -6362,11 +6520,25 @@ const DATA = {
           "/api/system/fips-status",
           "/api/system/llm-info",
           "/api/system/ollama-models",
-          "/api/system/ssh-public-key"
+          "/api/system/ssh-key",
+          "/api/system/ssh-key/generate",
+          "/api/system/ssh-key/rotate"
         ],
         "members": [
           {
             "name": "NextRunIndicator",
+            "kind": "component"
+          },
+          {
+            "name": "ConfirmModal",
+            "kind": "component"
+          },
+          {
+            "name": "EnrollmentInstructions",
+            "kind": "component"
+          },
+          {
+            "name": "SSHKeyViewerWithFIPS",
             "kind": "component"
           },
           {

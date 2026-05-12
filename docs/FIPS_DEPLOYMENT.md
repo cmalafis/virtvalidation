@@ -116,20 +116,34 @@ This activates application-level gates:
 
 ### 4. SSH keys generated as RSA-3072 or ECDSA P-384
 
-Replace the default Ed25519 key with a FIPS-approved algorithm:
+#### Recommended: Use the Settings page
+
+With `FIPS_MODE=true`, the Settings page's **Generate SSH Key**
+panel disables Ed25519, defaults the algorithm dropdown to RSA, and
+emits the same FIPS-compliant keypair the CLI commands below would.
+No shell access required — appropriate for production OCP
+deployments where pod shell is locked down. See
+[`docs/SSH_KEY_GUIDE.md`](./SSH_KEY_GUIDE.md) for the full
+self-service flow, including rotation under FIPS.
+
+The `POST /api/system/ssh-key/generate` endpoint also enforces the
+gate server-side — a request with `{"algorithm": "ed25519"}` returns
+400 under `FIPS_MODE=true` so an out-of-band scripted client can't
+bypass the UI's dropdown.
+
+#### CLI fallback (dev / air-gapped pre-stage)
 
 ```bash
 # RSA-3072 (FIPS 186-5 minimum)
-ssh-keygen -t rsa -b 3072 -f /app/keys/id_ed25519 -N ""
+ssh-keygen -t rsa -b 3072 -f /app/keys/id_rsa -N ""
 
 # ECDSA P-384 (FIPS 186-5 approved)
-ssh-keygen -t ecdsa -b 384 -f /app/keys/id_ed25519 -N ""
+ssh-keygen -t ecdsa -b 384 -f /app/keys/id_ecdsa -N ""
 ```
 
-The file path is unchanged for back-compat — `SSH_KEY_PATH` defaults
-to `/app/keys/id_ed25519` regardless of the actual algorithm. The
-loader auto-detects key type and the FIPS gate validates the
-algorithm + size at every connection.
+The SSH loader scans `/app/keys/id_{ed25519,rsa,ecdsa}` and picks
+whichever key exists. The FIPS gate validates the algorithm + size
+at every connection.
 
 > **Note on Ed25519:** Ed25519 is **not** FIPS-approved under
 > FIPS 186-5. NIST is still finalizing its standardization for similar

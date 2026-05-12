@@ -49,18 +49,32 @@ See [CONFIGURATION.md](CONFIGURATION.md) for every variable.
 
 ## 3. Generate the SSH key VirtValidate uses to reach VMs
 
-VirtValidate SSHes into each enrolled VM using a single Ed25519 keypair
+VirtValidate SSHes into each enrolled VM using a single keypair
 stored on the appliance. **The private key never leaves the host.**
+
+### Recommended: Generate from the Settings page
+
+Open the dashboard at `http://localhost:3000`, click into **Settings**,
+and use the **Generate SSH Key** button. The Settings page handles
+algorithm selection, FIPS gating, and surfaces enrollment snippets
+for Ansible / Puppet / Terraform automatically. No pod shell access
+required — works for both podman-compose and OpenShift deployments.
+
+See [`docs/SSH_KEY_GUIDE.md`](./SSH_KEY_GUIDE.md) for the full
+lifecycle including rotation and backup.
+
+### CLI fallback (dev only)
+
+If you'd rather pre-stage the key before bringing the appliance up:
 
 ```bash
 mkdir -p ./backend/app/keys
-ssh-keygen -t ed25519 -N "" -f ./backend/app/keys/id_ed25519 -C "virtvalidate@appliance"
+ssh-keygen -t ed25519 -N "" -f ./backend/app/keys/id_ed25519 -C "virtvalidate-appliance"
 chmod 600 ./backend/app/keys/id_ed25519
 chmod 644 ./backend/app/keys/id_ed25519.pub
 ```
 
-Distribute the **public** half to every VM you intend to enroll. Full
-playbook in [SSH_SETUP.md](SSH_SETUP.md).
+Distribute the **public** half to every VM you intend to enroll.
 
 ---
 

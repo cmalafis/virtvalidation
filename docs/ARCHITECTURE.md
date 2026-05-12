@@ -631,7 +631,7 @@ Depends on: `app.core.audit`, `app.core.db`, `app.core.limits`, `app.core.rvtool
 <details><summary><strong><code>app.api.settings</code></strong> — <em>API endpoints</em> · Settings + system-info endpoints powering the /settings page.</summary>
 
 Path: `backend/app/api/settings.py`  
-Depends on: `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.scheduler`, `app.models.settings`, `app.schemas.settings`
+Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.scheduler`, `app.core.ssh_key`, `app.models.settings`, `app.schemas.settings`
 
 **Routes**
 
@@ -639,6 +639,9 @@ Depends on: `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.fac
 |---|---|---|---|
 | `GET` | `/api/settings` | `get_settings(db)` | — |
 | `PUT` | `/api/settings` | `update_settings(payload, db)` | — |
+| `GET` | `/api/system/ssh-key` | `ssh_key_status(request, db)` | Return the appliance SSH key in a wrapped ``{status, ...}`` shape. |
+| `POST` | `/api/system/ssh-key/generate` | `ssh_key_generate(request, payload, db)` | Materialize a new keypair on the appliance. |
+| `POST` | `/api/system/ssh-key/rotate` | `ssh_key_rotate(request, payload, db)` | Replace the existing appliance keypair with a freshly generated one. |
 | `GET` | `/api/system/ssh-public-key` | `ssh_public_key()` | Return the OpenSSH public key VirtValidate uses. Never the private key. |
 | `GET` | `/api/system/ollama-models` | `ollama_models()` | List models available on the active LLM backend. |
 | `GET` | `/api/system/fips-status` | `fips_status_endpoint()` | FIPS 140-3 compliance posture — configured + detected + per-op status. |
@@ -1257,6 +1260,35 @@ Depends on: `app.core`, `app.core.audit`, `app.models.vm`
 
 </details>
 
+<details><summary><strong><code>app.core.ssh_key</code></strong> — <em>Business logic</em> · SSH key generation + rotation for the appliance.</summary>
+
+Path: `backend/app/core/ssh_key.py`  
+Depends on: `app.core.fips`
+
+**Classes**
+
+- **`KeyExistsError`** (Class)
+  - Raised by ``generate`` when a key already exists at the target path.
+- **`KeyMissingError`** (Class)
+  - Raised by ``rotate`` when there's no existing key to rotate.
+- **`UnsupportedAlgorithmError`** (Class)
+  - Raised on ``algorithm`` values outside :data:`SUPPORTED_ALGORITHMS`.
+- **`KeyInfo`** (Class)
+  - Fields: `algorithm`, `fingerprint`, `public_key`, `created_at`, `path`
+  - Methods:
+    - `to_dict(self)`
+
+**Functions**
+
+- `validate_algorithm_for_fips(algorithm)` — Reject FIPS-incompatible algorithms when ``FIPS_MODE=true``.
+- `normalize_algorithm(algorithm)` — Resolve + validate the algorithm string from request/env input.
+- `expected_path(algorithm)` — Resolve the on-disk path for a given algorithm.
+- `load_key_info(path)` — Inspect an existing key + return its public-key info or None.
+- `generate(algorithm)` — Materialize a new keypair at ``expected_path(algorithm)``.
+- `rotate(algorithm)` — Replace the existing key with a freshly generated one.
+
+</details>
+
 <details><summary><strong><code>app.core.storage_review</code></strong> — <em>Business logic</em> · Storage Design Review — gap analysis between source VMware datastore</summary>
 
 Path: `backend/app/core/storage_review.py`  
@@ -1582,6 +1614,15 @@ Depends on: `app.models.settings`
   - Fields: `models`
 - **`SSHPublicKey`** (Pydantic schema)
   - Fields: `public_key`, `fingerprint`, `type`
+- **`SSHKeyStatus`** (Pydantic schema)
+  - Response shape for ``GET /api/system/ssh-key``.
+  - Fields: `status`, `algorithm`, `fingerprint`, `public_key`, `created_at`, `configured_algorithm`, `expected_path`
+- **`SSHKeyGenerateRequest`** (Pydantic schema)
+  - Fields: `algorithm`
+- **`SSHKeyGenerateResponse`** (Pydantic schema)
+  - Fields: `algorithm`, `fingerprint`, `public_key`, `created_at`
+- **`SSHKeyRotateResponse`** (Pydantic schema)
+  - Fields: `algorithm`, `fingerprint`, `public_key`, `created_at`, `previous_fingerprint`, `backups`, `warning`
 - **`LLMBackendConfig`** (Pydantic schema)
   - Fields: `backend`, `model`, `endpoint`
 - **`LLMBackendHealth`** (Pydantic schema)
@@ -1935,10 +1976,15 @@ API calls:
 - `/api/system/fips-status`
 - `/api/system/llm-info`
 - `/api/system/ollama-models`
-- `/api/system/ssh-public-key`
+- `/api/system/ssh-key`
+- `/api/system/ssh-key/generate`
+- `/api/system/ssh-key/rotate`
 
 Exports / inner components:
 - **`NextRunIndicator`** (component)
+- **`ConfirmModal`** (component)
+- **`EnrollmentInstructions`** (component)
+- **`SSHKeyViewerWithFIPS`** (component)
 - **`SSHKeyViewer`** (component)
 - **`ConnectionStatus`** (component)
 - **`FIPSCompliancePanel`** (component)

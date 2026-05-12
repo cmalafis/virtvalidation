@@ -7,14 +7,25 @@ from base64 import b64decode
 from pathlib import Path
 
 import paramiko
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.config import settings as app_config
 from app.core.db import get_db
-from app.core.fips import fips_status
+from app.core.fips import FIPSViolation, fips_status
 from app.core.llm.factory import get_llm_backend
 from app.core.scheduler import next_run_time, reschedule_baseline_job
+from app.core.ssh_key import (
+    KeyExistsError,
+    KeyMissingError,
+    UnsupportedAlgorithmError,
+    expected_path as ssh_expected_path,
+    generate as ssh_generate,
+    load_key_info as ssh_load_key_info,
+    normalize_algorithm as ssh_normalize_algorithm,
+    rotate as ssh_rotate,
+)
 from app.models.settings import AppSettings
 from app.schemas.settings import (
     AppSettingsRead,
@@ -22,6 +33,10 @@ from app.schemas.settings import (
     FIPSStatus,
     LLMBackendInfo,
     OllamaModelsResponse,
+    SSHKeyGenerateRequest,
+    SSHKeyGenerateResponse,
+    SSHKeyRotateResponse,
+    SSHKeyStatus,
     SSHPublicKey,
 )
 
@@ -68,6 +83,195 @@ def update_settings(payload: AppSettingsUpdate, db: Session = Depends(get_db)) -
     if "schedule_preset" in fields:
         reschedule_baseline_job(row.schedule_preset)
     return _settings_payload(row)
+
+
+def _find_existing_ssh_key():
+    """Look across every algorithm's expected path and return the first hit.
+
+    The legacy SSH_KEY_PATH (``/app/keys/id_ed25519``) is checked first
+    by way of the configured default, then RSA / ECDSA. Returns the
+    KeyInfo + the resolved Path so callers can use both without
+    re-walking.
+    """
+    configured = ssh_normalize_algorithm(None)
+    candidates = [configured] + [a for a in ("ed25519", "rsa", "ecdsa") if a != configured]
+    for algo in candidates:
+        path = ssh_expected_path(algo)
+        info = ssh_load_key_info(path)
+        if info is not None:
+            return info, path
+    return None, ssh_expected_path(configured)
+
+
+@system_router.get("/ssh-key", response_model=SSHKeyStatus)
+def ssh_key_status(request: Request, db: Session = Depends(get_db)) -> dict:
+    """Return the appliance SSH key in a wrapped ``{status, ...}`` shape.
+
+    Distinguishes "missing" from "exists" without forcing the UI to
+    parse error bodies — the previous 404-on-missing contract made the
+    Settings page render a CLI command instead of a generate button.
+    The Settings UI's three-state SSH panel keys off this response.
+
+    "ssh.key_viewed" is recorded at INFO level so federal audit trails
+    can show every time the public key was surfaced (the audit
+    middleware's default-action map would emit ``api.get``, which
+    isn't specific enough for compliance review).
+    """
+    info, path = _find_existing_ssh_key()
+    actor = request.headers.get("x-actor", "user")
+    if info is not None:
+        record_audit(
+            db,
+            action="ssh.key_viewed",
+            actor=actor,
+            resource_type="ssh_key",
+            details={
+                "algorithm": info.algorithm,
+                "fingerprint": info.fingerprint,
+            },
+        )
+        db.commit()
+        request.state.skip_audit_log = True
+        return {
+            "status": "exists",
+            "algorithm": info.algorithm,
+            "fingerprint": info.fingerprint,
+            "public_key": info.public_key,
+            "created_at": info.created_at,
+        }
+    request.state.skip_audit_log = True
+    return {
+        "status": "missing",
+        "configured_algorithm": ssh_normalize_algorithm(None),
+        "expected_path": str(path),
+    }
+
+
+@system_router.post(
+    "/ssh-key/generate",
+    response_model=SSHKeyGenerateResponse,
+    status_code=201,
+)
+def ssh_key_generate(
+    request: Request,
+    payload: SSHKeyGenerateRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Materialize a new keypair on the appliance.
+
+    Refuses when a key already exists — operators rotate via the
+    sibling endpoint, which audits the old/new fingerprint pair
+    instead of silently replacing.
+    """
+    actor = request.headers.get("x-actor", "user")
+    try:
+        algo = ssh_normalize_algorithm(payload.algorithm)
+    except UnsupportedAlgorithmError as e:
+        request.state.skip_audit_log = True
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    try:
+        info = ssh_generate(algo)
+    except FIPSViolation as e:
+        request.state.skip_audit_log = True
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except KeyExistsError as e:
+        request.state.skip_audit_log = True
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"SSH key already exists at {e.path}. "
+                "Use POST /api/system/ssh-key/rotate to replace it."
+            ),
+        ) from e
+
+    record_audit(
+        db,
+        action="ssh.key_generated",
+        actor=actor,
+        resource_type="ssh_key",
+        details={
+            "algorithm": info.algorithm,
+            "fingerprint": info.fingerprint,
+            "path": info.path,
+        },
+    )
+    db.commit()
+    request.state.skip_audit_log = True
+    return {
+        "algorithm": info.algorithm,
+        "fingerprint": info.fingerprint,
+        "public_key": info.public_key,
+        "created_at": info.created_at,
+    }
+
+
+@system_router.post(
+    "/ssh-key/rotate",
+    response_model=SSHKeyRotateResponse,
+)
+def ssh_key_rotate(
+    request: Request,
+    payload: SSHKeyGenerateRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Replace the existing appliance keypair with a freshly generated one.
+
+    The old key is renamed to ``.bak.<unix-ts>`` (both private + public)
+    so a botched rotation can be rolled back. The audit log captures
+    old + new fingerprints so federal reviewers can correlate the
+    rotation with the authorized_keys update on every managed VM.
+    """
+    actor = request.headers.get("x-actor", "user")
+    try:
+        algo = ssh_normalize_algorithm(payload.algorithm)
+    except UnsupportedAlgorithmError as e:
+        request.state.skip_audit_log = True
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    try:
+        old_info, new_info, backups = ssh_rotate(algo)
+    except FIPSViolation as e:
+        request.state.skip_audit_log = True
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except KeyMissingError as e:
+        request.state.skip_audit_log = True
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No SSH key found at {e.path}. "
+                "Use POST /api/system/ssh-key/generate first."
+            ),
+        ) from e
+
+    record_audit(
+        db,
+        action="ssh.key_rotated",
+        actor=actor,
+        resource_type="ssh_key",
+        details={
+            "old_algorithm": old_info.algorithm,
+            "old_fingerprint": old_info.fingerprint,
+            "new_algorithm": new_info.algorithm,
+            "new_fingerprint": new_info.fingerprint,
+            "backups": backups,
+        },
+    )
+    db.commit()
+    request.state.skip_audit_log = True
+    return {
+        "algorithm": new_info.algorithm,
+        "fingerprint": new_info.fingerprint,
+        "public_key": new_info.public_key,
+        "created_at": new_info.created_at,
+        "previous_fingerprint": old_info.fingerprint,
+        "backups": backups,
+        "warning": (
+            "Old key has been backed up to the listed paths. Update "
+            "authorized_keys on every managed VM with the new public "
+            "key before existing SSH sessions are no longer functional."
+        ),
+    }
 
 
 @system_router.get("/ssh-public-key", response_model=SSHPublicKey)

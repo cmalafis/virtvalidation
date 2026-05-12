@@ -49,6 +49,51 @@ class SSHPublicKey(BaseModel):
     type: str = "ssh-ed25519"
 
 
+class SSHKeyStatus(BaseModel):
+    """Response shape for ``GET /api/system/ssh-key``.
+
+    Wraps the old SSHPublicKey response in a ``status`` envelope so the
+    Settings UI can distinguish "key not generated yet" from "API
+    error". Status is one of:
+      - ``"exists"`` — key files present, fields populated.
+      - ``"missing"`` — files absent, ``configured_algorithm`` +
+        ``expected_path`` echoed back so the UI can render the
+        generate-now form.
+    """
+
+    status: str
+    algorithm: str | None = None
+    fingerprint: str | None = None
+    public_key: str | None = None
+    created_at: datetime | None = None
+    configured_algorithm: str | None = None
+    expected_path: str | None = None
+
+
+class SSHKeyGenerateRequest(BaseModel):
+    # Algorithm choice. None falls back to the SSH_KEY_ALGORITHM env var
+    # (default: ed25519). Validated server-side against
+    # SUPPORTED_ALGORITHMS + the FIPS gate.
+    algorithm: str | None = Field(default=None, max_length=16)
+
+
+class SSHKeyGenerateResponse(BaseModel):
+    algorithm: str
+    fingerprint: str
+    public_key: str
+    created_at: datetime
+
+
+class SSHKeyRotateResponse(BaseModel):
+    algorithm: str
+    fingerprint: str
+    public_key: str
+    created_at: datetime
+    previous_fingerprint: str
+    backups: list[str]
+    warning: str
+
+
 # ---------------------------------------------------------------------------
 # LLM backend info — surfaced read-only on the Settings page so operators
 # can see which inference engine the deployment is wired up against.

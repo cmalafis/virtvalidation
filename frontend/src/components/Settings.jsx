@@ -201,21 +201,203 @@ const PrimaryButton = ({ children, onClick, disabled, type = "button" }) => (
   </button>
 );
 
-// ---------- SSH key viewer ----------
+// ---------- SSH key viewer / generator ----------
 
-function SSHKeyViewer() {
+// Algorithm options surfaced in the generate-key dropdown. FIPS mode
+// disables ed25519 inline (with a tooltip explanation) so federal
+// customers don't have to know the compliance ruleset to pick the
+// right option.
+const SSH_ALGORITHMS = [
+  {
+    value: "ed25519",
+    label: "Ed25519 (recommended for non-FIPS)",
+    fipsApproved: false,
+  },
+  {
+    value: "rsa",
+    label: "RSA 3072 (FIPS 186-5)",
+    fipsApproved: true,
+  },
+  {
+    value: "ecdsa",
+    label: "ECDSA P-384 (FIPS 186-5)",
+    fipsApproved: true,
+  },
+];
+
+function ConfirmModal({ open, title, body, confirmLabel, danger, busy, onClose, onConfirm }) {
+  if (!open) return null;
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
+    }}>
+      <div style={{
+        background: "#0a0a18",
+        border: `1px solid ${danger ? "#ff5577" : "#4488ff"}`,
+        padding: 28, width: 540, maxWidth: "95vw",
+      }}>
+        <div style={{
+          fontSize: 17, color: "#eeeeff",
+          fontFamily: "'Barlow', sans-serif", fontWeight: 700, marginBottom: 12,
+        }}>{title}</div>
+        <div style={{
+          fontSize: 13, color: "#aaaacc", marginBottom: 18,
+          fontFamily: "'Barlow', sans-serif", lineHeight: 1.6, whiteSpace: "pre-wrap",
+        }}>{body}</div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button type="button" onClick={onClose} disabled={busy} style={{
+            background: "transparent", border: "1px solid #3a3a55", color: "#aaaacc",
+            padding: "10px 18px", fontSize: 12,
+            fontFamily: "'Barlow', sans-serif", letterSpacing: "0.06em",
+            textTransform: "uppercase", fontWeight: 700,
+            cursor: busy ? "wait" : "pointer",
+          }}>Cancel</button>
+          <button type="button" onClick={onConfirm} disabled={busy} style={{
+            background: "transparent",
+            border: `1px solid ${danger ? "#ff5577" : "#4488ff"}`,
+            color: danger ? "#ff99aa" : "#aaccff",
+            padding: "10px 18px", fontSize: 12,
+            fontFamily: "'Barlow', sans-serif", letterSpacing: "0.06em",
+            textTransform: "uppercase", fontWeight: 700,
+            cursor: busy ? "wait" : "pointer",
+          }}>{busy ? "Working…" : confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Enrollment instruction tabs — pre-populates each snippet with the
+// actual generated public key so the operator can copy-paste straight
+// into their automation framework of choice. Same key, four output
+// formats; the tabs keep noise low for operators who only use one.
+function EnrollmentInstructions({ publicKey }) {
+  const [active, setActive] = useState("manual");
+  if (!publicKey) return null;
+  const keyBody = publicKey.split(" ").slice(1, 2)[0] || ""; // strip type + comment
+  const keyType = publicKey.split(" ")[0] || "ssh-ed25519";
+
+  const snippets = {
+    manual:
+      `echo '${publicKey}' | ssh user@vm.example.com 'cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'`,
+    ansible:
+      `- name: Add VirtValidate key to authorized_keys\n` +
+      `  ansible.posix.authorized_key:\n` +
+      `    user: "{{ ansible_user }}"\n` +
+      `    state: present\n` +
+      `    key: "${publicKey}"`,
+    puppet:
+      `ssh_authorized_key { 'virtvalidate-appliance':\n` +
+      `  ensure => present,\n` +
+      `  user   => 'root',\n` +
+      `  type   => '${keyType}',\n` +
+      `  key    => '${keyBody}',\n` +
+      `}`,
+    terraform:
+      `resource "tls_authorized_key" "virtvalidate" {\n` +
+      `  user      = "root"\n` +
+      `  algorithm = "${keyType}"\n` +
+      `  key       = "${keyBody}"\n` +
+      `}`,
+  };
+  const tabs = [
+    { id: "manual", label: "Manual" },
+    { id: "ansible", label: "Ansible" },
+    { id: "puppet", label: "Puppet" },
+    { id: "terraform", label: "Terraform" },
+  ];
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(snippets[active]);
+      toast.success("Snippet copied to clipboard", TOAST_OPTS);
+    } catch {
+      toast.error("Clipboard access denied", TOAST_OPTS);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{
+        fontSize: 12, color: "#aaaacc", letterSpacing: "0.08em",
+        fontFamily: "'Barlow', sans-serif", textTransform: "uppercase",
+        fontWeight: 700, marginBottom: 10,
+      }}>Add key to your VMs</div>
+      <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+        {tabs.map((t) => (
+          <button key={t.id} type="button" onClick={() => setActive(t.id)}
+            style={{
+              background: active === t.id ? "rgba(68,136,255,0.06)" : "transparent",
+              border: `1px solid ${active === t.id ? "#4488ff" : "#1a1a2e"}`,
+              color: active === t.id ? "#aaccff" : "#aaaacc",
+              padding: "6px 14px", fontSize: 11,
+              fontFamily: "'Barlow', sans-serif", letterSpacing: "0.06em",
+              textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
+            }}>{t.label}</button>
+        ))}
+        <div style={{ flex: 1 }}/>
+        <button type="button" onClick={copy} style={{
+          background: "transparent", border: "1px solid #3a3a55",
+          color: "#aaaacc", padding: "6px 14px", fontSize: 11,
+          fontFamily: "'Barlow', sans-serif", letterSpacing: "0.06em",
+          textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
+        }}>📋 Copy snippet</button>
+      </div>
+      <pre style={{
+        background: "#07070f", border: "1px solid #1a1a2e", padding: "14px 16px",
+        fontSize: 12, fontFamily: "'Share Tech Mono', monospace",
+        color: "#ccccee", lineHeight: 1.6, margin: 0,
+        whiteSpace: "pre-wrap", wordBreak: "break-all",
+        maxHeight: 220, overflowY: "auto",
+      }}>{snippets[active]}</pre>
+    </div>
+  );
+}
+
+// Wraps SSHKeyViewer with the FIPS status fetch so the algorithm
+// dropdown's defaults + the disabled-state logic stay in lockstep
+// with the rest of the Settings page (FIPSCompliancePanel renders
+// the same underlying status separately).
+function SSHKeyViewerWithFIPS() {
+  const [fipsMode, setFipsMode] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchJSON("/api/system/fips-status")
+      .then((data) => { if (!cancelled) setFipsMode(Boolean(data?.effective)); })
+      .catch(() => { /* SSHKeyViewer falls back to non-FIPS defaults */ });
+    return () => { cancelled = true; };
+  }, []);
+  return <SSHKeyViewer fipsMode={fipsMode}/>;
+}
+
+function SSHKeyViewer({ fipsMode = false }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Used for both the missing-state algorithm chooser and the rotate
+  // workflow's pre-fill. Defaults to RSA when FIPS_MODE is on so the
+  // first-time-generate button matches the federal compliance default.
+  const [algorithm, setAlgorithm] = useState(fipsMode ? "rsa" : "ed25519");
+  const [generating, setGenerating] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [showFingerprint, setShowFingerprint] = useState(false);
+
+  // Re-sync the default if FIPS_MODE flips after first render (the
+  // FIPS status fetch happens in parallel to the SSH key fetch).
+  useEffect(() => {
+    setAlgorithm(fipsMode ? "rsa" : "ed25519");
+  }, [fipsMode]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const body = await fetchJSON("/api/system/ssh-public-key");
+      const body = await fetchJSON("/api/system/ssh-key");
       setData(body);
     } catch (e) {
-      setError(e.message || "Failed to load SSH key");
+      setError(e?.message || "Failed to load SSH key");
       setData(null);
     } finally {
       setLoading(false);
@@ -223,6 +405,46 @@ function SSHKeyViewer() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const onGenerate = useCallback(async () => {
+    setGenerating(true);
+    try {
+      const body = await fetchJSON("/api/system/ssh-key/generate", {
+        method: "POST",
+        body: { algorithm },
+      });
+      toast.success(`Generated ${body.algorithm.toUpperCase()} key — copy the public key below`, TOAST_OPTS);
+      setConfirmOpen(false);
+      await load();
+      // Scroll the rendered key into view so the operator's next move
+      // (copy) is one click away.
+      setTimeout(() => {
+        const el = document.getElementById("ssh-public-key-block");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 100);
+    } catch (e) {
+      toast.error(e?.message || "Failed to generate SSH key", TOAST_OPTS);
+    } finally {
+      setGenerating(false);
+    }
+  }, [algorithm, load]);
+
+  const onRotate = useCallback(async () => {
+    setGenerating(true);
+    try {
+      const body = await fetchJSON("/api/system/ssh-key/rotate", {
+        method: "POST",
+        body: { algorithm },
+      });
+      toast.success(`Key rotated — new fingerprint ${body.fingerprint.slice(0, 23)}…`, TOAST_OPTS);
+      setRotateOpen(false);
+      await load();
+    } catch (e) {
+      toast.error(e?.message || "Failed to rotate SSH key", TOAST_OPTS);
+    } finally {
+      setGenerating(false);
+    }
+  }, [algorithm, load]);
 
   const onCopy = async () => {
     if (!data?.public_key) return;
@@ -234,52 +456,194 @@ function SSHKeyViewer() {
     }
   };
 
+  const onDownload = () => {
+    if (!data?.public_key) return;
+    const blob = new Blob([data.public_key + "\n"], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "virtvalidate-appliance.pub";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const algoOptions = SSH_ALGORITHMS.map((opt) => ({
+    ...opt,
+    disabled: fipsMode && !opt.fipsApproved,
+  }));
+
   return (
     <Section
       title="SSH Public Key"
-      subtitle="Add this to ~/.ssh/authorized_keys on every VM you enroll. The private key never leaves the appliance."
-      action={data && (
-        <SecondaryButton onClick={onCopy}>📋 Copy</SecondaryButton>
-      )}
+      subtitle="VirtValidate uses this key to SSH into managed VMs for baseline capture and post-migration validation. The private key never leaves the appliance."
     >
+      <ConfirmModal
+        open={confirmOpen}
+        title={`Generate a new ${algorithm.toUpperCase()} SSH key?`}
+        body={`This is a one-time operation. The keypair will be written to the appliance's keys volume; the private key never leaves the pod.\n\nAfter generation, you'll need to add the public key to ~/.ssh/authorized_keys on every VM you plan to validate.`}
+        confirmLabel="Generate"
+        busy={generating}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={onGenerate}
+      />
+      <ConfirmModal
+        open={rotateOpen}
+        title="Rotate the SSH key?"
+        danger
+        body={
+          "Rotating will:\n" +
+          "  • Generate a new keypair\n" +
+          "  • Back up the old key (recoverable from the keys volume)\n" +
+          "  • Require updating authorized_keys on every managed VM\n\n" +
+          "Existing baselines and validations are not affected, but future SSH connections will fail until the new key is rolled out.\n\n" +
+          "Continue?"
+        }
+        confirmLabel="Rotate Key"
+        busy={generating}
+        onClose={() => setRotateOpen(false)}
+        onConfirm={onRotate}
+      />
+
+      {fipsMode && (
+        <div style={{
+          padding: "10px 14px", marginBottom: 14,
+          border: "1px solid #4488ff66", background: "rgba(68,136,255,0.04)",
+          fontSize: 12, color: "#aaccff",
+          fontFamily: "'Barlow', sans-serif",
+        }}>
+          FIPS_MODE active — only FIPS 186-5 algorithms (RSA, ECDSA) are
+          available. Ed25519 is disabled.
+        </div>
+      )}
+
       {loading ? (
         <Shimmer width="100%" height={56}/>
       ) : error ? (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
           <div style={{
             fontSize: 14, color: "#ccaaaa", fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
-          }}>
-            {error}
-          </div>
+          }}>{error}</div>
           <SecondaryButton onClick={load}>↻ Retry</SecondaryButton>
         </div>
-      ) : data && (
-        <>
+      ) : data?.status === "missing" ? (
+        <div>
           <div style={{
+            padding: "16px 18px", border: "1px dashed #3a3a55", background: "#07070f",
+            fontSize: 14, color: "#ccccdd",
+            fontFamily: "'Barlow', sans-serif", lineHeight: 1.6, marginBottom: 16,
+          }}>
+            No SSH key has been generated yet. VirtValidate needs an SSH key to
+            connect to your VMs for baseline capture and validation.
+          </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{
+              display: "flex", alignItems: "center", gap: 10, flex: "1 1 280px",
+            }}>
+              <span style={{
+                fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
+                fontFamily: "'Barlow', sans-serif", textTransform: "uppercase",
+                fontWeight: 700, minWidth: 72,
+              }}>Algorithm</span>
+              <select
+                value={algorithm}
+                onChange={(e) => setAlgorithm(e.target.value)}
+                style={{
+                  flex: 1, background: "#0a0a18",
+                  border: "1px solid #1a1a2e", color: "#eeeeff",
+                  padding: "8px 10px", fontSize: 13,
+                  fontFamily: "'Share Tech Mono', monospace",
+                }}>
+                {algoOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value} disabled={opt.disabled}
+                    title={opt.disabled ? "Not FIPS-approved" : ""}>
+                    {opt.label}{opt.disabled ? " — disabled (FIPS)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(true)}
+              disabled={generating}
+              style={{
+                background: "transparent", border: "1px solid #4488ff",
+                color: generating ? "#7788aa" : "#aaccff",
+                padding: "10px 22px", fontSize: 13,
+                fontFamily: "'Barlow', sans-serif",
+                letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+                cursor: generating ? "wait" : "pointer",
+              }}>
+              {generating ? "Generating…" : "Generate SSH Key"}
+            </button>
+          </div>
+          <div style={{
+            marginTop: 12, fontSize: 12, color: "#7788aa",
+            fontFamily: "'Barlow', sans-serif", lineHeight: 1.5,
+          }}>
+            Ed25519 is recommended for most deployments. For FIPS 140-3
+            compliance, choose RSA 3072 or ECDSA P-384.
+          </div>
+        </div>
+      ) : data?.status === "exists" ? (
+        <>
+          <div id="ssh-public-key-block" style={{
             background: "#07070f", border: "1px solid #1a1a2e", padding: "14px 16px",
             fontSize: 13, fontFamily: "'Share Tech Mono', monospace",
             color: "#eeeeff", lineHeight: 1.6,
             wordBreak: "break-all", whiteSpace: "pre-wrap",
             maxHeight: 140, overflowY: "auto",
+          }}>{data.public_key}</div>
+
+          <div style={{
+            display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14, alignItems: "center",
           }}>
-            {data.public_key}
-          </div>
-          {data.fingerprint && (
-            <div style={{
-              marginTop: 14, display: "flex", alignItems: "baseline", gap: 10,
+            <SecondaryButton onClick={onCopy}>📋 Copy</SecondaryButton>
+            <SecondaryButton onClick={onDownload}>⬇ Download .pub</SecondaryButton>
+            <button type="button" onClick={() => setShowFingerprint((v) => !v)} style={{
+              background: "transparent", border: "1px solid #3a3a55",
+              color: "#aaaacc", padding: "8px 14px", fontSize: 11,
+              fontFamily: "'Barlow', sans-serif", letterSpacing: "0.06em",
+              textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
             }}>
-              <span style={{
-                fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
-                fontFamily: "'Barlow', sans-serif", textTransform: "uppercase", fontWeight: 700,
-              }}>Fingerprint</span>
-              <span style={{
-                fontSize: 13, color: "#ccccee",
-                fontFamily: "'Share Tech Mono', monospace",
-              }}>{data.fingerprint.slice(0, 23)}…</span>
+              {showFingerprint ? "Hide" : "View"} Fingerprint
+            </button>
+            <span style={{ flex: 1 }}/>
+            <button type="button" onClick={() => setRotateOpen(true)} style={{
+              background: "transparent", border: "1px solid #ff5577",
+              color: "#ff99aa", padding: "8px 14px", fontSize: 11,
+              fontFamily: "'Barlow', sans-serif", letterSpacing: "0.06em",
+              textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
+            }}>↻ Rotate Key</button>
+          </div>
+
+          {showFingerprint && data.fingerprint && (
+            <div style={{
+              marginTop: 12, padding: "10px 14px",
+              border: "1px solid #1a1a2e", background: "#07070f",
+              fontSize: 12, color: "#ccccee",
+              fontFamily: "'Share Tech Mono', monospace",
+              wordBreak: "break-all",
+            }}>
+              <span style={{ color: "#aaaacc" }}>Fingerprint: </span>
+              {data.fingerprint}
             </div>
           )}
+
+          <div style={{
+            marginTop: 16, padding: "10px 14px",
+            border: "1px solid #2a2a44", background: "#0a0a18",
+            fontSize: 12, color: "#aaaacc",
+            fontFamily: "'Barlow', sans-serif", lineHeight: 1.5,
+          }}>
+            Algorithm <strong style={{ color: "#ccccee" }}>{(data.algorithm || "").toUpperCase()}</strong>
+            {data.created_at && (
+              <> · Generated {new Date(data.created_at).toLocaleString()}</>
+            )}
+          </div>
+
+          <EnrollmentInstructions publicKey={data.public_key}/>
         </>
-      )}
+      ) : null}
     </Section>
   );
 }
@@ -1005,7 +1369,7 @@ export default function Settings() {
       </div>
 
       <div style={{ maxWidth: 960, margin: "0 auto", padding: 32 }} className="fade-in">
-        <SSHKeyViewer />
+        <SSHKeyViewerWithFIPS />
         <ConnectionStatus />
         <FIPSCompliancePanel />
         <LLMBackendPanel />
