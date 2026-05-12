@@ -62,9 +62,29 @@ frontend:
 postgres:
   enabled: true
   image:
+    # Default: upstream postgres on Docker Hub. Compatible with the
+    # POSTGRES_USER / POSTGRES_DB / PGDATA env vars the statefulset
+    # references and works on OCP restricted-v2 because postgres
+    # respects ``$PGDATA`` and chowns ``/var/lib/postgresql/data``
+    # via its own entrypoint.
+    #
+    # Federal customer alternative: Red Hat UBI postgresql-16. Has a
+    # different env var prefix (POSTGRESQL_USER, POSTGRESQL_PASSWORD,
+    # POSTGRESQL_DATABASE) and writes to /var/lib/pgsql/data. To use
+    # it, also set ``postgres.useRedHatImage: true`` below — the
+    # statefulset will render the matching env + mountPath.
+    #
+    # registry.redhat.io requires a pull secret; UBI's public mirror
+    # at registry.access.redhat.com does NOT publish postgresql-16,
+    # so the Red Hat path mandates an authenticated registry. See
+    # docs/CONTAINER_IMAGES.md for the pull-secret + the
+    # tradeoffs.
     repository: postgres
     registry: docker.io
     tag: "16-alpine"
+    # Set to true when image points at registry.redhat.io/rhel9/postgresql-16.
+    # Renders POSTGRESQL_* env aliases + /var/lib/pgsql/data mount path.
+    useRedHatImage: false
   service:
     port: 5432
   auth:

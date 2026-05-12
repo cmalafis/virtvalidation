@@ -33,6 +33,21 @@
 # CI workflow — keep them in sync. CI uses Docker buildx; locally we
 # default to single-arch builds because most dev hosts don't have buildx
 # wired up.
+#
+# Platform handling:
+#   - The OpenShift fleet runs on amd64, so we default the target
+#     platform to linux/amd64 even on Apple Silicon hosts. Override
+#     with PLATFORM=linux/arm64 (or PLATFORM="" to skip the flag).
+#   - On Apple Silicon, vite's esbuild dep segfaults under QEMU during
+#     the multi-stage build. The script auto-falls-back to a
+#     two-step path: build dist/ on the host natively, then package
+#     it via frontend/Containerfile.runtime which only carries
+#     nginx + dist/. The user-visible image is identical; the build
+#     just skips the QEMU leg.
+#   Examples:
+#     ./scripts/build-images.sh                   # → linux/amd64 (default)
+#     PLATFORM=linux/arm64 ./scripts/build-images.sh
+#     PLATFORM= ./scripts/build-images.sh         # native, no --platform
 
 set -euo pipefail
 
@@ -82,6 +97,27 @@ if [[ -z "$VERSION" ]]; then
     VERSION="${VERSION#v}"
 fi
 VCS_REF="$(git rev-parse --short=12 HEAD 2>/dev/null || echo "unknown")"
+
+# Auto-detect target platform. OpenShift fleets we ship to are amd64,
+# so we default to linux/amd64 regardless of host architecture. Apple
+# Silicon dev hosts cross-compile via QEMU under the hood; the
+# frontend build automatically switches to the runtime-only path
+# below to bypass the vite/esbuild QEMU crash.
+#
+# Override via `PLATFORM=...` in the environment. Set `PLATFORM=` (empty)
+# to skip --platform entirely (native build, no cross-compile).
+HOST_ARCH="$(uname -m)"
+case "${HOST_ARCH}" in
+    arm64|aarch64) DEFAULT_PLATFORM="linux/amd64" ;;
+    x86_64|amd64)  DEFAULT_PLATFORM="linux/amd64" ;;
+    *)             DEFAULT_PLATFORM="" ;;
+esac
+PLATFORM="${PLATFORM-${DEFAULT_PLATFORM}}"
+if [[ -n "$PLATFORM" ]]; then
+    PLATFORM_ARG=(--platform "$PLATFORM")
+else
+    PLATFORM_ARG=()
+fi
 
 # Detect the build engine. Podman is preferred (matches our deployment
 # story); fall back to docker if podman isn't available.
@@ -182,7 +218,13 @@ build_one() {
             "${tag_args[@]}" \
             "$context"
     else
+        # Single-platform build. PLATFORM_ARG resolves to either
+        # ``--platform linux/amd64`` (default on Apple Silicon + amd64
+        # hosts targeting OpenShift) or nothing (native build). The
+        # ``${arr[@]+"${arr[@]}"}`` dance keeps ``set -u`` happy when
+        # the array is empty (bash 4.x quirk).
         "$ENGINE" build \
+            ${PLATFORM_ARG[@]+"${PLATFORM_ARG[@]}"} \
             --build-arg "VERSION=${VERSION}" \
             --build-arg "VCS_REF=${VCS_REF}" \
             -f "$containerfile" \
@@ -211,16 +253,48 @@ build_one() {
 
 preflight_bases
 
+# Detect when we'd cross-build the frontend through QEMU. On Apple
+# Silicon (arm64) targeting linux/amd64 the multi-stage build's
+# ``npm run build`` runs esbuild inside the emulated builder image,
+# and esbuild segfaults under QEMU. Fall back to a two-step path:
+# build dist/ on the host, then package via Containerfile.runtime.
+# Multi-arch buildx mode handles this differently (per-platform
+# builders), so we only kick in for single-platform cross builds.
+build_frontend() {
+    local needs_host_build=0
+    if [[ -z "$PLATFORMS" && -n "$PLATFORM" ]]; then
+        case "${HOST_ARCH}:${PLATFORM}" in
+            arm64:linux/amd64|aarch64:linux/amd64)
+                needs_host_build=1 ;;
+        esac
+    fi
+
+    if [[ $needs_host_build -eq 1 ]]; then
+        echo "==> Cross-arch detected (${HOST_ARCH} -> ${PLATFORM})"
+        echo "    Building dist/ on host to bypass esbuild QEMU crash"
+        if ! command -v npm >/dev/null 2>&1; then
+            echo "ERROR: npm not on PATH; needed for host-side dist/ build." >&2
+            echo "       Install Node 20+, or run with PLATFORM=linux/arm64" >&2
+            echo "       for a native build." >&2
+            exit 6
+        fi
+        ( cd frontend && npm ci && npm run build )
+        build_one "virtvalidate-frontend" "frontend/Containerfile.runtime" "frontend"
+    else
+        build_one "virtvalidate-frontend" "frontend/Containerfile" "frontend"
+    fi
+}
+
 case "$TARGET" in
     backend)
         build_one "virtvalidate-backend" "backend/Containerfile" "."
         ;;
     frontend)
-        build_one "virtvalidate-frontend" "frontend/Containerfile" "frontend"
+        build_frontend
         ;;
     all)
         build_one "virtvalidate-backend" "backend/Containerfile" "."
-        build_one "virtvalidate-frontend" "frontend/Containerfile" "frontend"
+        build_frontend
         ;;
     *)
         echo "ERROR: unknown target '$TARGET' (expected backend|frontend|all)" >&2

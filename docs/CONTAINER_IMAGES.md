@@ -242,9 +242,65 @@ permits redistribution but the OpenContainers labels embed the
 
 ---
 
+## Database container — Postgres on UBI
+
+The Helm chart ships two database images and switches between them
+via `postgres.image.useRedHatImage` in values.yaml:
+
+| Option | Image | Auth | Why pick it |
+|--------|-------|------|-------------|
+| Default | `docker.io/library/postgres:16-alpine` | none | Works out of the box; runs on OCP only with the `anyuid` SCC because the upstream entrypoint chowns the data dir as root. |
+| Federal | `registry.redhat.io/rhel9/postgresql-16` | required | FIPS-validated OpenSSL, runs cleanly under OCP restricted-v2 (arbitrary UID), passes federal customer security review. |
+
+**The two images aren't drop-in compatible.** The Red Hat image
+uses different env var names (`POSTGRESQL_USER` / `POSTGRESQL_PASSWORD`
+/ `POSTGRESQL_DATABASE` — with the QL) and writes data to
+`/var/lib/pgsql/data` (not `/var/lib/postgresql/data`). The chart
+handles both: when `useRedHatImage: true`, the statefulset renders
+`POSTGRESQL_*` env aliases pointing at the same Secret keys plus
+the matching mountPath.
+
+### Pull secret for registry.redhat.io
+
+`registry.redhat.io` requires authentication; the public mirror
+`registry.access.redhat.com` does NOT publish `postgresql-16`, so
+the federal path mandates a pull secret. Two ways:
+
+```bash
+# 1) From an existing Red Hat customer portal account:
+oc -n virtvalidate create secret docker-registry redhat-pull-secret \
+    --docker-server=registry.redhat.io \
+    --docker-username='<your username>' \
+    --docker-password='<your token>'
+
+# 2) From a Service Account token (preferred for production):
+oc -n virtvalidate apply -f /path/to/redhat-pull-secret.yaml
+
+# Reference it from values.yaml:
+imagePullSecrets:
+  - name: redhat-pull-secret
+
+# Bump postgres image:
+postgres:
+  image:
+    useRedHatImage: true
+    registry: registry.redhat.io
+    repository: rhel9/postgresql-16
+    tag: "latest"
+```
+
+If your customer's environment forbids `registry.redhat.io`, mirror
+`rhel9/postgresql-16` into an internal registry first using
+`oc image mirror`; reuse the same Pull Secret pattern pointing at
+your internal mirror. See `docs/FIPS_DEPLOYMENT.md` for the full
+mirroring procedure used by the air-gapped reference deployment.
+
+---
+
 ## Related docs
 
 - [`docs/FIPS_DEPLOYMENT.md`](./FIPS_DEPLOYMENT.md) — FIPS chain of custody.
 - [`docs/INSTALLATION.md`](./INSTALLATION.md) — operator-facing install.
+- [`docs/DEPLOYMENT_TROUBLESHOOTING.md`](./DEPLOYMENT_TROUBLESHOOTING.md) — live-debug log from the first OCP deployment.
 - [`deploy/README.md`](../deploy/README.md) — Helm + Kustomize deployment.
 - `backend/Containerfile` and `frontend/Containerfile` — the source of truth.

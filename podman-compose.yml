@@ -16,6 +16,12 @@ services:
       - "3000:8080"
     environment:
       - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+      # nginx.conf is now templated at container start by
+      # entrypoint.sh — these two values feed the /api/ proxy_pass
+      # upstream. The same image works under the Helm chart, which
+      # supplies its own release-prefixed BACKEND_HOST.
+      - BACKEND_HOST=backend
+      - BACKEND_PORT=8000
     depends_on:
       - backend
     restart: unless-stopped

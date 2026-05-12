@@ -30,6 +30,21 @@ spec:
             - secretRef:
                 name: {{ include "virtvalidate.postgresSecretName" . }}
           env:
+            {{- if .Values.postgres.image.useRedHatImage }}
+            # registry.redhat.io/rhel9/postgresql-16 reads
+            # POSTGRESQL_USER / POSTGRESQL_PASSWORD / POSTGRESQL_DATABASE
+            # (with the QL). The chart-managed Secret uses the upstream
+            # POSTGRES_* names; alias them here so the same Secret
+            # works for both images. Kubelet's $(VAR) substitution
+            # only sees vars defined earlier in the same env list, so
+            # these aliases must come first.
+            - name: POSTGRESQL_USER
+              value: $(POSTGRES_USER)
+            - name: POSTGRESQL_PASSWORD
+              value: $(POSTGRES_PASSWORD)
+            - name: POSTGRESQL_DATABASE
+              value: $(POSTGRES_DB)
+            {{- else }}
             # postgres:16-alpine writes data to /var/lib/postgresql/data
             # by default; the PGDATA override below uses a subdirectory
             # so the mount point itself isn't expected to be the data
@@ -37,6 +52,7 @@ spec:
             # postgres would otherwise refuse to initialize into).
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+            {{- end }}
           livenessProbe:
             exec:
               command:
@@ -61,7 +77,10 @@ spec:
             {{- toYaml .Values.postgres.resources | nindent 12 }}
           volumeMounts:
             - name: data
-              mountPath: /var/lib/postgresql/data
+              # The two images write their data dir to different paths.
+              # rhel9/postgresql-16 → /var/lib/pgsql/data
+              # postgres:16-alpine  → /var/lib/postgresql/data (+PGDATA)
+              mountPath: {{ if .Values.postgres.image.useRedHatImage }}/var/lib/pgsql/data{{ else }}/var/lib/postgresql/data{{ end }}
   volumeClaimTemplates:
     - metadata:
         name: data

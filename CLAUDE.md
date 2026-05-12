@@ -98,6 +98,41 @@ See `docs/DATABASE_MIGRATIONS.md` for the full workflow including
 data migrations, rollback recovery, and the legacy-`create_all`
 bridge for v0.1.x deployments.
 
+## Deployment template edits (Helm + Containerfiles)
+
+These traps were caught on the first real OpenShift deployment.
+The full live-debug log lives in `docs/DEPLOYMENT_TROUBLESHOOTING.md`.
+
+- **Env var ordering matters.** Kubernetes' `$(VAR)` substitution
+  only sees env vars defined **earlier** in the same container's
+  `env:` list. `DATABASE_URL` MUST come AFTER `POSTGRES_USER` /
+  `POSTGRES_PASSWORD`, or kubelet leaves the placeholders as
+  literal strings and Postgres rejects auth.
+- **nginx.conf is now a template.** Don't hard-code service names.
+  Use `${BACKEND_HOST}` / `${BACKEND_PORT}` placeholders;
+  `frontend/entrypoint.sh` renders them via `envsubst` at start.
+  The Helm chart's deployment-frontend.yaml provides
+  release-prefixed values; podman-compose.yml uses the literal
+  `backend`.
+- **UBI nginx tmp dirs.** The Helm chart's emptyDir mounts on
+  `/tmp`, `/var/lib/nginx`, and `/run` overlay baked-in
+  subdirectories. `frontend/entrypoint.sh` mkdir's `/tmp/nginx/*`
+  at runtime after the mount — don't rely on RUN mkdir in the
+  Containerfile for these paths.
+- **Cross-arch builds.** `scripts/build-images.sh` auto-detects
+  host=arm64 + target=linux/amd64 and falls back to
+  `frontend/Containerfile.runtime` after a native `npm run build`,
+  bypassing the QEMU esbuild crash. Override with `PLATFORM=`.
+- **Postgres image swap.** The Red Hat
+  `registry.redhat.io/rhel9/postgresql-16` uses `POSTGRESQL_*`
+  (with the QL) env vars and writes to `/var/lib/pgsql/data`.
+  Toggle via `postgres.image.useRedHatImage: true` — the chart
+  renders matching env aliases + mountPath. See
+  `docs/CONTAINER_IMAGES.md` for the pull-secret recipe.
+- **Bump `Chart.yaml.version` whenever a template changes.** Helm
+  upgrade can miss order-only changes on existing deployments
+  without a version bump; the version delta forces a rollout.
+
 ## Paginated list endpoint pattern
 
 Listing endpoints with > a few hundred rows MUST return a wrapped

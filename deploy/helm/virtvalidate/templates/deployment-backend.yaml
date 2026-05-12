@@ -39,14 +39,16 @@ spec:
               containerPort: 8000
               protocol: TCP
           env:
-            - name: SSH_KEY_PATH
-              value: /app/keys/id_ed25519
-            {{- include "virtvalidate.llmEnv" . | nindent 12 }}
-            # Postgres credentials sourced from the chart-managed or
-            # operator-supplied secret. The DATABASE_URL above embeds
-            # $(POSTGRES_USER) and $(POSTGRES_PASSWORD) so kubelet
-            # interpolates them at pod-start without ever materializing
-            # the password in the manifest.
+            # CRITICAL ORDER: POSTGRES_USER + POSTGRES_PASSWORD must
+            # come BEFORE DATABASE_URL so kubelet's $(VAR) substitution
+            # works. Kubelet only substitutes env vars defined earlier
+            # in the same container's env list — if DATABASE_URL
+            # appears first, $(POSTGRES_USER) survives as a literal
+            # string and Postgres rejects the connection with
+            # "password authentication failed for user $(POSTGRES_USER)".
+            # See https://kubernetes.io/docs/tasks/inject-data-application/define-environment-variable-container/
+            # Caught during the first RHOAI cluster deployment — see
+            # docs/DEPLOYMENT_TROUBLESHOOTING.md for the live-debug log.
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
@@ -57,11 +59,14 @@ spec:
                 secretKeyRef:
                   name: {{ include "virtvalidate.postgresSecretName" . }}
                   key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: {{ include "virtvalidate.databaseUrl" . | quote }}
+            - name: SSH_KEY_PATH
+              value: /app/keys/id_ed25519
+            {{- include "virtvalidate.llmEnv" . | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-            - name: DATABASE_URL
-              value: {{ include "virtvalidate.databaseUrl" . | quote }}
           envFrom:
             - configMapRef:
                 name: {{ include "virtvalidate.fullname" . }}-config

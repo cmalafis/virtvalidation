@@ -1,8 +1,18 @@
-# Full nginx config for the UBI nginx-124 image. UBI's default
-# /etc/nginx/nginx.conf is replaced wholesale (rather than dropping
-# in /etc/nginx/conf.d/default.conf) because the UBI base ships a
-# minimal main config that doesn't include the conf.d glob — which
-# meant our v0.1 conf.d/default.conf was silently ignored.
+# Full nginx config template for the UBI nginx-124 image. UBI's
+# default /etc/nginx/nginx.conf is replaced wholesale (rather than
+# dropping in /etc/nginx/conf.d/default.conf) because the UBI base
+# ships a minimal main config that doesn't include the conf.d glob —
+# which meant our v0.1 conf.d/default.conf was silently ignored.
+#
+# Templated via envsubst at container start. ``entrypoint.sh`` reads
+# this file, substitutes ${BACKEND_HOST} / ${BACKEND_PORT}, and
+# writes the result to /etc/nginx/nginx.conf before exec'ing nginx.
+# The two placeholders come from env vars set by:
+#   - podman-compose.yml          (BACKEND_HOST=backend,           BACKEND_PORT=8000)
+#   - deploy/helm/.../deployment-frontend.yaml (BACKEND_HOST=<release>-backend)
+# nginx itself doesn't do env var substitution, which is why we
+# template at start time instead. The same image works for both
+# deployment modes without a rebuild.
 #
 # Listens on 8080 to match UBI's non-privileged convention.
 #
@@ -10,6 +20,8 @@
 # and /run as emptyDir volumes — those mounts overlay (hide) any
 # subdirectories baked into the image. /tmp is mounted as its own
 # emptyDir, so it stays writable for an arbitrary OCP-assigned UID.
+# ``entrypoint.sh`` recreates /tmp/nginx/{client_body,proxy,...}
+# AFTER the mount, so these paths exist when nginx tries to use them.
 worker_processes auto;
 error_log /tmp/nginx-error.log notice;
 pid /tmp/nginx.pid;
@@ -50,7 +62,7 @@ http {
         }
 
         location /api/ {
-            proxy_pass http://virtvalidate-backend:8000;
+            proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;

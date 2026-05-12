@@ -28,6 +28,21 @@ spec:
               # the in-pod port changed.
               containerPort: 8080
               protocol: TCP
+          env:
+            # nginx.conf is templated. entrypoint.sh runs envsubst at
+            # container start, injecting these two values so the
+            # ``proxy_pass`` upstream resolves to the chart's own
+            # backend Service no matter what ``--release-name`` was
+            # passed to ``helm install``. The literal "backend"
+            # hostname worked under podman-compose but broke on
+            # OpenShift where the Service is namespaced.
+            - name: BACKEND_HOST
+              value: {{ include "virtvalidate.fullname" . }}-backend
+            - name: BACKEND_PORT
+              value: "{{ .Values.backend.service.port | default 8000 }}"
+            {{- with .Values.frontend.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           securityContext:
             {{- toYaml .Values.security.containerSecurityContext | nindent 12 }}
           livenessProbe:

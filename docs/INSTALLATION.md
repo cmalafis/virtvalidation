@@ -213,8 +213,33 @@ annually.
 | Backend keeps restarting | `podman-compose logs backend` — usually `connection refused` to Postgres on first boot. Wait 5 s and retry, or set `depends_on.condition: service_healthy`. |
 | `/api/health/ollama` returns offline | The model isn't loaded yet. Run the model pull from step 4. |
 | Frontend shows `Failed to load VMs from backend` | Vite proxy can't reach the backend. Confirm `VITE_API_URL` points to a host the browser can reach (default `http://localhost:8000`). |
+| Frontend nginx upstream errors / 502 from /api/ | The frontend image now templates `nginx.conf` via `envsubst` at start. Set `BACKEND_HOST` + `BACKEND_PORT` (defaults: `backend` / `8000` in compose; the Helm chart wires them automatically). |
+| Backend pod logs `password authentication failed for user "$(POSTGRES_USER)"` | Env var ordering — see [DEPLOYMENT_TROUBLESHOOTING.md §1](./DEPLOYMENT_TROUBLESHOOTING.md). The chart fixed this in 0.1.1; `helm upgrade` if you installed an earlier version. |
 | Slow LLM responses on CPU | Expected. Switch to GPU (step 5) or pick a smaller model in **Settings → LLM Model**. |
+| Cross-arch image build crashes on Apple Silicon | `./scripts/build-images.sh` auto-detects + falls back to a native host build + runtime-only image. Override with `PLATFORM=linux/arm64` for native dev builds. |
 
 For deeper issues, the full audit trail is at
 <http://localhost:3000/audit-log> (use the *audit log* tab on the
 dashboard). Every API mutation is recorded.
+
+For OpenShift-specific deployment issues — env var ordering, Service
+name resolution in nginx, emptyDir mount overlay surprises,
+cross-architecture builds — see [DEPLOYMENT_TROUBLESHOOTING.md](./DEPLOYMENT_TROUBLESHOOTING.md).
+
+---
+
+## Templated nginx config
+
+As of chart 0.1.1, the frontend image ships `nginx.conf.template`
+(not `nginx.conf`). At container start, `entrypoint.sh` runs
+`envsubst` against the template, substituting two placeholders:
+
+| Env var        | Default (entrypoint) | Compose value | Helm chart value |
+|----------------|----------------------|---------------|------------------|
+| `BACKEND_HOST` | `backend`            | `backend`     | `<release>-backend` |
+| `BACKEND_PORT` | `8000`               | `8000`        | `.Values.backend.service.port` |
+
+This lets the same image work for `podman-compose up` and a
+namespaced `helm install <release>` without rebuilding. Override
+in either environment by setting the env vars on the frontend
+container.
