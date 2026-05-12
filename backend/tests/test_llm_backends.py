@@ -11,14 +11,19 @@ Factory tests verify that the right backend gets instantiated for each
 from __future__ import annotations
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from app.core.config import Settings
-from app.core.llm.base import LLMBackendError
+from app.core.llm.base import (
+    LLMAuthError,
+    LLMBackendError,
+    LLMResponseError,
+    LLMTimeoutError,
+    LLMUnreachableError,
+)
 from app.core.llm.factory import (
     get_llm_backend,
     reset_backend_cache,
@@ -89,21 +94,62 @@ class TestOllamaBackend:
         assert sent["options"]["temperature"] == 0.1
         assert sent["messages"] == [{"role": "user", "content": "hi"}]
 
-    def test_chat_raises_backend_error_on_http_failure(self):
+    def test_chat_raises_unreachable_on_connect_error(self):
         # max_retries=0 keeps the test fast — retry-with-backoff behavior
         # is exercised in test_retry.py.
         backend = OllamaBackend(max_retries=0)
         mock_client = _mock_async_client(post_raises=httpx.ConnectError("refused"))
         with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(LLMBackendError, match="Ollama request failed"):
+            with pytest.raises(LLMUnreachableError, match="Cannot reach Ollama"):
                 asyncio.run(backend.chat(messages=[]))
 
-    def test_chat_raises_on_empty_content(self):
+    def test_chat_raises_timeout_on_read_timeout(self):
+        backend = OllamaBackend(max_retries=0)
+        mock_client = _mock_async_client(post_raises=httpx.ReadTimeout("slow"))
+        with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(LLMTimeoutError, match="timed out"):
+                asyncio.run(backend.chat(messages=[]))
+
+    def test_chat_raises_auth_on_401(self):
+        backend = OllamaBackend(max_retries=0)
+        resp = MagicMock()
+        resp.status_code = 401
+        err = httpx.HTTPStatusError("unauthorized", request=MagicMock(), response=resp)
+        # raise_for_status is what triggers HTTPStatusError; simulate by
+        # making the post() return a response whose raise_for_status raises.
+        bad_resp = MagicMock()
+        bad_resp.raise_for_status = MagicMock(side_effect=err)
+        bad_resp.response = resp
+        mock_client = _mock_async_client(post_response=bad_resp)
+        with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(LLMAuthError, match="refused auth"):
+                asyncio.run(backend.chat(messages=[]))
+
+    def test_chat_raises_response_error_on_5xx(self):
+        backend = OllamaBackend(max_retries=0)
+        resp = MagicMock()
+        resp.status_code = 503
+        err = httpx.HTTPStatusError("svc unavail", request=MagicMock(), response=resp)
+        bad_resp = MagicMock()
+        bad_resp.raise_for_status = MagicMock(side_effect=err)
+        mock_client = _mock_async_client(post_response=bad_resp)
+        with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(LLMResponseError, match="HTTP 503"):
+                asyncio.run(backend.chat(messages=[]))
+
+    def test_chat_raises_response_error_on_empty_content(self):
         backend = OllamaBackend()
         mock_client = _mock_async_client(post_response=_ok({"message": {"content": ""}}))
         with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(LLMBackendError, match="empty message"):
+            with pytest.raises(LLMResponseError, match="empty message"):
                 asyncio.run(backend.chat(messages=[]))
+
+    def test_typed_exceptions_subclass_llm_backend_error(self):
+        # Callers that still catch the base class must keep working.
+        assert issubclass(LLMUnreachableError, LLMBackendError)
+        assert issubclass(LLMAuthError, LLMBackendError)
+        assert issubclass(LLMTimeoutError, LLMBackendError)
+        assert issubclass(LLMResponseError, LLMBackendError)
 
     def test_health_check_reports_online_with_latency(self):
         backend = OllamaBackend(default_model="llama3:8b")
@@ -145,17 +191,13 @@ class TestKServeBackend:
         mock_client = _mock_async_client(
             post_response=_ok(
                 {
-                    "choices": [
-                        {"message": {"role": "assistant", "content": "hi from granite"}}
-                    ],
+                    "choices": [{"message": {"role": "assistant", "content": "hi from granite"}}],
                     "model": "granite-3-8b-instruct",
                 }
             )
         )
         with patch("app.core.llm.kserve_backend.httpx.AsyncClient", return_value=mock_client):
-            result = asyncio.run(
-                backend.chat(messages=[{"role": "user", "content": "hi"}])
-            )
+            result = asyncio.run(backend.chat(messages=[{"role": "user", "content": "hi"}]))
 
         assert result["content"] == "hi from granite"
         assert result["model"] == "granite-3-8b-instruct"
@@ -171,9 +213,7 @@ class TestKServeBackend:
     def test_chat_with_max_tokens_passes_through(self):
         backend = KServeBackend(endpoint="https://k", model_name="m")
         mock_client = _mock_async_client(
-            post_response=_ok(
-                {"choices": [{"message": {"content": "ok"}}], "model": "m"}
-            )
+            post_response=_ok({"choices": [{"message": {"content": "ok"}}], "model": "m"})
         )
         with patch("app.core.llm.kserve_backend.httpx.AsyncClient", return_value=mock_client):
             asyncio.run(backend.chat(messages=[], max_tokens=512))
@@ -181,18 +221,49 @@ class TestKServeBackend:
         sent = mock_client.post.call_args.kwargs["json"]
         assert sent["max_tokens"] == 512
 
-    def test_chat_raises_when_choices_empty(self):
+    def test_chat_raises_response_error_when_choices_empty(self):
         backend = KServeBackend(endpoint="https://k", model_name="m")
         mock_client = _mock_async_client(post_response=_ok({"choices": []}))
         with patch("app.core.llm.kserve_backend.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(LLMBackendError, match="no choices"):
+            with pytest.raises(LLMResponseError, match="no choices"):
                 asyncio.run(backend.chat(messages=[]))
 
-    def test_chat_raises_on_http_failure(self):
+    def test_chat_raises_timeout_on_connect_timeout(self):
         backend = KServeBackend(endpoint="https://k", model_name="m")
         mock_client = _mock_async_client(post_raises=httpx.ConnectTimeout("timeout"))
         with patch("app.core.llm.kserve_backend.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(LLMBackendError, match="KServe request failed"):
+            with pytest.raises(LLMTimeoutError, match="timed out"):
+                asyncio.run(backend.chat(messages=[]))
+
+    def test_chat_raises_unreachable_on_transport_error(self):
+        backend = KServeBackend(endpoint="https://k", model_name="m")
+        mock_client = _mock_async_client(post_raises=httpx.ConnectError("dns fail"))
+        with patch("app.core.llm.kserve_backend.httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(LLMUnreachableError, match="Cannot reach KServe"):
+                asyncio.run(backend.chat(messages=[]))
+
+    def test_chat_raises_auth_on_403(self):
+        backend = KServeBackend(endpoint="https://k", model_name="m")
+        resp = MagicMock()
+        resp.status_code = 403
+        err = httpx.HTTPStatusError("forbidden", request=MagicMock(), response=resp)
+        bad_resp = MagicMock()
+        bad_resp.raise_for_status = MagicMock(side_effect=err)
+        mock_client = _mock_async_client(post_response=bad_resp)
+        with patch("app.core.llm.kserve_backend.httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(LLMAuthError, match="refused auth"):
+                asyncio.run(backend.chat(messages=[]))
+
+    def test_chat_raises_response_error_on_5xx(self):
+        backend = KServeBackend(endpoint="https://k", model_name="m")
+        resp = MagicMock()
+        resp.status_code = 502
+        err = httpx.HTTPStatusError("bad gw", request=MagicMock(), response=resp)
+        bad_resp = MagicMock()
+        bad_resp.raise_for_status = MagicMock(side_effect=err)
+        mock_client = _mock_async_client(post_response=bad_resp)
+        with patch("app.core.llm.kserve_backend.httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(LLMResponseError, match="HTTP 502"):
                 asyncio.run(backend.chat(messages=[]))
 
     def test_constructor_rejects_missing_endpoint(self):
@@ -234,9 +305,7 @@ class TestKServeBackend:
     def test_health_check_reports_online_and_lists_models(self):
         backend = KServeBackend(endpoint="https://k", model_name="granite")
         mock_client = _mock_async_client(
-            get_response=_ok(
-                {"data": [{"id": "granite"}, {"id": "alt-model"}]}
-            )
+            get_response=_ok({"data": [{"id": "granite"}, {"id": "alt-model"}]})
         )
         with patch("app.core.llm.kserve_backend.httpx.AsyncClient", return_value=mock_client):
             health = asyncio.run(backend.health_check())
@@ -248,9 +317,9 @@ class TestKServeBackend:
 
     def test_health_check_reports_offline_on_failure(self):
         backend = KServeBackend(endpoint="https://k", model_name="m")
-        mock_client = _mock_async_client(get_raises=httpx.HTTPStatusError(
-            "500", request=MagicMock(), response=MagicMock()
-        ))
+        mock_client = _mock_async_client(
+            get_raises=httpx.HTTPStatusError("500", request=MagicMock(), response=MagicMock())
+        )
         with patch("app.core.llm.kserve_backend.httpx.AsyncClient", return_value=mock_client):
             health = asyncio.run(backend.health_check())
 
@@ -338,12 +407,90 @@ def test_chat_sync_round_trips_through_async_chat():
 
 
 def test_info_returns_static_config():
-    backend = KServeBackend(
-        endpoint="https://granite", model_name="granite-3-8b-instruct"
-    )
+    backend = KServeBackend(endpoint="https://granite", model_name="granite-3-8b-instruct")
     info = backend.info()
     assert info == {
         "backend": "kserve",
         "model": "granite-3-8b-instruct",
         "endpoint": "https://granite",
     }
+
+
+# ---------------------------------------------------------------------------
+# Startup health-check log lines
+# ---------------------------------------------------------------------------
+class TestStartupHealthCheckLog:
+    """The lifespan probe must log exactly ``llm.startup.ok`` on success
+    or ``llm.startup.FAILED`` on failure. Operators grep the pod log for
+    these prefixes — keep them stable."""
+
+    def test_logs_ok_when_backend_online(self, caplog):
+        import logging
+
+        from app.main import _report_llm_status
+
+        fake_backend = MagicMock()
+        fake_backend.health_check = AsyncMock(
+            return_value={
+                "status": "online",
+                "backend": "kserve",
+                "endpoint": "https://granite",
+                "model": "granite-3-8b-instruct",
+                "latency_ms": 42,
+                "details": {"available_models": ["granite-3-8b-instruct"]},
+            }
+        )
+        with (
+            patch("app.main.get_llm_backend", return_value=fake_backend),
+            caplog.at_level(logging.INFO, logger="app.main"),
+        ):
+            asyncio.run(_report_llm_status())
+
+        msgs = [r.message for r in caplog.records]
+        assert any("llm.startup.ok" in m for m in msgs)
+        assert any("https://granite" in m for m in msgs)
+
+    def test_logs_failed_when_backend_offline(self, caplog):
+        import logging
+
+        from app.main import _report_llm_status
+
+        fake_backend = MagicMock()
+        fake_backend.health_check = AsyncMock(
+            return_value={
+                "status": "offline",
+                "backend": "kserve",
+                "endpoint": "https://wrong",
+                "model": "granite",
+                "latency_ms": -1,
+                "details": {"error": "connection refused"},
+            }
+        )
+        with (
+            patch("app.main.get_llm_backend", return_value=fake_backend),
+            caplog.at_level(logging.ERROR, logger="app.main"),
+        ):
+            asyncio.run(_report_llm_status())
+
+        msgs = [r.message for r in caplog.records]
+        assert any("llm.startup.FAILED" in m for m in msgs)
+        assert any("connection refused" in m for m in msgs)
+
+    def test_logs_failed_when_health_check_raises(self, caplog):
+        import logging
+
+        from app.main import _report_llm_status
+
+        fake_backend = MagicMock()
+        fake_backend.health_check = AsyncMock(side_effect=RuntimeError("boom"))
+        with (
+            patch("app.main.get_llm_backend", return_value=fake_backend),
+            caplog.at_level(logging.ERROR, logger="app.main"),
+        ):
+            asyncio.run(_report_llm_status())
+
+        # Even if health_check throws, the API must still come up — the
+        # function returns rather than re-raising.
+        msgs = [r.message for r in caplog.records]
+        assert any("llm.startup.FAILED" in m for m in msgs)
+        assert any("boom" in m for m in msgs)

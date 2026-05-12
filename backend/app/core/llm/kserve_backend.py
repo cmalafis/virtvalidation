@@ -26,7 +26,14 @@ from typing import AsyncIterator
 
 import httpx
 
-from app.core.llm.base import LLMBackend, LLMBackendError
+from app.core.llm.base import (
+    LLMAuthError,
+    LLMBackend,
+    LLMBackendError,
+    LLMResponseError,
+    LLMTimeoutError,
+    LLMUnreachableError,
+)
 
 
 class KServeBackend(LLMBackend):
@@ -52,13 +59,9 @@ class KServeBackend(LLMBackend):
         timeout: float = 120.0,
     ) -> None:
         if not endpoint:
-            raise LLMBackendError(
-                "KServe backend requires KSERVE_ENDPOINT to be set"
-            )
+            raise LLMBackendError("KServe backend requires KSERVE_ENDPOINT to be set")
         if not model_name:
-            raise LLMBackendError(
-                "KServe backend requires KSERVE_MODEL_NAME to be set"
-            )
+            raise LLMBackendError("KServe backend requires KSERVE_MODEL_NAME to be set")
 
         self.endpoint = endpoint.rstrip("/")
         self.default_model = model_name
@@ -117,28 +120,53 @@ class KServeBackend(LLMBackend):
             payload["max_tokens"] = max_tokens
 
         try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout, verify=self.verify_ssl
-            ) as client:
-                resp = await client.post(
-                    self._chat_url(), json=payload, headers=self._headers()
-                )
+            async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
+                resp = await client.post(self._chat_url(), json=payload, headers=self._headers())
                 resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            # KServe auth on RHOAI: 401 means the token wasn't sent
+            # or the SA isn't bound; 403 means the SA can't reach
+            # this InferenceService. Surface separately so the
+            # operator knows whether to check token mount vs RBAC.
+            status_code = e.response.status_code
+            if status_code in (401, 403):
+                raise LLMAuthError(
+                    f"KServe refused auth (HTTP {status_code}) at "
+                    f"{self.endpoint}. Check the service account "
+                    f"token mount + RoleBinding on the inference "
+                    f"namespace: {e}"
+                ) from e
+            raise LLMResponseError(
+                f"KServe returned HTTP {status_code} at " f"{self.endpoint}: {e}"
+            ) from e
+        except httpx.TimeoutException as e:
+            raise LLMTimeoutError(
+                f"KServe request to {self.endpoint} timed out "
+                f"({self.timeout}s budget). Increase "
+                f"kserve_timeout_seconds or check inference pod "
+                f"health: {e}"
+            ) from e
+        except httpx.TransportError as e:
+            raise LLMUnreachableError(
+                f"Cannot reach KServe at {self.endpoint}. Check "
+                f"that the InferenceService route resolves from "
+                f"this pod's network: {e}"
+            ) from e
         except httpx.HTTPError as e:
             raise LLMBackendError(f"KServe request failed: {e}") from e
 
         try:
             body = resp.json()
         except ValueError as e:
-            raise LLMBackendError(f"KServe returned non-JSON envelope: {e}") from e
+            raise LLMResponseError(f"KServe returned non-JSON envelope: {e}") from e
 
         choices = body.get("choices") or []
         if not choices:
-            raise LLMBackendError("KServe returned no choices in response")
+            raise LLMResponseError("KServe returned no choices in response")
         message = choices[0].get("message") or {}
         content = message.get("content", "")
         if not content:
-            raise LLMBackendError("KServe returned an empty message")
+            raise LLMResponseError("KServe returned an empty message")
 
         return {
             "content": content,
@@ -158,9 +186,7 @@ class KServeBackend(LLMBackend):
             "stream": True,
         }
         try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout, verify=self.verify_ssl
-            ) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
                 async with client.stream(
                     "POST",
                     self._chat_url(),
@@ -175,7 +201,7 @@ class KServeBackend(LLMBackend):
                         line = line.strip()
                         if not line.startswith("data:"):
                             continue
-                        body = line[len("data:"):].strip()
+                        body = line[len("data:") :].strip()
                         if body == "[DONE]":
                             return
                         try:
@@ -193,9 +219,7 @@ class KServeBackend(LLMBackend):
         started = time.monotonic()
         url = f"{self.endpoint}/v1/models"
         try:
-            async with httpx.AsyncClient(
-                timeout=5.0, verify=self.verify_ssl
-            ) as client:
+            async with httpx.AsyncClient(timeout=5.0, verify=self.verify_ssl) as client:
                 resp = await client.get(url, headers=self._headers())
                 resp.raise_for_status()
                 body = resp.json()
@@ -210,9 +234,7 @@ class KServeBackend(LLMBackend):
             }
         latency_ms = int((time.monotonic() - started) * 1000)
         available = [
-            m.get("id")
-            for m in (body.get("data") or [])
-            if isinstance(m, dict) and m.get("id")
+            m.get("id") for m in (body.get("data") or []) if isinstance(m, dict) and m.get("id")
         ]
         return {
             "status": "online",
@@ -234,16 +256,12 @@ class KServeBackend(LLMBackend):
         # callers expect at least one entry.
         try:
             with httpx.Client(timeout=5.0, verify=self.verify_ssl) as client:
-                resp = client.get(
-                    f"{self.endpoint}/v1/models", headers=self._headers()
-                )
+                resp = client.get(f"{self.endpoint}/v1/models", headers=self._headers())
                 resp.raise_for_status()
                 body = resp.json()
         except (httpx.HTTPError, ValueError):
             return [self.default_model]
         names = [
-            m.get("id")
-            for m in (body.get("data") or [])
-            if isinstance(m, dict) and m.get("id")
+            m.get("id") for m in (body.get("data") or []) if isinstance(m, dict) and m.get("id")
         ]
         return names or [self.default_model]

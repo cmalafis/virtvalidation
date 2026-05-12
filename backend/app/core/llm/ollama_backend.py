@@ -26,7 +26,14 @@ from typing import AsyncIterator
 
 import httpx
 
-from app.core.llm.base import LLMBackend, LLMBackendError
+from app.core.llm.base import (
+    LLMAuthError,
+    LLMBackend,
+    LLMBackendError,
+    LLMResponseError,
+    LLMTimeoutError,
+    LLMUnreachableError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,12 +148,9 @@ class OllamaBackend(LLMBackend):
         for attempt in range(attempt_count):
             if attempt > 0:
                 # The retry index is 1-based for the schedule lookup.
-                wait = _RETRY_BACKOFF_SECONDS[
-                    min(attempt - 1, len(_RETRY_BACKOFF_SECONDS) - 1)
-                ]
+                wait = _RETRY_BACKOFF_SECONDS[min(attempt - 1, len(_RETRY_BACKOFF_SECONDS) - 1)]
                 logger.warning(
-                    "Ollama transport failure on attempt %d/%d (%s); "
-                    "retrying in %.1fs",
+                    "Ollama transport failure on attempt %d/%d (%s); " "retrying in %.1fs",
                     attempt,
                     attempt_count,
                     last_err,
@@ -155,22 +159,34 @@ class OllamaBackend(LLMBackend):
                 await asyncio.sleep(wait)
             try:
                 async with httpx.AsyncClient(timeout=self._httpx_timeout()) as client:
-                    resp = await client.post(
-                        f"{self.endpoint}/api/chat", json=payload
-                    )
+                    resp = await client.post(f"{self.endpoint}/api/chat", json=payload)
                     resp.raise_for_status()
                 break
             except httpx.HTTPStatusError as e:
-                # 4xx/5xx — surface immediately, no retry.
-                raise LLMBackendError(
-                    f"Ollama returned HTTP {e.response.status_code}: {e}"
-                ) from e
-            except (httpx.TimeoutException, httpx.TransportError) as e:
+                # 4xx/5xx — surface immediately, no retry. Auth gets
+                # its own type so the planner can surface the
+                # KServe / Ollama-with-API-key story specifically.
+                status_code = e.response.status_code
+                if status_code in (401, 403):
+                    raise LLMAuthError(f"Ollama refused auth (HTTP {status_code}): {e}") from e
+                raise LLMResponseError(f"Ollama returned HTTP {status_code}: {e}") from e
+            except httpx.TimeoutException as e:
                 last_err = e
                 if attempt == attempt_count - 1:
-                    raise LLMBackendError(
-                        f"Ollama request failed after {attempt_count} "
-                        f"attempts: {e}"
+                    raise LLMTimeoutError(
+                        f"Ollama request timed out after {attempt_count} "
+                        f"attempts ({self.read_timeout}s read budget): {e}"
+                    ) from e
+            except httpx.TransportError as e:
+                # Network-layer failure — DNS, connection refused,
+                # TLS handshake — distinguish from HTTP errors so
+                # the operator sees "connectivity" vs "server-side"
+                # in the plan error_message.
+                last_err = e
+                if attempt == attempt_count - 1:
+                    raise LLMUnreachableError(
+                        f"Cannot reach Ollama at {self.endpoint} after "
+                        f"{attempt_count} attempts: {e}"
                     ) from e
             except httpx.HTTPError as e:
                 # Anything else — give up immediately.
@@ -179,12 +195,12 @@ class OllamaBackend(LLMBackend):
         try:
             body = resp.json()
         except ValueError as e:
-            raise LLMBackendError(f"Ollama returned non-JSON envelope: {e}") from e
+            raise LLMResponseError(f"Ollama returned non-JSON envelope: {e}") from e
 
         message = body.get("message") or {}
         content = message.get("content", "")
         if not content:
-            raise LLMBackendError("Ollama returned an empty message")
+            raise LLMResponseError("Ollama returned an empty message")
 
         return {
             "content": content,
@@ -211,9 +227,7 @@ class OllamaBackend(LLMBackend):
             async with httpx.AsyncClient(timeout=self._httpx_timeout()) as client:
                 # Ollama emits one JSON object per line; iter_lines is the
                 # right primitive here, not iter_text.
-                async with client.stream(
-                    "POST", f"{self.endpoint}/api/chat", json=payload
-                ) as resp:
+                async with client.stream("POST", f"{self.endpoint}/api/chat", json=payload) as resp:
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
                         if not line.strip():
@@ -249,9 +263,7 @@ class OllamaBackend(LLMBackend):
             }
         latency_ms = int((time.monotonic() - started) * 1000)
         available = [
-            m["name"]
-            for m in (body.get("models") or [])
-            if isinstance(m, dict) and m.get("name")
+            m["name"] for m in (body.get("models") or []) if isinstance(m, dict) and m.get("name")
         ]
         return {
             "status": "online",
@@ -279,7 +291,5 @@ class OllamaBackend(LLMBackend):
         except (httpx.HTTPError, ValueError):
             return []
         return [
-            m["name"]
-            for m in (body.get("models") or [])
-            if isinstance(m, dict) and m.get("name")
+            m["name"] for m in (body.get("models") or []) if isinstance(m, dict) and m.get("name")
         ]

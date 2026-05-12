@@ -7,15 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.audit import router as audit_router
 from app.api.health import router as health_router
 from app.api.network_reviews import router as network_reviews_router
-from app.api.storage_reviews import router as storage_reviews_router
-from app.api.targets import mappings_router as resource_mappings_router
-from app.api.targets import targets_router as ocp_targets_router
 from app.api.plans import router as plans_router
 from app.api.plans import strategies_router as planning_strategies_router
 from app.api.reports import router as reports_router
 from app.api.rvtools import router as rvtools_router
 from app.api.settings import settings_router, system_router
 from app.api.snapshots import router as snapshots_router
+from app.api.storage_reviews import router as storage_reviews_router
+from app.api.targets import mappings_router as resource_mappings_router
+from app.api.targets import targets_router as ocp_targets_router
 from app.api.templates import router as templates_router
 from app.api.validation_schedules import router as validation_schedules_router
 from app.api.validations import router as validations_router
@@ -23,24 +23,67 @@ from app.api.vcenters import router as vcenters_router
 from app.api.vms import router as vms_router
 from app.core.db import engine
 from app.core.fips import log_startup_warning as _fips_startup_log
+from app.core.llm.factory import get_llm_backend
 from app.core.migrations import MigrationError, apply_migrations
 from app.core.scheduler import shutdown_scheduler, start_scheduler
 from app.middleware.audit import AuditMiddleware
 from app.models import audit as _audit_models  # noqa: F401  (register models on Base)
-from app.models import grouping as _grouping_models  # noqa: F401  (register models on Base)
 from app.models import chunk as _chunk_models  # noqa: F401  (register models on Base)
+from app.models import grouping as _grouping_models  # noqa: F401  (register models on Base)
 from app.models import llm_usage as _llm_usage_models  # noqa: F401  (register models on Base)
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)
-from app.models import validation_cache as _validation_cache_models  # noqa: F401  (register models on Base)
-from app.models import validation_schedule as _validation_schedule_models  # noqa: F401  (register models on Base)
 from app.models import settings as _settings_models  # noqa: F401  (register models on Base)
-from app.models import storage_review as _storage_review_models  # noqa: F401  (register models on Base)
+from app.models import (
+    storage_review as _storage_review_models,  # noqa: F401  (register models on Base)
+)
 from app.models import target as _target_models  # noqa: F401  (register models on Base)
 from app.models import validation as _validation_models  # noqa: F401  (register models on Base)
+from app.models import (
+    validation_cache as _validation_cache_models,  # noqa: F401  (register models on Base)
+)
+from app.models import (
+    validation_schedule as _validation_schedule_models,  # noqa: F401  (register models on Base)
+)
 from app.models import vcenter as _vcenter_models  # noqa: F401  (register models on Base)
 from app.models import vm as _vm_models  # noqa: F401  (register models on Base)
 
 logger = logging.getLogger(__name__)
+
+
+async def _report_llm_status() -> None:
+    """Probe the configured LLM backend and log the result.
+
+    Catches *any* exception — a misbehaving backend should never
+    keep the API from starting. The detail is logged so an operator
+    can read the pod log to see exactly which leg of the LLM stack
+    is broken (endpoint, auth, model not loaded).
+    """
+    try:
+        backend = get_llm_backend()
+        result = await backend.health_check()
+    except Exception as e:  # noqa: BLE001 — see docstring
+        logger.error("llm.startup.FAILED error=%s", e)
+        return
+
+    if result.get("status") == "online":
+        details = result.get("details") or {}
+        logger.info(
+            "llm.startup.ok backend=%s endpoint=%s model=%s " "latency_ms=%s available_models=%s",
+            result.get("backend"),
+            result.get("endpoint"),
+            result.get("model"),
+            result.get("latency_ms"),
+            details.get("available_models"),
+        )
+    else:
+        details = result.get("details") or {}
+        logger.error(
+            "llm.startup.FAILED backend=%s endpoint=%s model=%s error=%s",
+            result.get("backend"),
+            result.get("endpoint"),
+            result.get("model"),
+            details.get("error"),
+        )
 
 
 @asynccontextmanager
@@ -65,6 +108,19 @@ async def lifespan(app: FastAPI):
     # breadcrumb in container logs about whether the application is
     # actually running in compliance mode.
     _fips_startup_log()
+
+    # Probe the configured LLM at boot — the operator should see one
+    # of two messages in `kubectl logs` immediately on pod start:
+    #   llm.startup.ok  backend=... endpoint=... model=... latency_ms=...
+    #   llm.startup.FAILED backend=... endpoint=... error=...
+    # so a misconfigured LLM_BASE_URL is visible without having to
+    # click GENERATE on a plan and wait for it to fail. We deliberately
+    # do NOT raise SystemExit here — the rest of the app (inventory,
+    # capture, validation history) is useful even with the LLM down,
+    # and federal sites occasionally start the backend before RHOAI
+    # finishes coming up.
+    await _report_llm_status()
+
     start_scheduler()
     try:
         yield

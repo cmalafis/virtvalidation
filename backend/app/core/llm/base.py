@@ -18,7 +18,51 @@ from typing import AsyncIterator
 
 
 class LLMBackendError(RuntimeError):
-    """Raised when a backend call fails — transport, parsing, or auth."""
+    """Raised when a backend call fails — transport, parsing, or auth.
+
+    Concrete subclasses below let the planner write a specific
+    ``Plan.error_message`` instead of a generic "LLM failed" — which
+    is what federal operators need when a plan generation fails: was
+    it a wrong URL, missing token, timeout, or model error?
+    """
+
+
+class LLMUnreachableError(LLMBackendError):
+    """Connection refused, DNS failure, network partition.
+
+    Likely cause: ``LLM_BASE_URL`` env var is empty / wrong, or the
+    backend pod can't egress to the inference endpoint. The startup
+    health-check log shows this on every pod restart.
+    """
+
+
+class LLMAuthError(LLMBackendError):
+    """Authentication failed — 401 / 403 from the inference endpoint.
+
+    KServe ``InferenceService`` with auth enabled needs the pod's
+    service account token (or an operator-supplied bearer token).
+    Resolution: check ``kserve_token_file`` mount + the SA's
+    RoleBinding on the inference namespace.
+    """
+
+
+class LLMTimeoutError(LLMBackendError):
+    """The inference call exceeded its read timeout.
+
+    Default 600s read timeout on Ollama; KServe is bounded by
+    ``kserve_timeout_seconds`` (default 120s). Llama 3 8B CPU-only
+    inference can exceed both on cold-model first calls.
+    """
+
+
+class LLMResponseError(LLMBackendError):
+    """Endpoint returned a non-2xx status or malformed body.
+
+    Distinct from ``LLMUnreachableError`` (transport OK, model said
+    no) and ``LLMResponseError`` from a 200 with garbage JSON. The
+    response detail is surfaced verbatim in ``Plan.error_message``
+    so the operator sees what the model actually returned.
+    """
 
 
 class LLMBackend(ABC):
