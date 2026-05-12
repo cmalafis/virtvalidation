@@ -309,7 +309,7 @@ Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.core.preclassifier
   - Raised when the planner LLM call fails or returns unusable output.
 - **`MigrationPlanner`** (Class)
   - Methods:
-    - `plan_with_groups(self, vms)` — Generate a wave plan using mechanical pre-classification.
+    - `plan_with_groups(self, vms)` — Generate a wave plan with mechanical wave assignment.
     - `plan(self, vm_profiles)` — Generate a wave plan for the given VMs.
 
 </details>
@@ -365,7 +365,7 @@ Depends on: `app.core.limits`, `app.models.plan`
   - Strategy-driven plans populate every field; legacy plans leave
   - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `created_at`, `groups`, `groups_formed`, `method`, `attempts`
 - **`PlanCreate`** (Pydantic schema)
-  - Fields: `vm_ids`, `preclassification_enabled`
+  - Fields: `vm_ids`, `preclassification_enabled`, `ha_strategy`
 - **`PreviewGroupsResponse`** (Pydantic schema)
   - Result of POST /api/plans/preview-groups — no plan persisted.
   - Fields: `vm_count`, `groups_formed`, `groups`, `over_ceiling`, `ceiling`
@@ -950,6 +950,26 @@ Depends on: `app.core.config`
 
 </details>
 
+<details><summary><strong><code>app.core.environment</code></strong> — <em>Business logic</em> · Environment classification for VMs.</summary>
+
+Path: `backend/app/core/environment.py`  
+
+**Classes**
+
+- **`Environment`** (Class)
+  - Typed environment classification.
+- **`DetectionResult`** (Class)
+  - One environment detection outcome.
+  - Fields: `environment`, `confidence`, `signal`
+
+**Functions**
+
+- `normalize(value)` — Map a free-text environment label to the canonical enum.
+- `detect_environment()` — Five-tier signal cascade. First match wins.
+- `iter_supported_values()` — All canonical enum string values — for API enums + dropdowns.
+
+</details>
+
 <details><summary><strong><code>app.core.fips</code></strong> — <em>Business logic</em> · FIPS 140-3 compliance helpers.</summary>
 
 Path: `backend/app/core/fips.py`  
@@ -1247,12 +1267,20 @@ Depends on: `app.core.config`, `app.models.vm`
 
 - **`GroupKey`** (Class)
   - Composite identifier for a group.
-  - Fields: `vcenter_id`, `target_namespace`, `role`, `state`, `discriminator`
+  - Fields: `vcenter_id`, `target_namespace`, `role`, `state`, `discriminator`, `environment`
   - Methods:
     - `as_string(self)`
+- **`RiskAssessment`** (Class)
+  - Rich risk description surfaced to operators in the plan UI.
+  - Fields: `level`, `factors`, `mitigations`, `rollback_complexity`, `estimated_downtime`
+  - Methods:
+    - `to_dict(self)`
+- **`HAMember`** (Class)
+  - One VM's HA participation in its containing group.
+  - Fields: `vm_id`, `vm_name`, `ha_role`
 - **`VMGroup`** (Class)
   - A mechanical grouping of VMs that should be considered together.
-  - Fields: `key`, `vm_ids`, `shared_attributes`, `estimated_role`, `estimated_state`, `migration_risk`, `dependency_hints`, `notes`
+  - Fields: `key`, `vm_ids`, `shared_attributes`, `estimated_role`, `estimated_state`, `migration_risk`, `dependency_hints`, `notes`, `risk_assessment`, `ha_members`
   - Methods:
     - `id(self)`
     - `to_llm_dict(self)` — Compact dict shape sent to the LLM for wave assignment.
@@ -1260,6 +1288,7 @@ Depends on: `app.core.config`, `app.models.vm`
 - **`PreClassifier`** (Class)
   - Group VMs into mechanical migration candidates.
   - Methods:
+    - `split_ha_group(group)` — Split a group with HA members into per-member micro-groups.
     - `classify(self, vms, target_cluster_id)`
 
 **Functions**
@@ -1267,6 +1296,9 @@ Depends on: `app.core.config`, `app.models.vm`
 - `detect_role(vm)` — Return one of web|app|data|edge|infrastructure|other.
 - `detect_state(vm, role)` — Return stateful|stateless|unknown.
 - `detect_risk(role, state, vm_count, has_sequential_names)` — Return low|medium|high based on role, state, and group shape.
+- `assess_risk(role, state, vm_count, ha_members, has_sequential_names)` — Build a RiskAssessment with explicit factors + mitigations.
+- `detect_ha_role(vm_name, sequence_index)` — Classify one VM's HA role from its name.
+- `detect_ha_members(vms)` — Inspect a group's VMs + return the HA membership manifest.
 
 </details>
 
@@ -1425,6 +1457,26 @@ Path: `backend/app/core/validation_tiers.py`
 
 - `classify(diff)` — Decide which tier handles this diff.
 - `estimate_tier_distribution(diffs)` — Count classifications across a batch of (diff, environment) pairs.
+
+</details>
+
+<details><summary><strong><code>app.core.wave_skeleton</code></strong> — <em>Business logic</em> · Mechanical wave assignment — pure Python, deterministic, fast.</summary>
+
+Path: `backend/app/core/wave_skeleton.py`  
+Depends on: `app.core.config`, `app.core.preclassifier`
+
+**Classes**
+
+- **`Wave`** (Class)
+  - One migration wave — sequence number + ordered groups inside.
+  - Fields: `wave_number`, `groups`, `estimated_risk`, `notes`
+  - Methods:
+    - `vm_ids(self)`
+    - `vm_count(self)`
+- **`MechanicalWaveAssigner`** (Class)
+  - Build wave structure from preclassified groups, no LLM.
+  - Methods:
+    - `assign_waves(self, groups)`
 
 </details>
 

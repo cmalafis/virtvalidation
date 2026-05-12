@@ -46,6 +46,13 @@ _INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
         "kind\": \"application",
         "categorize",
     ]),
+    ("wave_rationale", [
+        # Per-wave rationale prompt is a small focused ask — must
+        # come BEFORE the broader plan/plan_groups intents so it
+        # doesn't get swallowed by either.
+        "write the rationale paragraph",
+        "rationale paragraph for one wave",
+    ]),
     ("plan_groups", [
         # The group-based planner emits group_ids in both prompt + schema,
         # which the raw-VM planner does NOT — so this is a reliable
@@ -220,6 +227,8 @@ class MockBackend(LLMBackend):
         intent = _detect_intent(prompt_text)
         if intent == "categorize":
             payload = self._categorization_response(prompt_text)
+        elif intent == "wave_rationale":
+            payload = self._wave_rationale_response(prompt_text)
         elif intent == "plan_groups":
             payload = self._planning_groups_response(prompt_text)
         elif intent == "plan":
@@ -280,6 +289,29 @@ class MockBackend(LLMBackend):
                     "members": members,
                 },
             ]
+        }
+
+    def _wave_rationale_response(self, prompt: str) -> dict:
+        """Per-wave rationale — small focused prompt.
+
+        Returns a ``{rationale: "..."}`` dict; the planner's parser
+        extracts the string. Mock rationale references the wave
+        number visible in the prompt so the planner sees a different
+        string for each call (lets tests assert the LLM path
+        actually ran per-wave).
+        """
+        import re as _re
+        m = _re.search(r"Wave\s+(\d+)\s+contains", prompt)
+        wave_no = m.group(1) if m else "?"
+        return {
+            "rationale": (
+                f"Mock rationale for wave {wave_no}: groups are placed "
+                "here by deterministic role + dependency ordering. "
+                "Stateful tiers migrate before dependent stateless "
+                "tiers; HA peers are spread across consecutive waves "
+                "to preserve quorum. Watch for connection drain timing "
+                "during cutover."
+            ),
         }
 
     def _planning_groups_response(self, prompt: str) -> dict:

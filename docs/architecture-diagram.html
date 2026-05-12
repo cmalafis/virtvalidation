@@ -1259,7 +1259,7 @@ const DATA = {
             "methods": [
               {
                 "name": "plan_with_groups",
-                "summary": "Generate a wave plan using mechanical pre-classification."
+                "summary": "Generate a wave plan with mechanical wave assignment."
               },
               {
                 "name": "plan",
@@ -1568,7 +1568,8 @@ const DATA = {
             "table": "",
             "fields": [
               "vm_ids",
-              "preclassification_enabled"
+              "preclassification_enabled",
+              "ha_strategy"
             ],
             "methods": [],
             "summary": ""
@@ -3304,6 +3305,52 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.environment",
+        "title": "app.core.environment",
+        "subtitle": "backend/app/core/environment.py",
+        "summary": "Environment classification for VMs.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "Environment",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Typed environment classification."
+          },
+          {
+            "name": "DetectionResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "environment",
+              "confidence",
+              "signal"
+            ],
+            "methods": [],
+            "summary": "One environment detection outcome."
+          }
+        ],
+        "functions": [
+          {
+            "name": "normalize",
+            "summary": "Map a free-text environment label to the canonical enum."
+          },
+          {
+            "name": "detect_environment",
+            "summary": "Five-tier signal cascade. First match wins."
+          },
+          {
+            "name": "iter_supported_values",
+            "summary": "All canonical enum string values \u2014 for API enums + dropdowns."
+          }
+        ],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
         "id": "app.core.fips",
         "title": "app.core.fips",
         "subtitle": "backend/app/core/fips.py",
@@ -4050,7 +4097,8 @@ const DATA = {
               "target_namespace",
               "role",
               "state",
-              "discriminator"
+              "discriminator",
+              "environment"
             ],
             "methods": [
               {
@@ -4059,6 +4107,37 @@ const DATA = {
               }
             ],
             "summary": "Composite identifier for a group."
+          },
+          {
+            "name": "RiskAssessment",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "level",
+              "factors",
+              "mitigations",
+              "rollback_complexity",
+              "estimated_downtime"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": "Rich risk description surfaced to operators in the plan UI."
+          },
+          {
+            "name": "HAMember",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "vm_name",
+              "ha_role"
+            ],
+            "methods": [],
+            "summary": "One VM's HA participation in its containing group."
           },
           {
             "name": "VMGroup",
@@ -4072,7 +4151,9 @@ const DATA = {
               "estimated_state",
               "migration_risk",
               "dependency_hints",
-              "notes"
+              "notes",
+              "risk_assessment",
+              "ha_members"
             ],
             "methods": [
               {
@@ -4097,6 +4178,10 @@ const DATA = {
             "fields": [],
             "methods": [
               {
+                "name": "split_ha_group",
+                "summary": "Split a group with HA members into per-member micro-groups."
+              },
+              {
                 "name": "classify",
                 "summary": ""
               }
@@ -4116,6 +4201,18 @@ const DATA = {
           {
             "name": "detect_risk",
             "summary": "Return low|medium|high based on role, state, and group shape."
+          },
+          {
+            "name": "assess_risk",
+            "summary": "Build a RiskAssessment with explicit factors + mitigations."
+          },
+          {
+            "name": "detect_ha_role",
+            "summary": "Classify one VM's HA role from its name."
+          },
+          {
+            "name": "detect_ha_members",
+            "summary": "Inspect a group's VMs + return the HA membership manifest."
           }
         ],
         "depends_on": [
@@ -4548,6 +4645,57 @@ const DATA = {
           }
         ],
         "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.core.wave_skeleton",
+        "title": "app.core.wave_skeleton",
+        "subtitle": "backend/app/core/wave_skeleton.py",
+        "summary": "Mechanical wave assignment \u2014 pure Python, deterministic, fast.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "Wave",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "wave_number",
+              "groups",
+              "estimated_risk",
+              "notes"
+            ],
+            "methods": [
+              {
+                "name": "vm_ids",
+                "summary": ""
+              },
+              {
+                "name": "vm_count",
+                "summary": ""
+              }
+            ],
+            "summary": "One migration wave \u2014 sequence number + ordered groups inside."
+          },
+          {
+            "name": "MechanicalWaveAssigner",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "assign_waves",
+                "summary": ""
+              }
+            ],
+            "summary": "Build wave structure from preclassified groups, no LLM."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.config",
+          "app.core.preclassifier"
+        ]
       },
       {
         "kind": "module",

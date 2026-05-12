@@ -650,11 +650,15 @@ function SSHKeyViewer({ fipsMode = false }) {
 
 // ---------- Connection status section ----------
 
-// Friendly labels for the backend types the API returns.
+// Friendly labels for the backend types the API returns. Settings
+// page renders these dynamically from /api/system/llm-info so the
+// operator sees the actual configured backend — never a hard-coded
+// "Ollama" string when the deployment is running KServe.
 const BACKEND_LABELS = {
   ollama: "Ollama (local)",
   kserve: "KServe (RHOAI / OpenShift)",
-  vllm: "vLLM (planned for v1.0.0)",
+  vllm: "vLLM (direct)",
+  mock:  "Mock (dev / CI — see docs/MOCK_BACKEND.md)",
 };
 
 function ConnectionStatus() {
@@ -1107,7 +1111,7 @@ function ConfigurationForm({ onSavedModelChange }) {
   return (
     <Section
       title="LLM Model"
-      subtitle="The local Ollama model used for validation, planning, and report generation."
+      subtitle="The configured LLM model used for validation, planning, and report generation. The backend type (Ollama / KServe / vLLM / Mock) is set via LLM_BACKEND_TYPE at deployment time and shown in the Connection Status panel above."
       action={modelsError ? null : (
         <SecondaryButton onClick={loadModels}>↻ Refresh</SecondaryButton>
       )}
@@ -1128,7 +1132,7 @@ function ConfigurationForm({ onSavedModelChange }) {
               display: "block", fontSize: 11, color: "#aaaacc",
               letterSpacing: "0.08em", marginBottom: 8,
               fontFamily: "'Barlow', sans-serif", textTransform: "uppercase", fontWeight: 700,
-            }}>Ollama Model</span>
+            }}>LLM Model</span>
             <select
               value={draft.ollama_model}
               onChange={(e) => setDraft({ ...draft, ollama_model: e.target.value })}
@@ -1160,7 +1164,7 @@ function ConfigurationForm({ onSavedModelChange }) {
                 display: "block", marginTop: 8, fontSize: 13, color: "#ccaaaa",
                 fontFamily: "'Barlow', sans-serif", lineHeight: 1.5,
               }}>
-                Couldn&apos;t list models from Ollama: {modelsError}. The currently-saved model still appears above.
+                Couldn&apos;t list models from the configured LLM backend: {modelsError}. The currently-saved model still appears above.
               </span>
             )}
           </label>

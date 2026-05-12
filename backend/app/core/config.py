@@ -56,16 +56,23 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2
 
     # ----- LLM input ceiling (architectural rule) -----
-    # Maximum number of items (VMs, log lines, diff chunks, anything in
-    # a collection) that any single LLM call is allowed to receive.
-    # Empirically pinned: Llama 3.2 3B drops VM ids past 20; Granite 3.1
-    # 8B fails at 57 (May 2026 testing). Features that need to reason
-    # over more must mechanically pre-process the input first — see the
-    # planner's PreClassifier as the reference implementation, and
-    # CLAUDE.md "LLM Input Discipline" for the architectural rule.
-    # Raise this only with explicit benchmarking against the production
-    # model; bumping it silently regresses scale.
-    llm_max_items_per_call: int = 20
+    # Maximum items (VMs, groups, log lines, diff chunks) any single
+    # LLM call may receive in a collection. Note: this is PER CALL,
+    # not per plan/feature — features that need to reason over more
+    # items must decompose into multiple LLM calls, each at ≤ this
+    # ceiling. The planner does this by running wave assignment
+    # MECHANICALLY (no LLM) and only calling the LLM once per wave
+    # for rationale text on the wave's ≤10 groups.
+    #
+    # Empirically pinned at 10 in May 2026 testing. Llama 3.2 3B
+    # drops VM ids past 20; Granite 3.1 8B fails at 57. The 10-item
+    # ceiling provides safety margin and keeps per-call latency
+    # constant regardless of overall plan size.
+    #
+    # See CLAUDE.md "LLM Input Discipline" for the architectural
+    # rule + `app.core.wave_skeleton.MechanicalWaveAssigner` for
+    # the reference decomposition.
+    llm_max_items_per_call: int = 10
 
     # ----- Level 1 categorizer -----
     # VMs per LLM call. With Llama 3 8B and num_ctx=8192 a 10-VM batch

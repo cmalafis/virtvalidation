@@ -182,7 +182,7 @@ export default function NetworkReviewNew() {
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>Run analysis after creating</div>
                 <div style={{ fontSize: 13, color: "#aaaacc", marginTop: 3 }}>
-                  Local LLM call against Ollama; runs in the background, takes ~30–90s.
+                  Local LLM call against the configured backend; runs in the background, takes ~30–90s.
                 </div>
               </div>
             </label>

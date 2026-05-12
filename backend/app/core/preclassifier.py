@@ -56,6 +56,12 @@ class GroupKey:
     Equality / hashing is by-field so two groups with the same key
     compare equal across runs, which is what the deterministic-output
     invariant requires.
+
+    ``environment`` is the partition dimension added in the
+    post-N refactor — production VMs can never share a group with
+    development or DR VMs, even when sharing every other dimension.
+    Default ``"unknown"`` keeps the field optional for callers that
+    construct a key directly without env context.
     """
 
     vcenter_id: int | None
@@ -63,14 +69,63 @@ class GroupKey:
     role: str
     state: str
     discriminator: str  # network, datastore, app_hint, or name_prefix bucket
+    environment: str = "unknown"
 
     def as_string(self) -> str:
         # Stable string form for the API + audit log. Order is fixed
         # so reordering the dataclass fields doesn't change the
-        # rendered id.
+        # rendered id. ``env`` slot keeps prod/dev/dr groups visibly
+        # distinct in audit traces even when their other dimensions
+        # match.
         vc = f"vc{self.vcenter_id}" if self.vcenter_id is not None else "vc?"
         tn = self.target_namespace or "default"
-        return f"{vc}/{tn}/{self.role}/{self.state}/{self.discriminator}"
+        return f"{vc}/{tn}/{self.environment}/{self.role}/{self.state}/{self.discriminator}"
+
+
+@dataclass
+class RiskAssessment:
+    """Rich risk description surfaced to operators in the plan UI.
+
+    ``level`` is the headline (low / medium / high) used for sorting
+    and aggregation. ``factors`` enumerate WHY the level is what it
+    is, in plain English. ``mitigations`` list operator actions that
+    reduce the impact if the risk materializes. ``rollback_complexity``
+    is the SECOND dimension operators ask about: "if this wave fails,
+    how hard is it to undo?" — separate from forward-migration risk.
+    ``estimated_downtime`` is a coarse bucket — exact timing depends
+    on storage class + workload, which the planner doesn't know.
+    """
+
+    level: str
+    factors: list[str] = field(default_factory=list)
+    mitigations: list[str] = field(default_factory=list)
+    rollback_complexity: str = "medium"
+    estimated_downtime: str = "5-15 minutes per VM"
+
+    def to_dict(self) -> dict:
+        return {
+            "level": self.level,
+            "factors": list(self.factors),
+            "mitigations": list(self.mitigations),
+            "rollback_complexity": self.rollback_complexity,
+            "estimated_downtime": self.estimated_downtime,
+        }
+
+
+@dataclass
+class HAMember:
+    """One VM's HA participation in its containing group.
+
+    Detected mechanically from name patterns (primary/replica/standby,
+    sequential numeric suffixes, member labels). Operators can
+    override via the ``role`` field on the VM, but we don't try to
+    distinguish "no HA" from "HA we couldn't detect" — both surface as
+    ``standalone``.
+    """
+
+    vm_id: int
+    vm_name: str
+    ha_role: str  # primary | replica | standby | member | standalone
 
 
 @dataclass
@@ -89,6 +144,8 @@ class VMGroup:
     migration_risk: str
     dependency_hints: list[str] = field(default_factory=list)
     notes: str = ""
+    risk_assessment: RiskAssessment | None = None
+    ha_members: list[HAMember] = field(default_factory=list)
 
     @property
     def id(self) -> str:
@@ -100,7 +157,8 @@ class VMGroup:
         Excludes per-VM detail (count + role + dependencies is all the
         LLM needs) so the prompt stays small regardless of vm_count.
         """
-        return {
+        ha_count = sum(1 for m in self.ha_members if m.ha_role != "standalone")
+        out: dict = {
             "id": self.id,
             "vm_count": len(self.vm_ids),
             "role": self.estimated_role,
@@ -109,6 +167,13 @@ class VMGroup:
             "depends_on": list(self.dependency_hints),
             "notes": self.notes,
         }
+        if ha_count > 1:
+            # Signal HA presence so the LLM keeps the group cohesive
+            # when ha_strategy="together" — when "spread", the
+            # mechanical splitter has already turned each member into
+            # its own micro-group before this dict ever existed.
+            out["ha_member_count"] = ha_count
+        return out
 
     def to_api_dict(self) -> dict:
         """Expanded dict shape the API surfaces to the operator UI."""
@@ -124,6 +189,17 @@ class VMGroup:
                 k: list(v) for k, v in self.shared_attributes.items()
             },
             "notes": self.notes,
+            "risk_assessment": (
+                self.risk_assessment.to_dict() if self.risk_assessment else None
+            ),
+            "ha_members": [
+                {
+                    "vm_id": m.vm_id,
+                    "vm_name": m.vm_name,
+                    "ha_role": m.ha_role,
+                }
+                for m in self.ha_members
+            ],
         }
 
 
@@ -197,6 +273,115 @@ def detect_risk(
     return "medium"
 
 
+def assess_risk(
+    role: str,
+    state: str,
+    vm_count: int,
+    ha_members: list[HAMember],
+    has_sequential_names: bool,
+) -> RiskAssessment:
+    """Build a RiskAssessment with explicit factors + mitigations.
+
+    Federal customers' compliance review asks operators "why is this
+    high-risk?" and "what did you do to mitigate?". A one-letter
+    risk level isn't enough — every level above ``low`` must trail
+    a list of specific factors the operator can defend in writing.
+
+    The factor catalog is fixed (not free-text from the LLM) so the
+    audit trail can correlate factors across plans / customers /
+    months without keyword drift.
+    """
+    factors: list[str] = []
+    mitigations: list[str] = []
+
+    if state == "stateful":
+        factors.append("Stateful service with persistent data")
+        mitigations.append(
+            "Verify backup completed within 4 hours of migration"
+        )
+
+    if role == "data":
+        factors.append(
+            "Database / data tier — connection loss affects "
+            "dependent applications"
+        )
+        mitigations.append(
+            "Coordinate with application team for connection "
+            "draining before migration"
+        )
+    elif role == "infrastructure":
+        factors.append(
+            "Infrastructure service — failure affects entire cluster"
+        )
+        mitigations.append(
+            "Ensure secondary AD / DNS / PKI available during migration"
+        )
+
+    # No HA peers? Stateful groups without redundancy carry a
+    # single-point-of-failure risk that operators need to plan around.
+    ha_peers = [m for m in ha_members if m.ha_role != "standalone"]
+    if state == "stateful" and len(ha_peers) < 2:
+        factors.append(
+            "No HA replication detected — single point of failure"
+        )
+        mitigations.append(
+            "Consider establishing HA replica before migration or "
+            "schedule a documented maintenance window"
+        )
+
+    if has_sequential_names and vm_count >= 2:
+        factors.append(
+            f"Sequential cluster of {vm_count} members — coordinated "
+            "cutover across multiple nodes"
+        )
+        mitigations.append(
+            "Spread HA members across waves (ha_strategy=spread is "
+            "the default) so at least one node serves the original "
+            "infrastructure throughout the migration window"
+        )
+
+    if vm_count > 10:
+        factors.append(
+            f"Large group ({vm_count} VMs) — migration time and "
+            "rollback complexity scale with member count"
+        )
+        mitigations.append(
+            "Run pilot migration on 2-3 representative VMs in a "
+            "lower environment before the full wave"
+        )
+
+    if len(factors) >= 3:
+        level = "high"
+    elif len(factors) >= 1:
+        level = "medium"
+    else:
+        level = "low"
+
+    if state == "stateful":
+        rollback = "high"
+    elif role == "infrastructure":
+        rollback = "medium"
+    else:
+        rollback = "low"
+
+    if state == "stateless":
+        downtime = "0 (live migration possible)"
+    elif role == "data":
+        downtime = "10-30 minutes per VM (connection drain + cutover)"
+    elif role == "infrastructure":
+        downtime = "5-15 minutes per VM"
+    else:
+        downtime = "5-15 minutes per VM"
+
+    return RiskAssessment(
+        level=level,
+        factors=factors,
+        mitigations=mitigations,
+        rollback_complexity=rollback,
+        estimated_downtime=downtime,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -216,6 +401,80 @@ def _name_prefix(name: str) -> str:
     # Keep up to the first 12 chars so very long base names don't blow
     # up the discriminator string in the GroupKey.
     return stem.lower()[:12]
+
+
+# HA role detection: name patterns that strongly imply primary /
+# replica relationships. Order matters — the first matching pattern
+# wins, so primary checks come before generic-member checks.
+_HA_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("primary",  re.compile(r"\b(primary|leader|master|active|writer|main)\b", re.I)),
+    ("replica",  re.compile(r"\b(replica|secondary|follower|reader|slave)\b", re.I)),
+    ("standby",  re.compile(r"\b(standby|passive|backup)\b", re.I)),
+]
+
+
+def detect_ha_role(vm_name: str, sequence_index: int | None = None) -> str:
+    """Classify one VM's HA role from its name.
+
+    The sequential-naming case is the most common in the field — many
+    federal customers number their cluster members ``-01``, ``-02``,
+    ``-03``. When that's the only signal, the lowest-numbered member
+    gets ``primary`` and the rest get ``member``. The classifier
+    can't tell whether a sequential cluster is symmetric (Cassandra-
+    style, all peers) or asymmetric (Postgres-style, primary + reads);
+    we err on the safe side and treat the first-numbered as the
+    promotion target.
+    """
+    name = vm_name or ""
+    for role, pattern in _HA_PATTERNS:
+        if pattern.search(name):
+            return role
+    if sequence_index is not None and sequence_index >= 0:
+        return "primary" if sequence_index == 0 else "member"
+    return "standalone"
+
+
+def detect_ha_members(vms: Sequence["VM"]) -> list[HAMember]:
+    """Inspect a group's VMs + return the HA membership manifest.
+
+    Returns one ``HAMember`` per input VM. The pattern detector runs
+    first; if no VM in the group matched a primary/replica/standby
+    pattern AND the group has ≥2 VMs with sequential names, we fall
+    back to sequence-index detection. Single-VM groups always report
+    ``standalone``.
+    """
+    if not vms:
+        return []
+    members: list[HAMember] = []
+    pattern_hits = False
+    for vm in vms:
+        role = detect_ha_role(vm.name or "")
+        if role != "standalone":
+            pattern_hits = True
+        members.append(HAMember(vm_id=vm.id, vm_name=vm.name or "", ha_role=role))
+
+    if pattern_hits or len(vms) < 2:
+        return members
+
+    # No explicit pattern matched. If the group is a sequential
+    # cluster, tag the lowest-numbered VM as primary and the rest as
+    # members. Skip when the suffix numbering is inconsistent — that
+    # implies the VMs are independent, not an HA pool.
+    suffixes: list[tuple[int, int]] = []
+    for i, vm in enumerate(vms):
+        m = re.search(r"(\d+)$", vm.name or "")
+        if not m:
+            return members
+        suffixes.append((int(m.group(1)), i))
+    if len(suffixes) < 2:
+        return members
+    suffixes.sort()
+    lowest_index = suffixes[0][1]
+    out: list[HAMember] = []
+    for i, vm in enumerate(vms):
+        role = "primary" if i == lowest_index else "member"
+        out.append(HAMember(vm_id=vm.id, vm_name=vm.name or "", ha_role=role))
+    return out
 
 
 def _has_sequential_names(names: Sequence[str]) -> bool:
@@ -252,11 +511,82 @@ class PreClassifier:
     """Group VMs into mechanical migration candidates.
 
     Reuse across calls is safe — no instance state beyond the cap.
+
+    Previous versions of this class hard-capped the output at
+    ``llm_max_items_per_call`` by merging the smallest groups
+    together when the natural classification produced more. That
+    capping was an architectural mistake — it constrained the
+    plan-level group count rather than the per-LLM-call ceiling.
+    The ceiling now applies per LLM call (via the wave skeleton +
+    per-wave rationale path); the preclassifier is free to produce
+    as many groups as the input naturally yields.
+
+    ``max_groups`` kwarg is retained for back-compat (tests still
+    pass it explicitly to assert capping behaviour). When set, the
+    consolidator runs as before. When None / unset, no consolidation
+    happens.
     """
 
     def __init__(self, *, max_groups: int | None = None) -> None:
-        cap = max_groups if max_groups is not None else _module_settings.llm_max_items_per_call
-        self.max_groups = max(1, int(cap))
+        # None = unbounded (the new default). Explicit int = legacy
+        # capping for tests that need to exercise the consolidation
+        # path. The PRODUCTION call path never sets this — wave-level
+        # enforcement in MechanicalWaveAssigner does the bounding now.
+        self.max_groups = max_groups if max_groups is None else max(1, int(max_groups))
+
+    @staticmethod
+    def split_ha_group(group: VMGroup) -> list[VMGroup]:
+        """Split a group with HA members into per-member micro-groups.
+
+        Used by the planner's ``ha_strategy="spread"`` path (the
+        default): each HA member becomes its own group so the wave
+        assigner places it in its own wave. Primary members get the
+        lowest wave (earliest cutover); replicas + members follow.
+
+        Returns the original group unchanged when there's no HA
+        relationship (single VM, all members ``standalone``, or
+        exactly one HA-tagged member).
+        """
+        ha_count = sum(1 for m in group.ha_members if m.ha_role != "standalone")
+        if ha_count < 2:
+            return [group]
+
+        # Build per-member micro-groups. Sort by ha_role priority so
+        # the wave assigner naturally orders primary → standby →
+        # replica → member when iterating in order.
+        priority = {"primary": 0, "standby": 1, "replica": 2, "member": 3, "standalone": 4}
+        members_sorted = sorted(
+            group.ha_members,
+            key=lambda m: (priority.get(m.ha_role, 5), m.vm_name),
+        )
+
+        micro: list[VMGroup] = []
+        for m in members_sorted:
+            micro_key = GroupKey(
+                vcenter_id=group.key.vcenter_id,
+                target_namespace=group.key.target_namespace,
+                role=group.estimated_role,
+                state=group.estimated_state,
+                discriminator=f"{group.key.discriminator}/ha:{m.ha_role}:{m.vm_name}",
+                environment=group.key.environment,
+            )
+            micro.append(VMGroup(
+                key=micro_key,
+                vm_ids=[m.vm_id],
+                shared_attributes=dict(group.shared_attributes),
+                estimated_role=group.estimated_role,
+                estimated_state=group.estimated_state,
+                migration_risk=group.migration_risk,
+                dependency_hints=list(group.dependency_hints),
+                notes=(
+                    f"HA {m.ha_role} of {group.id} — spread across waves "
+                    "so the original cluster keeps a quorum during the "
+                    "migration window"
+                ),
+                risk_assessment=group.risk_assessment,
+                ha_members=[m],
+            ))
+        return micro
 
     def classify(
         self,
@@ -267,14 +597,32 @@ class PreClassifier:
         if not vms_list:
             return []
 
-        # PRIMARY partition: vCenter source + target namespace. Same
-        # primary key means same physical infra + same destination,
-        # which is the strongest signal for "migrate as a unit".
+        # PRIMARY partition: vCenter source + target namespace +
+        # environment. Same primary key means same physical infra +
+        # same destination + same lifecycle stage — the strongest
+        # signal for "migrate as a unit". Production never shares a
+        # primary partition with development or DR even when both
+        # land in the same target namespace; that mirrors the
+        # operational reality that operators cut over prod and
+        # non-prod separately.
+        #
+        # The environment field is normalized through
+        # ``app.core.environment.normalize`` so free-text variants
+        # ("Prod", "production", "live") collapse to the same enum
+        # value before partitioning.
+        from app.core.environment import Environment, normalize as _norm_env
+
         primary_buckets: dict[tuple, list[VM]] = defaultdict(list)
         for vm in vms_list:
+            env = _norm_env(vm.environment)
+            # UNKNOWN VMs partition together so a single plan call
+            # surfaces them in one batch the operator can label
+            # before re-running. We don't merge UNKNOWN into prod or
+            # dev — that would obscure the missing-label signal.
             primary_key = (
                 vm.source_vcenter_id,
                 (vm.target_namespace or "").strip(),
+                env.value,
             )
             primary_buckets[primary_key].append(vm)
 
@@ -303,7 +651,12 @@ class PreClassifier:
         # the smallest adjacent groups (within the same primary key
         # only); the LLM's wave-ordering decision doesn't care if a
         # consolidated group is slightly heterogeneous.
-        groups = self._consolidate(groups, primary_buckets)
+        # Consolidation only runs when an explicit cap is set (legacy
+        # tests). Production callers leave ``max_groups=None`` so the
+        # natural group count survives — wave-level enforcement
+        # bounds the LLM input per-call instead.
+        if self.max_groups is not None:
+            groups = self._consolidate(groups, primary_buckets)
 
         # Dependency hints — pure-Python heuristic. The LLM may
         # override during wave assignment but the hints seed the
@@ -330,7 +683,13 @@ class PreClassifier:
     def _classify_within_primary(
         self, primary_key: tuple, bucket: list[VM]
     ) -> list[VMGroup]:
-        vcenter_id, target_namespace = primary_key
+        # Primary key is now (vcenter_id, target_namespace, env_value)
+        # — env was added so production / development / DR never
+        # merge into the same partition even when sharing a target
+        # namespace. ``env`` becomes part of the group key's
+        # discriminator so downstream consumers (audit log, MTV
+        # YAML, UI) can see the partition reason.
+        vcenter_id, target_namespace, env = primary_key
         if not bucket:
             return []
 
@@ -363,6 +722,7 @@ class PreClassifier:
                 groups.append(self._build_group(
                     vcenter_id, target_namespace, role_vms,
                     discriminator=f"hint:{hint}:{role}",
+                    environment=env,
                 ))
         remaining = leftovers
 
@@ -404,6 +764,7 @@ class PreClassifier:
             disc = self._network_datastore_discriminator(cluster)
             groups.append(self._build_group(
                 vcenter_id, target_namespace, cluster, discriminator=disc,
+                environment=env,
             ))
 
         # Pass 3: name-prefix bucketing for everything still ungrouped.
@@ -416,6 +777,7 @@ class PreClassifier:
             groups.append(self._build_group(
                 vcenter_id, target_namespace, vms,
                 discriminator=f"prefix:{prefix}",
+                environment=env,
             ))
 
         return groups
@@ -427,6 +789,7 @@ class PreClassifier:
         vms: list[VM],
         *,
         discriminator: str,
+        environment: str = "unknown",
     ) -> VMGroup:
         # Role: majority vote across the group's VMs. Ties resolve by
         # the role with highest risk so we don't accidentally
@@ -451,6 +814,10 @@ class PreClassifier:
 
         sequential = _has_sequential_names([vm.name for vm in vms])
         risk = detect_risk(role, state, len(vms), sequential)
+        ha_members = detect_ha_members(vms)
+        risk_assessment = assess_risk(
+            role, state, len(vms), ha_members, sequential,
+        )
 
         # Shared attribute report — what made the group cohere.
         nets = _shared_overlap([list(vm.vsphere_networks or []) for vm in vms])
@@ -478,6 +845,7 @@ class PreClassifier:
             role=role,
             state=state,
             discriminator=discriminator,
+            environment=environment,
         )
 
         # Sort vm_ids so the API output is deterministic across runs.
@@ -497,6 +865,8 @@ class PreClassifier:
             estimated_state=state,
             migration_risk=risk,
             notes=notes,
+            risk_assessment=risk_assessment,
+            ha_members=ha_members,
         )
 
     def _network_datastore_discriminator(self, cluster: list[VM]) -> str:
@@ -586,6 +956,7 @@ class PreClassifier:
             role=role,
             state=state,
             discriminator=f"merged:{a.key.discriminator}+{b.key.discriminator}"[:64],
+            environment=a.key.environment,
         )
         merged_ids = sorted(set(a.vm_ids) | set(b.vm_ids))
         shared: dict[str, list[str]] = {}

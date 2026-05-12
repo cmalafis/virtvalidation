@@ -110,7 +110,9 @@ def create_plan(payload: PlanCreate, db: Session = Depends(get_db)) -> dict:
         if missing:
             raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
         try:
-            result = planner.plan_with_groups(vms)
+            result = planner.plan_with_groups(
+                vms, ha_strategy=payload.ha_strategy,
+            )
         except PlannerError as e:
             raise HTTPException(status_code=502, detail=f"Planner failed: {e}") from e
         plan_vm_ids = unique_ids
@@ -168,12 +170,18 @@ def preview_groups(payload: PlanCreate, db: Session = Depends(get_db)) -> dict:
 
     classifier = PreClassifier()
     groups = classifier.classify(vms)
+    # The preclassifier no longer caps group count — the per-LLM-call
+    # ceiling is enforced at the wave-rationale stage instead. We
+    # still surface the ceiling so the UI can show "this plan will
+    # need N LLM calls" if it wants to.
+    from app.core.wave_skeleton import MAX_VMS_PER_WAVE
+    per_call_ceiling = MAX_VMS_PER_WAVE
     return {
         "vm_count": len(vms),
         "groups_formed": len(groups),
         "groups": [g.to_api_dict() for g in groups],
-        "over_ceiling": len(groups) > classifier.max_groups,
-        "ceiling": classifier.max_groups,
+        "over_ceiling": False,  # Always False post-refactor (uncapped).
+        "ceiling": per_call_ceiling,
     }
 
 

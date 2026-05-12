@@ -203,7 +203,8 @@ export default function PlanWizard() {
       toast(`Generating plan… (estimated 3–5 minutes)`, { ...TOAST_OPTS, icon: "🤖" });
 
       // Poll every 3s until completed or failed. Generous timeout —
-      // 5K-VM plans on Ollama llama3:8b can take 10+ minutes.
+      // 5K-VM plans on the slowest LLM backend (Ollama + Llama 3 8B
+      // CPU-only) can take 10+ minutes.
       const startedAt = Date.now();
       let final = null;
       while (final == null && Date.now() - startedAt < 30 * 60 * 1000) {

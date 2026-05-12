@@ -1551,7 +1551,7 @@ function GeneratePlanModal({ open, onClose, vms, onCreated }) {
     });
     try {
       await toast.promise(promise, {
-        loading: "Generating plan via Ollama…",
+        loading: "Generating migration plan…",
         success: (r) => `Plan #${r.data.id} generated (${(r.data.waves || []).length} waves)`,
         error: (e) => e.message || "Plan generation failed",
       }, TOAST_OPTS);
@@ -1583,7 +1583,7 @@ function GeneratePlanModal({ open, onClose, vms, onCreated }) {
         fontSize: 14, color: "#aaaacc", fontFamily: "'Barlow', sans-serif",
         lineHeight: 1.6, marginBottom: 18,
       }}>
-        Select the VMs to include. The local Ollama model will infer roles and dependencies, then group them into ordered migration waves.
+        Select the VMs to include. The configured LLM will analyze VM metadata and group them into dependency-ordered migration waves. Plan generation typically takes 1-3 minutes depending on VM count and the configured model.
       </div>
       {vms.length === 0 ? (
         <Notice tone="warn">No VMs available. Enroll at least one before generating a plan.</Notice>
@@ -2700,7 +2700,7 @@ export default function VirtValidate() {
                 <EmptyState
                   icon="◎"
                   title="No migration plans yet"
-                  description="The local Ollama model groups your enrolled VMs into dependency-ordered migration waves — stateful services first, edge tier last. Generate your first plan to see the recommended sequence."
+                  description="The configured LLM groups your enrolled VMs into dependency-ordered migration waves — stateful services first, edge tier last. Generate your first plan to see the recommended sequence."
                   ctaLabel={vms.length === 0 ? "Add a VM First" : "Generate First Plan"}
                   onCta={() => vms.length === 0 ? setAddVMOpen(true) : setPlanModalOpen(true)}
                 />
@@ -3141,7 +3141,11 @@ export default function VirtValidate() {
             {[
               { label: "Appliance", value: "v0.1.0-alpha", mono: true },
               { label: "Model",     value: plan?.model || "llama3:8b", mono: true },
-              { label: "Inference", value: "Local · Ollama", mono: false },
+              // Generic label here — the Settings page shows the
+              // configured backend + model in full (Ollama / KServe
+              // / vLLM). The dashboard tile is too narrow for the
+              // full backend description.
+              { label: "Inference", value: "Local LLM", mono: false },
               { label: "Cluster",   value: "ocp-virt-prod-01", mono: true },
               { label: "Total VMs", value: vmsLoading ? "…" : String(total), mono: true },
               { label: "Validated", value: vmsLoading ? "…" : `${healthy + degraded + failed} / ${total}`, mono: true },

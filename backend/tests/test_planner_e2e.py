@@ -127,7 +127,9 @@ def test_plan_with_groups_succeeds_on_dha_fleet():
     placed = sorted(vid for wave in result["waves"] for vid in wave["vm_ids"])
     expected = sorted(vm.id for vm in vms)
     assert placed == expected
-    # MockBackend returns on first try.
-    assert result["method"] == "llm"
-    assert result["attempts"] == 1
+    # Post-refactor: wave structure is always mechanical; the LLM
+    # only produces rationale text per-wave. MockBackend answers
+    # the rationale prompt successfully, so the method label is
+    # ``mechanical+llm_rationale``.
+    assert result["method"] == "mechanical+llm_rationale"
     assert result["groups_formed"] >= 5

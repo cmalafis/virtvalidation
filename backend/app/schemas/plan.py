@@ -227,6 +227,15 @@ class PlanCreate(BaseModel):
     # of model behavior, or for very small plans where one-VM-per-group
     # is fine. Federal customers should leave this enabled.
     preclassification_enabled: bool = True
+    # HA distribution strategy. ``spread`` (default) splits each
+    # multi-member HA group into per-member micro-groups so the wave
+    # assigner places primaries / replicas in distinct waves. The
+    # original cluster keeps a quorum during the migration window.
+    # ``together`` keeps the group cohesive — faster total cutover
+    # but every node moves at once, incurring downtime. ``auto`` uses
+    # spread for ≥3-member groups and together for smaller pairs. See
+    # docs/HA_MIGRATION_STRATEGY.md.
+    ha_strategy: str = Field(default="spread", pattern=r"^(spread|together|auto)$")
 
 
 class PreviewGroupsResponse(BaseModel):

@@ -2,9 +2,14 @@
 
 ## LLM Input Discipline (Architectural Rule)
 
+**Maximum per-LLM-call input: 10 items.** This is PER-CALL, not
+per-feature. Features that need to reason over more must DECOMPOSE
+into multiple LLM calls — each at ≤10 items — and orchestrate them
+mechanically.
+
 When designing features that involve LLM calls, the LLM must NEVER
 receive raw collections of items larger than `LLM_MAX_ITEMS_PER_CALL`
-(default: 20; see `app.core.config.settings.llm_max_items_per_call`).
+(default: 10; see `app.core.config.settings.llm_max_items_per_call`).
 Always pre-process with deterministic Python rules to reduce the
 LLM's input to a small number of pre-formed groups or decisions.
 
@@ -69,14 +74,39 @@ can debug LLM quality regressions from the audit log.
 Reference: `app.core.planner.MigrationPlanner._assign_waves_with_retry` +
 `_mechanical_assign_waves`.
 
-### Reference implementation
+### Decompose for unbounded collections
 
-`backend/app/core/preclassifier.py` — the planner's pre-classifier.
-Takes N VMs, returns M ≤ 20 mechanical groups by vCenter / target
-namespace / network / datastore / application_hint / role. The LLM
-ranks the groups for wave order; the expansion back to vm_ids is
-mechanical, so the integrity check ("every input vm_id placed
-exactly once") passes by construction.
+For features that process unbounded collections (plans, validations,
+baselines):
+
+  - Decompose into per-item or per-group LLM calls.
+  - Parallelize where possible.
+  - **Never assemble a "global view" for a single LLM call.**
+  - Mechanical orchestration in Python; LLM for local judgment.
+
+Anti-patterns:
+
+  - **Bad**: "LLM, here's all 1000 baselines. Compare them."
+    **Good**: "LLM, here's one baseline diff (15 lines). Explain it."
+  - **Bad**: "LLM, here's the whole plan. Critique it."
+    **Good**: "LLM, here's wave 3 (8 groups). Critique just this wave."
+  - **Bad**: "LLM, here are 50 categorized groups. Order them into waves."
+    **Good**: Python orders the groups deterministically; LLM writes
+    rationale for one wave at a time.
+
+### Reference implementations
+
+  - `backend/app/core/preclassifier.py` — N VMs → unbounded
+    mechanical groups by vCenter / namespace / network / datastore /
+    application_hint / role. Pure Python, deterministic.
+  - `backend/app/core/wave_skeleton.py` — groups → waves with hard
+    limits (≤10 VMs per wave, ≤2 HA peers per family per wave).
+    Pure Python, deterministic. The LLM does not influence wave
+    structure.
+  - `backend/app/core/planner.py::_fill_wave_rationale` — per-wave
+    rationale, one LLM call per wave. Each call sees ≤10 groups
+    (because wave count is capped), so the per-call ceiling holds
+    regardless of overall plan size.
 
 ### Good vs bad shaping examples
 
@@ -230,6 +260,32 @@ The full live-debug log lives in `docs/DEPLOYMENT_TROUBLESHOOTING.md`.
 - **Bump `Chart.yaml.version` whenever a template changes.** Helm
   upgrade can miss order-only changes on existing deployments
   without a version bump; the version delta forces a rollout.
+
+## Plans partition by (vcenter, target_namespace, environment)
+
+The preclassifier's primary partition key is the triplet
+(source_vcenter_id, target_namespace, environment). Production
+VMs never share a plan with development or DR VMs — even when
+both land in the same target namespace — because operators
+sequence those lifecycle stages separately in practice.
+
+`VM.environment` accepts free-text values for back-compat; the
+preclassifier normalizes through
+`app.core.environment.normalize()` so `"Prod"` / `"production"` /
+`"PRODUCTION"` / `"prd"` all collapse to the same enum value
+before partitioning.
+
+When adding new partition dimensions (e.g. target_cluster_id when
+the OCP cluster registration refactor lands), extend the
+`primary_key` tuple in `app.core.preclassifier.PreClassifier.classify`
+**AND** add the field to `GroupKey` so audit log group ids stay
+unique across partitions. The `_build_group` callers also need
+to be threaded with the new field.
+
+Auto-detection of `environment` from VM name / folder / cluster
+/ custom_attributes is in `app.core.environment.detect_environment`
+— wire it into any new VM creation path. See
+`docs/ENVIRONMENT_LABELS.md`.
 
 ## Paginated list endpoint pattern
 

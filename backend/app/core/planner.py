@@ -161,6 +161,91 @@ No markdown fences, no commentary."""
 _DEFAULT_MAX_LLM_ATTEMPTS = 3
 
 
+_WAVE_RATIONALE_SYSTEM_PROMPT = """You are writing the rationale paragraph
+for ONE wave in a VM migration plan. The wave structure has already been
+decided by deterministic Python rules — you do NOT reassign groups,
+renumber waves, or reorder anything.
+
+Your job is to write a brief, operator-readable rationale (3-5 sentences)
+explaining why these groups belong together in this wave at this position.
+
+Focus on:
+  - Why these groups make sense together (shared cohesion signals — same
+    role tier, same vCenter, same application).
+  - Why this wave position relative to the others (dependencies satisfied,
+    risk progression, HA spread).
+  - Key risks operators should watch during cutover.
+  - Any HA considerations (primary first, replica spread).
+
+Plain English text only. No JSON, no markdown, no bullet lists, no
+front matter, no commentary about the task itself. Just the paragraph."""
+
+
+def _render_wave_rationale_prompt(wave) -> str:
+    """Format one wave's groups for the rationale LLM call.
+
+    Bounded by ``MAX_VMS_PER_WAVE`` — the wave skeleton never lets a
+    wave grow beyond that, so this prompt is always small.
+    """
+    lines = [
+        f"Wave {wave.wave_number} contains the following "
+        f"{len(wave.groups)} group(s):",
+        "",
+    ]
+    for i, g in enumerate(wave.groups, start=1):
+        lines.extend([
+            f"GROUP {i}: id={g.id!r}",
+            f"  - {len(g.vm_ids)} VMs",
+            f"  - role={g.estimated_role} state={g.estimated_state} "
+            f"risk={g.migration_risk}",
+            f"  - notes: {g.notes}",
+            "",
+        ])
+    lines.append(
+        "Write the rationale paragraph for THIS wave. Do not reassign "
+        "groups or renumber waves."
+    )
+    return "\n".join(lines)
+
+
+def _parse_rationale_text(raw: str) -> str:
+    """LLM returns plain prose (in either JSON envelope or raw)."""
+    raw = raw.strip()
+    if raw.startswith("{"):
+        # MockBackend always emits JSON; pull "summary" or "rationale"
+        # out of whatever shape it returned so we don't crash on
+        # generic fallback responses.
+        try:
+            blob = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+        if isinstance(blob, dict):
+            for key in ("rationale", "summary", "text"):
+                value = blob.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return ""
+    return raw
+
+
+def _template_rationale(wave) -> str:
+    """Mechanical wave-level rationale (no LLM)."""
+    roles = sorted({g.estimated_role for g in wave.groups})
+    states = sorted({g.estimated_state for g in wave.groups})
+    risk = wave.estimated_risk
+    vm_count = wave.vm_count
+    group_count = len(wave.groups)
+    role_label = "/".join(roles) if roles else "mixed"
+    state_label = ", ".join(states) if states else "mixed"
+    return (
+        f"Wave {wave.wave_number}: {vm_count} VMs across {group_count} "
+        f"groups ({role_label} tier, {state_label}). Aggregate risk "
+        f"{risk}. Cutover order follows dependency + role priority; HA "
+        f"families are spread across waves so the original cluster keeps "
+        "quorum during migration."
+    )
+
+
 class PlannerError(RuntimeError):
     """Raised when the planner LLM call fails or returns unusable output."""
 
@@ -179,27 +264,43 @@ class MigrationPlanner:
     # New two-stage flow — operates on groups, not raw VMs.
     # ------------------------------------------------------------------
     def plan_with_groups(
-        self, vms: list[VM], *, max_llm_attempts: int = _DEFAULT_MAX_LLM_ATTEMPTS,
+        self,
+        vms: list[VM],
+        *,
+        max_llm_attempts: int = _DEFAULT_MAX_LLM_ATTEMPTS,
+        ha_strategy: str = "spread",
+        generate_rationale: bool = True,
     ) -> dict:
-        """Generate a wave plan using mechanical pre-classification.
+        """Generate a wave plan with mechanical wave assignment.
 
-        This is the path POST /api/plans takes by default. Three stages:
+        New architecture (post-K/L/M refactor):
 
-          1. Preclassifier (Python) — N VMs → M ≤ 20 groups.
-          2. LLM wave assignment, wrapped in a retry loop. Each retry
-             feeds the previous attempt's validation error back to the
-             model so a smaller model can self-correct (Llama 3.2 3B
-             benefits from this substantially).
-          3. Mechanical fallback when all LLM attempts produce
-             unusable output. Topological-sort over ``depends_on`` +
-             role-priority ordering. Plans are LESS NUANCED than the
-             LLM's but always valid; the response ``method`` field
-             flags which path was taken so operators can see when the
-             LLM had to step aside.
+          1. Preclassifier (Python, unbounded output) — N VMs → M
+             groups by vCenter / namespace / role / app_hint /
+             network / datastore. No cap.
+          2. HA spread / together / auto expansion (Python) — splits
+             multi-member HA groups into per-member micro-groups
+             when ha_strategy="spread" so the wave packer
+             distributes them naturally.
+          3. Mechanical wave skeleton (Python, deterministic) — the
+             ``MechanicalWaveAssigner`` packs groups into waves
+             respecting:
+               * MAX_VMS_PER_WAVE (MTV concurrency limit, default 10)
+               * MAX_HA_PEERS_PER_WAVE (quorum preservation, default 2)
+               * Topological dependency order
+               * Role priority (infrastructure → data → app → web → edge)
+          4. Per-wave LLM rationale (small input, one wave at a
+             time) — each LLM call sees at most ``MAX_VMS_PER_WAVE``
+             groups, well under the per-call ceiling. Template
+             rationale is used if the LLM fails.
+          5. Integrity check (Python, belt-and-braces).
 
-        Stage 3's expansion (group_ids → vm_ids) is mechanical in BOTH
-        the LLM and fallback paths, so integrity checks pass by
-        construction regardless of which path produced the assignment.
+        The LLM no longer decides wave structure. Every wave
+        placement is deterministic Python; the LLM only generates
+        human-readable text for already-placed waves. That makes
+        the planner reliable at any scale — failure modes are
+        bounded to "rationale text missing" rather than "wave
+        structure invalid".
         """
         if not vms:
             raise PlannerError("Cannot plan with zero VMs")
@@ -208,10 +309,27 @@ class MigrationPlanner:
         if not groups:
             raise PlannerError("Pre-classifier produced no groups")
 
+        # HA strategy expansion. ``spread`` (default) splits HA-tagged
+        # groups into per-member micro-groups so the wave packer
+        # naturally distributes primary / replica / member across
+        # consecutive waves — at any point during migration at least
+        # one node still serves the original cluster. ``together``
+        # keeps the original group intact. ``auto`` splits only
+        # ≥3-member clusters.
+        if ha_strategy in {"spread", "auto"}:
+            expanded: list = []
+            for g in groups:
+                if ha_strategy == "auto":
+                    ha_count = sum(
+                        1 for m in g.ha_members if m.ha_role != "standalone"
+                    )
+                    if ha_count < 3:
+                        expanded.append(g)
+                        continue
+                expanded.extend(self.preclassifier.split_ha_group(g))
+            groups = expanded
+
         provided_vm_ids = {vm.id for vm in vms}
-        # Sanity check — the preclassifier must place every input VM
-        # somewhere. If this trips, the bug is in the preclassifier,
-        # not the LLM, and we want to fail loudly before the LLM call.
         classified_vm_ids: set[int] = set()
         for g in groups:
             classified_vm_ids.update(g.vm_ids)
@@ -223,37 +341,44 @@ class MigrationPlanner:
                 f"(missing={sorted(missing)}, extra={sorted(extra)})"
             )
 
-        wave_assignment, method, attempts = self._assign_waves_with_retry(
-            groups, max_attempts=max_llm_attempts,
-        )
+        # Stage 3: mechanical wave assignment. Importing locally to
+        # avoid a circular import (preclassifier ← wave_skeleton ←
+        # planner ← preclassifier).
+        from app.core.wave_skeleton import MechanicalWaveAssigner
+        assigner = MechanicalWaveAssigner()
+        waves_struct = assigner.assign_waves(groups)
+        if not waves_struct:
+            raise PlannerError("Mechanical wave assigner produced no waves")
 
-        # Mechanical expansion: group_ids → vm_ids. No LLM in this loop,
-        # so duplicate-id / missing-id bugs are impossible by
-        # construction. The existing integrity check below is
-        # belt-and-braces.
+        # Stage 4: per-wave rationale. Each LLM call sees at most
+        # one wave's groups (≤ MAX_VMS_PER_WAVE), so we stay under
+        # the per-call ceiling regardless of overall plan size.
+        rationale_method = "template"
+        rationale_calls = 0
+        if generate_rationale:
+            rationale_method, rationale_calls = self._fill_wave_rationale(
+                waves_struct, max_attempts=max_llm_attempts,
+            )
+
+        # Stage 5: expand to API shape + integrity check.
         groups_by_id = {g.id: g for g in groups}
         expanded_waves: list[dict] = []
-        for wave in wave_assignment["waves"]:
-            vm_ids: list[int] = []
-            for gid in wave["group_ids"]:
-                vm_ids.extend(groups_by_id[gid].vm_ids)
+        for wave in waves_struct:
+            wave_vm_ids: list[int] = []
+            for g in wave.groups:
+                wave_vm_ids.extend(groups_by_id[g.id].vm_ids)
             expanded_waves.append({
-                "wave_number": wave["wave_number"],
-                "vm_ids": sorted(set(vm_ids)),
-                "group_ids": list(wave["group_ids"]),
-                "rationale": wave.get("rationale", ""),
-                "estimated_risk": wave["estimated_risk"],
+                "wave_number": wave.wave_number,
+                "vm_ids": sorted(set(wave_vm_ids)),
+                "group_ids": [g.id for g in wave.groups],
+                "rationale": "\n\n".join(wave.notes) if wave.notes else "",
+                "estimated_risk": wave.estimated_risk,
             })
 
-        # Belt-and-braces — re-run the original integrity check on the
-        # expanded plan. Should pass trivially since expansion is
-        # deterministic; if it ever doesn't, we've regressed.
         self._verify_expanded_plan(expanded_waves, provided_vm_ids)
 
-        # Stamp each group with the wave_number it landed in so the
-        # API can render groups-inside-waves without recomputing.
         group_to_wave = {
-            gid: w["wave_number"] for w in expanded_waves for gid in w["group_ids"]
+            g.id: w.wave_number for w in waves_struct for g in w.groups
         }
         groups_api = []
         for g in groups:
@@ -261,14 +386,70 @@ class MigrationPlanner:
             row["wave_number"] = group_to_wave.get(g.id)
             groups_api.append(row)
 
+        # Method telemetry: "mechanical" is the new default;
+        # "mechanical+llm_rationale" when the LLM produced text on
+        # at least one wave; "mechanical+template_rationale" when
+        # every rationale used the template fallback.
+        method = (
+            "mechanical+llm_rationale" if rationale_method == "llm"
+            else "mechanical+template_rationale"
+        )
+
         return {
-            "summary": wave_assignment.get("summary") or "",
+            "summary": (
+                f"Migration plan: {len(vms)} VMs in {len(groups)} groups "
+                f"across {len(waves_struct)} waves. Wave structure produced "
+                f"deterministically by Python; rationale via "
+                f"{'LLM' if rationale_method == 'llm' else 'template'}."
+            ),
             "waves": expanded_waves,
             "groups": groups_api,
             "groups_formed": len(groups),
             "method": method,
-            "attempts": attempts,
+            "attempts": rationale_calls,
         }
+
+    def _fill_wave_rationale(
+        self, waves_struct: list, *, max_attempts: int,
+    ) -> tuple[str, int]:
+        """Generate per-wave rationale text via the LLM, with template
+        fallback. Returns ``(method, total_llm_calls)``.
+
+        Each wave is a separate, small LLM call — well under the
+        per-call ceiling regardless of overall plan size. Sequential
+        for now (parallelization is straightforward via asyncio but
+        deferred; the LLM time-per-wave is bounded so total time
+        scales linearly with wave count).
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        any_llm = False
+        calls = 0
+        for wave in waves_struct:
+            template = _template_rationale(wave)
+            try:
+                user_prompt = _render_wave_rationale_prompt(wave)
+                # One LLM call per wave. ≤ MAX_VMS_PER_WAVE groups.
+                raw = self._chat(_WAVE_RATIONALE_SYSTEM_PROMPT, user_prompt)
+                calls += 1
+                text = _parse_rationale_text(raw)
+                if text:
+                    wave.notes.append(text)
+                    any_llm = True
+                else:
+                    wave.notes.append(template)
+            except (PlannerError, LLMBackendError) as e:
+                logger.warning(
+                    "Wave %d rationale LLM call failed (%s); using template.",
+                    wave.wave_number, e,
+                )
+                wave.notes.append(template)
+            if calls >= max_attempts * len(waves_struct):
+                # Defensive — never call the LLM more than once per
+                # wave even if a future refactor introduces retries.
+                break
+        method = "llm" if any_llm else "template"
+        return method, calls
 
     # ------------------------------------------------------------------
     # Retry + fallback orchestration

@@ -16,7 +16,12 @@ principle, but the integrity invariants live at different layers.
 
 ---
 
-## Two-stage path — mechanical pre-classification + group-based LLM
+## Synchronous path — mechanical waves + per-wave LLM rationale
+
+The post-M refactor moved every structural decision into Python.
+The LLM no longer sees the whole plan, never assigns groups to
+waves, and never picks wave counts. Its only job on this path is
+to write the rationale paragraph for one already-assembled wave.
 
 ### Stages
 
@@ -27,20 +32,79 @@ POST /api/plans  →  MigrationPlanner.plan_with_groups()
   Stage 1 — PreClassifier (Python, deterministic)
     Partition by vCenter + target namespace, sub-group by
     application_hint + role, then network/datastore overlap,
-    then name-prefix. Cap M ≤ 20 by consolidating smallest.
+    then name-prefix. Unbounded output — typical 57 VMs → 8-15
+    groups, 1000 VMs → 70-150 groups.
                        │
                        ▼
-  Stage 2 — LLM wave assignment (small input)
-    Prompt: "Here are 8 pre-formed groups. Assign each to a
-    migration wave (1-N) by dependency + risk."
-    Output: group_ids per wave — never raw vm_ids.
+  Stage 2 — HA strategy expansion (Python)
+    ha_strategy="spread" (default) splits each multi-member HA
+    group into per-member micro-groups. ha_strategy="together"
+    keeps groups cohesive. "auto" hybrid.
                        │
                        ▼
-  Stage 3 — Mechanical expansion
-    Expand group_ids → vm_ids via the Stage 1 group table.
-    Deterministic, bug-free. Integrity checks pass by
-    construction.
+  Stage 3 — MechanicalWaveAssigner (Python, deterministic)
+    Pack groups into waves respecting:
+      * MAX_VMS_PER_WAVE = 10  (MTV per-ESXi concurrency limit)
+      * MAX_HA_PEERS_PER_WAVE = 2  (quorum preservation)
+        — primaries get solo waves; replicas pack ≤2 per wave
+      * Topological dependency order
+      * Role priority: infrastructure → data → app → web → edge
+    Oversized groups split into batch-1, batch-2, … sub-groups.
+                       │
+                       ▼
+  Stage 4 — Per-wave LLM rationale (one call per wave)
+    Each LLM call sees ≤ MAX_VMS_PER_WAVE groups (one wave's
+    contents). Per-call ceiling holds regardless of plan size.
+    Template rationale used on LLM failure — wave structure is
+    already locked, only the text changes.
+                       │
+                       ▼
+  Stage 5 — Integrity check (Python)
+    Every input vm_id placed in exactly one wave, no duplicates.
 ```
+
+### Why the LLM doesn't decide wave structure anymore
+
+Pre-M, the LLM saw N groups and assigned them all to waves in one
+call. That broke at 57 groups reliably on Granite 3.1 8B, and
+silently on Llama 3.2 3B past 20. The retry + mechanical-fallback
+layer rescued the failure mode but didn't fix the architecture —
+when the LLM failed, the deterministic assigner kicked in anyway.
+The deterministic assigner was the load-bearing path; the LLM
+was decoration.
+
+Post-M makes the deterministic assigner the ONLY path for wave
+structure. The LLM still adds value via per-wave rationale text,
+but per-wave inputs are bounded by `MAX_VMS_PER_WAVE`, so the
+per-call ceiling holds regardless of overall plan size.
+
+This is the architectural insight from `CLAUDE.md` "LLM Input
+Discipline" applied: the 10-item ceiling is enforced per call,
+not per plan. Plans can have hundreds of groups; the LLM never
+sees more than a wave's worth at once.
+
+### Hard limits (always enforced)
+
+| Limit | Value | Why |
+|-------|------:|-----|
+| `MAX_VMS_PER_WAVE` | 10 | MTV throttles concurrent migrations per source ESXi. Wider waves serialize anyway. |
+| `MAX_HA_PEERS_PER_WAVE` | 2 | Three peers from the same HA family in one wave risks quorum loss mid-cutover. |
+| Primary-solo-wave | 1 | A primary in an HA family always gets its own wave — replicas can never share a wave with their primary. |
+
+Override is a code change in `app.core.wave_skeleton`, intentionally
+slow — federal customers' tabletop reviews accept these numbers as
+the practical migration concurrency.
+
+### Method telemetry
+
+The plan response's `method` field reflects which path produced the
+rationale (wave structure is always mechanical):
+
+  - `"mechanical+llm_rationale"` — at least one wave got LLM-
+    generated rationale text.
+  - `"mechanical+template_rationale"` — every wave used the template
+    fallback. LLM was unavailable or `generate_rationale=False` was
+    passed.
 
 ### Why this architecture
 
