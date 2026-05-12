@@ -1,10 +1,25 @@
 """
 Migration wave planner.
 
-Sends VM baseline profiles to the local Ollama model and asks it to infer
-each VM's role and dependencies, then group them into dependency-ordered
-migration waves. All LLM calls go to the local Ollama instance — never to
-external APIs.
+Two-stage architecture (the LLM never sees raw VM collections):
+
+  1. Mechanical pre-classification (Python, deterministic, fast).
+     ``app.core.preclassifier.PreClassifier`` groups the input VMs by
+     vCenter + target namespace + application_hint + role into M ≪ N
+     candidate groups. M is bounded by ``llm_max_items_per_call``.
+
+  2. LLM wave assignment (small input, ambiguous decision).
+     The LLM receives ``M`` group summaries and decides their wave
+     ordering. It NEVER sees raw vm_ids — the expansion from group →
+     VMs is mechanical post-call, so the integrity checks ("every
+     input vm_id placed in exactly one wave") pass by construction.
+
+See ``docs/PLANNER_ARCHITECTURE.md`` for the full rationale and
+``CLAUDE.md`` "LLM Input Discipline" for the architectural rule that
+gates every future LLM-driven feature.
+
+All LLM calls go to the configured backend (Ollama default; MockBackend
+for tests) — never to external APIs.
 """
 
 from __future__ import annotations
@@ -14,6 +29,8 @@ from typing import Any
 
 from app.core.llm.base import LLMBackend, LLMBackendError
 from app.core.llm.factory import get_llm_backend
+from app.core.preclassifier import PreClassifier, VMGroup
+from app.models.vm import VM
 
 _ALLOWED_RISK = {"low", "medium", "high"}
 
@@ -78,6 +95,72 @@ Respond with a SINGLE JSON object and nothing else, matching this schema:
 No markdown fences, no commentary."""
 
 
+GROUP_PLANNER_SYSTEM_PROMPT = """You are VirtValidate, an expert infrastructure architect
+planning a VM migration from VMware to OpenShift Virtualization via the Migration
+Toolkit for Virtualization (MTV / Forklift).
+
+HARD CONSTRAINTS — your output MUST satisfy ALL of these, or it will be rejected:
+
+  1. EVERY group_id from the input MUST appear in EXACTLY ONE wave.
+  2. NO group_id may appear in more than one wave.
+  3. NO group_id may be omitted from your output.
+  4. Wave numbers must be sequential integers starting from 1.
+  5. Before responding, mentally enumerate your group_ids across all waves
+     and verify the count equals the input count.
+
+These constraints are non-negotiable. If you violate any, your output is
+invalid and will be retried — re-read the input list and try again.
+
+You will receive a small list of pre-formed VM GROUPS. Each group has already
+been clustered mechanically by source vCenter, target namespace, network /
+datastore overlap, application_hint, and role. Each group is described by:
+  - id (string) — this is what you assign to waves
+  - vm_count (integer; not exposed in your output)
+  - role (web | app | data | edge | infrastructure | other)
+  - state (stateful | stateless | unknown)
+  - risk (low | medium | high)
+  - depends_on (list of group ids this group likely depends on)
+  - notes (one-line summary of the cohesion signal)
+
+Wave ordering principles (apply when assigning):
+  1. Dependencies first. Anything a group depends on MUST land in an earlier
+     wave (lower wave_number). Data + infrastructure groups → first waves.
+     App tiers → middle waves. Web + edge groups → last waves.
+  2. Risk awareness. Group "high"-risk batches into smaller waves so
+     rollback surface area stays bounded. "low"-risk batches can go in
+     larger waves.
+  3. State coupling. Stateful + infrastructure groups must complete
+     before dependent stateless groups start their cutover.
+  4. Keep wave count reasonable — 3 to 7 waves is the sweet spot.
+
+The "rationale" for each wave MUST explain which principle pulled these
+groups together.
+
+Do not invent group_ids that weren't in the input. Do NOT include vm_ids
+in your output — the orchestrator expands groups → vm_ids mechanically
+after your reply.
+
+Respond with a SINGLE JSON object and nothing else, matching this schema:
+{
+  "summary": "one-paragraph plain-English overview of the plan",
+  "waves": [
+    {
+      "wave_number": 1,
+      "group_ids": ["<group-id-1>", "<group-id-2>", ...],
+      "rationale": "why these groups go together (cite the principle)",
+      "estimated_risk": "low" | "medium" | "high"
+    }
+  ]
+}
+No markdown fences, no commentary."""
+
+
+# Default number of LLM retry attempts before falling back to the
+# deterministic assigner. Each retry includes the previous attempt's
+# validation error in the prompt so a smaller model can self-correct.
+_DEFAULT_MAX_LLM_ATTEMPTS = 3
+
+
 class PlannerError(RuntimeError):
     """Raised when the planner LLM call fails or returns unusable output."""
 
@@ -86,9 +169,452 @@ class MigrationPlanner:
     def __init__(
         self,
         backend: LLMBackend | None = None,
+        *,
+        preclassifier: PreClassifier | None = None,
     ):
         self.backend = backend or get_llm_backend()
+        self.preclassifier = preclassifier or PreClassifier()
 
+    # ------------------------------------------------------------------
+    # New two-stage flow — operates on groups, not raw VMs.
+    # ------------------------------------------------------------------
+    def plan_with_groups(
+        self, vms: list[VM], *, max_llm_attempts: int = _DEFAULT_MAX_LLM_ATTEMPTS,
+    ) -> dict:
+        """Generate a wave plan using mechanical pre-classification.
+
+        This is the path POST /api/plans takes by default. Three stages:
+
+          1. Preclassifier (Python) — N VMs → M ≤ 20 groups.
+          2. LLM wave assignment, wrapped in a retry loop. Each retry
+             feeds the previous attempt's validation error back to the
+             model so a smaller model can self-correct (Llama 3.2 3B
+             benefits from this substantially).
+          3. Mechanical fallback when all LLM attempts produce
+             unusable output. Topological-sort over ``depends_on`` +
+             role-priority ordering. Plans are LESS NUANCED than the
+             LLM's but always valid; the response ``method`` field
+             flags which path was taken so operators can see when the
+             LLM had to step aside.
+
+        Stage 3's expansion (group_ids → vm_ids) is mechanical in BOTH
+        the LLM and fallback paths, so integrity checks pass by
+        construction regardless of which path produced the assignment.
+        """
+        if not vms:
+            raise PlannerError("Cannot plan with zero VMs")
+
+        groups = self.preclassifier.classify(vms)
+        if not groups:
+            raise PlannerError("Pre-classifier produced no groups")
+
+        provided_vm_ids = {vm.id for vm in vms}
+        # Sanity check — the preclassifier must place every input VM
+        # somewhere. If this trips, the bug is in the preclassifier,
+        # not the LLM, and we want to fail loudly before the LLM call.
+        classified_vm_ids: set[int] = set()
+        for g in groups:
+            classified_vm_ids.update(g.vm_ids)
+        if classified_vm_ids != provided_vm_ids:
+            missing = provided_vm_ids - classified_vm_ids
+            extra = classified_vm_ids - provided_vm_ids
+            raise PlannerError(
+                f"Pre-classifier dropped or invented vm_ids "
+                f"(missing={sorted(missing)}, extra={sorted(extra)})"
+            )
+
+        wave_assignment, method, attempts = self._assign_waves_with_retry(
+            groups, max_attempts=max_llm_attempts,
+        )
+
+        # Mechanical expansion: group_ids → vm_ids. No LLM in this loop,
+        # so duplicate-id / missing-id bugs are impossible by
+        # construction. The existing integrity check below is
+        # belt-and-braces.
+        groups_by_id = {g.id: g for g in groups}
+        expanded_waves: list[dict] = []
+        for wave in wave_assignment["waves"]:
+            vm_ids: list[int] = []
+            for gid in wave["group_ids"]:
+                vm_ids.extend(groups_by_id[gid].vm_ids)
+            expanded_waves.append({
+                "wave_number": wave["wave_number"],
+                "vm_ids": sorted(set(vm_ids)),
+                "group_ids": list(wave["group_ids"]),
+                "rationale": wave.get("rationale", ""),
+                "estimated_risk": wave["estimated_risk"],
+            })
+
+        # Belt-and-braces — re-run the original integrity check on the
+        # expanded plan. Should pass trivially since expansion is
+        # deterministic; if it ever doesn't, we've regressed.
+        self._verify_expanded_plan(expanded_waves, provided_vm_ids)
+
+        # Stamp each group with the wave_number it landed in so the
+        # API can render groups-inside-waves without recomputing.
+        group_to_wave = {
+            gid: w["wave_number"] for w in expanded_waves for gid in w["group_ids"]
+        }
+        groups_api = []
+        for g in groups:
+            row = g.to_api_dict()
+            row["wave_number"] = group_to_wave.get(g.id)
+            groups_api.append(row)
+
+        return {
+            "summary": wave_assignment.get("summary") or "",
+            "waves": expanded_waves,
+            "groups": groups_api,
+            "groups_formed": len(groups),
+            "method": method,
+            "attempts": attempts,
+        }
+
+    # ------------------------------------------------------------------
+    # Retry + fallback orchestration
+    # ------------------------------------------------------------------
+    def _assign_waves_with_retry(
+        self,
+        groups: list[VMGroup],
+        *,
+        max_attempts: int,
+    ) -> tuple[dict, str, int]:
+        """Try the LLM up to ``max_attempts`` times before falling back.
+
+        Returns ``(wave_assignment, method, attempts_taken)``. ``method``
+        is one of ``"llm"``, ``"llm_retry_<N>"``, or
+        ``"mechanical_fallback"`` so the API can surface to operators
+        which path produced their plan.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        provided_ids = {g.id: g for g in groups}
+        last_error: str | None = None
+        for attempt in range(1, max_attempts + 1):
+            user_prompt = self._render_groups_prompt(
+                groups, previous_error=last_error,
+            )
+            try:
+                raw = self._chat(GROUP_PLANNER_SYSTEM_PROMPT, user_prompt)
+                wave_assignment = self._parse_group_plan(raw, set(provided_ids))
+                method = "llm" if attempt == 1 else f"llm_retry_{attempt - 1}"
+                return wave_assignment, method, attempt
+            except PlannerError as e:
+                last_error = str(e)
+                logger.warning(
+                    "Wave assignment attempt %d/%d failed: %s. "
+                    "Retrying with corrective context.",
+                    attempt, max_attempts, last_error,
+                )
+                continue
+
+        # All attempts failed — fall through to deterministic assignment.
+        # This is an architectural choice, not a failure mode: federal
+        # customers should always get a plan, just one without LLM
+        # rationale nuance.
+        logger.error(
+            "LLM wave assignment failed after %d attempts. Last error: %s. "
+            "Falling back to mechanical assignment.",
+            max_attempts, last_error,
+        )
+        wave_assignment = self._mechanical_assign_waves(groups, last_error=last_error)
+        return wave_assignment, "mechanical_fallback", max_attempts
+
+    @staticmethod
+    def _render_groups_prompt(
+        groups: list[VMGroup], *, previous_error: str | None = None,
+    ) -> str:
+        # The numbered + named format below makes it easier for smaller
+        # models to track which groups they've placed — the LLM-prompt-
+        # engineering literature consistently shows numbered lists
+        # outperform raw JSON for "place each item exactly once"
+        # tasks.
+        lines: list[str] = []
+        if previous_error:
+            lines.extend([
+                "PREVIOUS ATTEMPT FAILED with this error:",
+                f"  {previous_error}",
+                "",
+                "Your previous output violated the hard constraints listed in",
+                "the system prompt. Re-read the input list below, place every",
+                "group_id in EXACTLY ONE wave, and verify before responding.",
+                "",
+            ])
+        lines.append(
+            f"Assign the following {len(groups)} groups to migration waves:"
+        )
+        lines.append("")
+        for i, g in enumerate(groups, start=1):
+            lines.extend([
+                f"GROUP {i}: id={g.id!r}",
+                f"  - {len(g.vm_ids)} VMs",
+                f"  - role={g.estimated_role} state={g.estimated_state} risk={g.migration_risk}",
+                f"  - depends_on: {list(g.dependency_hints) or '(none)'}",
+                f"  - notes: {g.notes}",
+                "",
+            ])
+        lines.append(
+            "REMEMBER: each group_id appears in EXACTLY ONE wave. "
+            f"Verify your output contains exactly {len(groups)} group_ids "
+            "across all waves before responding."
+        )
+        lines.append("")
+        # Also include the raw JSON body so callers that pin against
+        # group_ids in their tests (MockBackend, validation paths) keep
+        # working without re-parsing the human-readable lines.
+        body = {"groups": [g.to_llm_dict() for g in groups]}
+        lines.append("Machine-readable group list:")
+        lines.append(json.dumps(body, indent=2, sort_keys=True))
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Mechanical fallback assignment
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _mechanical_assign_waves(
+        groups: list[VMGroup], *, last_error: str | None = None,
+    ) -> dict:
+        """Topological-sort + role priority → deterministic waves.
+
+        Used when every LLM attempt produces invalid output. The
+        algorithm:
+
+          1. Topo-sort groups by ``dependency_hints`` so each group
+             lands AFTER every group it depends on.
+          2. Assign each group to the earliest wave that comes after
+             its latest dependency's wave (or wave 1 if no deps).
+          3. Within a wave, order by (role-priority, risk).
+          4. Generate template-based rationale from group attributes.
+
+        Returns the same ``{summary, waves}`` shape the LLM path
+        produces so the caller doesn't need to special-case anything.
+        """
+        ordered = MigrationPlanner._topological_sort(groups)
+        assigned: dict[str, int] = {}
+        wave_groups: dict[int, list[VMGroup]] = {}
+
+        for group in ordered:
+            min_wave = 1
+            for dep_id in group.dependency_hints:
+                if dep_id in assigned:
+                    min_wave = max(min_wave, assigned[dep_id] + 1)
+            assigned[group.id] = min_wave
+            wave_groups.setdefault(min_wave, []).append(group)
+
+        _role_priority = {
+            "infrastructure": 0,
+            "data": 1,
+            "app": 2,
+            "web": 3,
+            "edge": 4,
+            "other": 5,
+        }
+        _risk_priority = {"low": 0, "medium": 1, "high": 2}
+
+        waves: list[dict] = []
+        for wave_number in sorted(wave_groups):
+            members = sorted(
+                wave_groups[wave_number],
+                key=lambda g: (
+                    _role_priority.get(g.estimated_role, 5),
+                    _risk_priority.get(g.migration_risk, 1),
+                    g.id,
+                ),
+            )
+            waves.append({
+                "wave_number": wave_number,
+                "group_ids": [g.id for g in members],
+                "rationale": MigrationPlanner._describe_wave(
+                    wave_number, members,
+                ),
+                "estimated_risk": MigrationPlanner._wave_risk(members),
+            })
+
+        summary = (
+            "Mechanical fallback plan: LLM wave assignment unavailable, "
+            "using deterministic role + dependency ordering."
+        )
+        if last_error:
+            summary += f" (LLM last error: {last_error[:200]})"
+        return {"summary": summary, "waves": waves}
+
+    @staticmethod
+    def _topological_sort(groups: list[VMGroup]) -> list[VMGroup]:
+        """Kahn's algorithm over dependency_hints, stable by group.id.
+
+        Cycles short-circuit by emitting the remaining groups in
+        deterministic id order — the planner's depends_on is a hint,
+        not a guarantee, so we don't refuse to plan on a cycle.
+        """
+        by_id = {g.id: g for g in groups}
+        indegree: dict[str, int] = {g.id: 0 for g in groups}
+        for g in groups:
+            for dep in g.dependency_hints:
+                if dep in indegree:
+                    indegree[g.id] += 1
+        # Stable processing — use id ordering when degrees tie so the
+        # output is deterministic across runs.
+        ready = sorted(gid for gid, deg in indegree.items() if deg == 0)
+        ordered: list[VMGroup] = []
+        while ready:
+            ready.sort()
+            gid = ready.pop(0)
+            ordered.append(by_id[gid])
+            # Decrement indegree of every group that depends on this id.
+            for g in groups:
+                if gid in g.dependency_hints and indegree[g.id] > 0:
+                    indegree[g.id] -= 1
+                    if indegree[g.id] == 0:
+                        ready.append(g.id)
+        # Cycle remainder — append any ungrouped ids in stable order.
+        placed = {g.id for g in ordered}
+        for gid in sorted(by_id):
+            if gid not in placed:
+                ordered.append(by_id[gid])
+        return ordered
+
+    @staticmethod
+    def _describe_wave(wave_number: int, members: list[VMGroup]) -> str:
+        roles = {g.estimated_role for g in members}
+        states = {g.estimated_state for g in members}
+        vm_count = sum(len(g.vm_ids) for g in members)
+        group_count = len(members)
+        if "infrastructure" in roles:
+            return (
+                f"Wave {wave_number}: Infrastructure migration "
+                f"({vm_count} VMs across {group_count} groups). "
+                f"AD, DNS, and PKI services migrate first to provide "
+                f"foundation for subsequent waves."
+            )
+        if "data" in roles:
+            return (
+                f"Wave {wave_number}: Data tier migration "
+                f"({vm_count} VMs across {group_count} groups). "
+                f"Stateful services with high migration risk; ensure "
+                f"backups before proceeding."
+            )
+        if {"web", "app"} <= roles:
+            return (
+                f"Wave {wave_number}: Application tier "
+                f"({vm_count} VMs). Web and app servers migrated "
+                f"together since they're stateless and inter-dependent."
+            )
+        if "web" in roles:
+            return (
+                f"Wave {wave_number}: Web tier ({vm_count} VMs). "
+                f"Stateless front-end services."
+            )
+        if "app" in roles:
+            return (
+                f"Wave {wave_number}: Application tier ({vm_count} VMs). "
+                f"Stateless application services."
+            )
+        if "edge" in roles:
+            return (
+                f"Wave {wave_number}: Edge tier ({vm_count} VMs). "
+                f"Load balancers, ingress, and edge services."
+            )
+        state_desc = "stateful" if "stateful" in states else (
+            "stateless" if "stateless" in states else "mixed"
+        )
+        return (
+            f"Wave {wave_number}: {vm_count} VMs across {group_count} "
+            f"groups. Mixed services ({state_desc})."
+        )
+
+    @staticmethod
+    def _wave_risk(members: list[VMGroup]) -> str:
+        priority = {"low": 0, "medium": 1, "high": 2}
+        highest = max((priority.get(g.migration_risk, 1) for g in members), default=1)
+        return {0: "low", 1: "medium", 2: "high"}[highest]
+
+    @staticmethod
+    def _parse_group_plan(raw: str, provided_group_ids: set[str]) -> dict:
+        try:
+            plan: Any = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise PlannerError(f"Group planner output was not valid JSON: {e}\n{raw[:500]}") from e
+        if not isinstance(plan, dict):
+            raise PlannerError("Group planner output was not a JSON object")
+
+        waves = plan.get("waves")
+        if not isinstance(waves, list) or not waves:
+            raise PlannerError("Group planner output missing non-empty 'waves' list")
+
+        seen: set[str] = set()
+        normalized: list[dict] = []
+        for idx, wave in enumerate(waves, start=1):
+            if not isinstance(wave, dict):
+                raise PlannerError(f"Wave at index {idx - 1} is not an object")
+            wave_number = wave.get("wave_number", idx)
+            if not isinstance(wave_number, int):
+                raise PlannerError(f"wave_number must be int, got {wave_number!r}")
+            group_ids = wave.get("group_ids")
+            if not isinstance(group_ids, list) or not group_ids:
+                raise PlannerError(f"wave {wave_number}: group_ids must be a non-empty list")
+            if not all(isinstance(g, str) for g in group_ids):
+                raise PlannerError(f"wave {wave_number}: group_ids must all be strings")
+            unknown = set(group_ids) - provided_group_ids
+            if unknown:
+                raise PlannerError(
+                    f"wave {wave_number}: planner returned unknown group_ids {sorted(unknown)}"
+                )
+            duplicated = seen & set(group_ids)
+            if duplicated:
+                raise PlannerError(
+                    f"wave {wave_number}: group_ids {sorted(duplicated)} appear in multiple waves"
+                )
+            seen.update(group_ids)
+
+            risk = wave.get("estimated_risk")
+            if risk not in _ALLOWED_RISK:
+                raise PlannerError(
+                    f"wave {wave_number}: estimated_risk must be one of {sorted(_ALLOWED_RISK)}, "
+                    f"got {risk!r}"
+                )
+            rationale = wave.get("rationale", "")
+            if not isinstance(rationale, str):
+                raise PlannerError(f"wave {wave_number}: rationale must be a string")
+            normalized.append({
+                "wave_number": wave_number,
+                "group_ids": list(group_ids),
+                "rationale": rationale,
+                "estimated_risk": risk,
+            })
+
+        missing = provided_group_ids - seen
+        if missing:
+            raise PlannerError(
+                f"Group planner did not place group_ids {sorted(missing)} into any wave"
+            )
+        normalized.sort(key=lambda w: w["wave_number"])
+        summary = plan.get("summary", "")
+        if not isinstance(summary, str):
+            summary = ""
+        return {"summary": summary, "waves": normalized}
+
+    @staticmethod
+    def _verify_expanded_plan(waves: list[dict], provided_vm_ids: set[int]) -> None:
+        seen: set[int] = set()
+        for wave in waves:
+            for vid in wave["vm_ids"]:
+                if vid in seen:
+                    raise PlannerError(
+                        f"Expanded plan duplicated vm_id={vid} across waves "
+                        "(bug in preclassifier or expansion logic)"
+                    )
+                seen.add(vid)
+        missing = provided_vm_ids - seen
+        if missing:
+            raise PlannerError(
+                f"Expanded plan did not place vm_ids {sorted(missing)} into any wave"
+            )
+
+    # ------------------------------------------------------------------
+    # Legacy raw-VM flow — kept for explicit opt-out + small fleets.
+    # Callers should prefer plan_with_groups().
+    # ------------------------------------------------------------------
     def plan(self, vm_profiles: list[dict]) -> dict:
         """Generate a wave plan for the given VMs.
 

@@ -1037,7 +1037,13 @@ const DATA = {
             "method": "POST",
             "path": "/api/plans",
             "handler": "create_plan",
-            "summary": ""
+            "summary": "Generate a migration plan."
+          },
+          {
+            "method": "POST",
+            "path": "/api/plans/preview-groups",
+            "handler": "preview_groups",
+            "summary": "Show how the pre-classifier WOULD group these VMs \u2014 no LLM, no plan."
           },
           {
             "method": "GET",
@@ -1141,6 +1147,7 @@ const DATA = {
           "app.core.mtv",
           "app.core.plan_generation",
           "app.core.planner",
+          "app.core.preclassifier",
           "app.core.reporter",
           "app.models.chunk",
           "app.models.plan",
@@ -1251,6 +1258,10 @@ const DATA = {
             "fields": [],
             "methods": [
               {
+                "name": "plan_with_groups",
+                "summary": "Generate a wave plan using mechanical pre-classification."
+              },
+              {
                 "name": "plan",
                 "summary": "Generate a wave plan for the given VMs."
               }
@@ -1261,7 +1272,9 @@ const DATA = {
         "functions": [],
         "depends_on": [
           "app.core.llm.base",
-          "app.core.llm.factory"
+          "app.core.llm.factory",
+          "app.core.preclassifier",
+          "app.models.vm"
         ]
       },
       {
@@ -1540,7 +1553,11 @@ const DATA = {
               "next_actions",
               "supersedes_plan_id",
               "revision_number",
-              "created_at"
+              "created_at",
+              "groups",
+              "groups_formed",
+              "method",
+              "attempts"
             ],
             "methods": [],
             "summary": "Strategy-driven plans populate every field; legacy plans leave"
@@ -1550,10 +1567,25 @@ const DATA = {
             "kind": "schema",
             "table": "",
             "fields": [
-              "vm_ids"
+              "vm_ids",
+              "preclassification_enabled"
             ],
             "methods": [],
             "summary": ""
+          },
+          {
+            "name": "PreviewGroupsResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_count",
+              "groups_formed",
+              "groups",
+              "over_ceiling",
+              "ceiling"
+            ],
+            "methods": [],
+            "summary": "Result of POST /api/plans/preview-groups \u2014 no plan persisted."
           },
           {
             "name": "WaveMoveVMRequest",
@@ -3217,6 +3249,7 @@ const DATA = {
               "llm_read_timeout",
               "llm_connect_timeout",
               "llm_max_retries",
+              "llm_max_items_per_call",
               "categorizer_batch_size",
               "llm_cost_per_million_input_tokens",
               "llm_cost_per_million_output_tokens",
@@ -3996,6 +4029,97 @@ const DATA = {
           "app.models.plan",
           "app.models.target",
           "app.models.vcenter",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.preclassifier",
+        "title": "app.core.preclassifier",
+        "subtitle": "backend/app/core/preclassifier.py",
+        "summary": "Mechanical pre-classification for the migration planner.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "GroupKey",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "vcenter_id",
+              "target_namespace",
+              "role",
+              "state",
+              "discriminator"
+            ],
+            "methods": [
+              {
+                "name": "as_string",
+                "summary": ""
+              }
+            ],
+            "summary": "Composite identifier for a group."
+          },
+          {
+            "name": "VMGroup",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "key",
+              "vm_ids",
+              "shared_attributes",
+              "estimated_role",
+              "estimated_state",
+              "migration_risk",
+              "dependency_hints",
+              "notes"
+            ],
+            "methods": [
+              {
+                "name": "id",
+                "summary": ""
+              },
+              {
+                "name": "to_llm_dict",
+                "summary": "Compact dict shape sent to the LLM for wave assignment."
+              },
+              {
+                "name": "to_api_dict",
+                "summary": "Expanded dict shape the API surfaces to the operator UI."
+              }
+            ],
+            "summary": "A mechanical grouping of VMs that should be considered together."
+          },
+          {
+            "name": "PreClassifier",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "classify",
+                "summary": ""
+              }
+            ],
+            "summary": "Group VMs into mechanical migration candidates."
+          }
+        ],
+        "functions": [
+          {
+            "name": "detect_role",
+            "summary": "Return one of web|app|data|edge|infrastructure|other."
+          },
+          {
+            "name": "detect_state",
+            "summary": "Return stateful|stateless|unknown."
+          },
+          {
+            "name": "detect_risk",
+            "summary": "Return low|medium|high based on role, state, and group shape."
+          }
+        ],
+        "depends_on": [
+          "app.core.config",
           "app.models.vm"
         ]
       },

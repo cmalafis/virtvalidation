@@ -177,7 +177,14 @@ class PlanRead(BaseModel):
     """Strategy-driven plans populate every field; legacy plans leave
     rationale / warnings / next_actions empty. Waves are returned as
     dicts (not WaveRead) so the field set can grow without breaking
-    existing consumers."""
+    existing consumers.
+
+    ``groups`` + ``groups_formed`` are populated when the plan was
+    generated through the pre-classification path (default). They
+    surface the mechanical grouping the LLM operated on so operators
+    can see exactly how their VMs were clustered before wave
+    assignment. See ``docs/PLANNER_ARCHITECTURE.md`` for the rationale.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -196,12 +203,46 @@ class PlanRead(BaseModel):
     supersedes_plan_id: int | None = None
     revision_number: int = 1
     created_at: datetime
+    # Transient — only populated on the create response. GET /api/plans/{id}
+    # leaves these empty since they aren't persisted on the model today;
+    # the waves[] entries carry the group_ids list so groups can be re-
+    # derived if a future feature needs them.
+    groups: list[dict] = Field(default_factory=list)
+    groups_formed: int = 0
+    # Which path produced the wave assignment. ``llm`` = first attempt
+    # succeeded. ``llm_retry_N`` = succeeded on retry N. ``mechanical_fallback``
+    # = LLM failed every attempt; the topological-sort fallback produced
+    # this plan. Helps operators debug LLM quality regressions.
+    method: str = ""
+    attempts: int = 0
 
 
 # Legacy synchronous create payload — kept for back-compat with the
 # existing POST /api/plans endpoint and its tests.
 class PlanCreate(BaseModel):
     vm_ids: list[int] = Field(min_length=1)
+    # When True (default), the planner runs the mechanical
+    # pre-classifier first and the LLM only sees ~5-15 groups. Set to
+    # False to fall back to the legacy raw-VM path — useful for tests
+    # of model behavior, or for very small plans where one-VM-per-group
+    # is fine. Federal customers should leave this enabled.
+    preclassification_enabled: bool = True
+
+
+class PreviewGroupsResponse(BaseModel):
+    """Result of POST /api/plans/preview-groups — no plan persisted.
+
+    Lets the operator preview how the pre-classifier WOULD group their
+    VMs before spending LLM time on wave assignment. Useful for
+    debugging ("why is VM X in the same group as Y?") and for
+    showing the value of mechanical grouping during demos.
+    """
+
+    vm_count: int
+    groups_formed: int
+    groups: list[dict]
+    over_ceiling: bool
+    ceiling: int
 
 
 # ---------------------------------------------------------------------------

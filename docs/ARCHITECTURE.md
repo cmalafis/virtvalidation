@@ -244,13 +244,14 @@ LLM-driven wave planning + MTV/Forklift YAML generation.
 <details><summary><strong><code>app.api.plans</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/plans.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.chunker`, `app.core.db`, `app.core.llm.factory`, `app.core.mtv`, `app.core.plan_generation`, `app.core.planner`, `app.core.reporter`, `app.models.chunk`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
+Depends on: `app.core.audit`, `app.core.baseline`, `app.core.chunker`, `app.core.db`, `app.core.llm.factory`, `app.core.mtv`, `app.core.plan_generation`, `app.core.planner`, `app.core.preclassifier`, `app.core.reporter`, `app.models.chunk`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
 
 **Routes**
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
-| `POST` | `/api/plans` | `create_plan(payload, db)` | — |
+| `POST` | `/api/plans` | `create_plan(payload, db)` | Generate a migration plan. |
+| `POST` | `/api/plans/preview-groups` | `preview_groups(payload, db)` | Show how the pre-classifier WOULD group these VMs — no LLM, no plan. |
 | `GET` | `/api/plans` | `list_plans(db, limit)` | — |
 | `GET` | `/api/plans/{plan_id}` | `get_plan(plan_id, db)` | — |
 | `GET` | `/api/plans/{plan_id}/chunks` | `get_plan_chunks(plan_id, db)` | Return the chunk breakdown for a hierarchically-planned plan. |
@@ -300,7 +301,7 @@ Depends on: `app.core.config`
 <details><summary><strong><code>app.core.planner</code></strong> — <em>Business logic</em> · Migration wave planner.</summary>
 
 Path: `backend/app/core/planner.py`  
-Depends on: `app.core.llm.base`, `app.core.llm.factory`
+Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.core.preclassifier`, `app.models.vm`
 
 **Classes**
 
@@ -308,6 +309,7 @@ Depends on: `app.core.llm.base`, `app.core.llm.factory`
   - Raised when the planner LLM call fails or returns unusable output.
 - **`MigrationPlanner`** (Class)
   - Methods:
+    - `plan_with_groups(self, vms)` — Generate a wave plan using mechanical pre-classification.
     - `plan(self, vm_profiles)` — Generate a wave plan for the given VMs.
 
 </details>
@@ -361,9 +363,12 @@ Depends on: `app.core.limits`, `app.models.plan`
   - Fields: `chunk_id`, `sequence_index`, `label`, `reason_for_chunk`, `partition_key`, `sub_key`, `hints`, `vm_ids`, `sequence_dependencies`, `chunk_rationale`, `chunk_risk_level`, `wave_numbers`
 - **`PlanRead`** (Pydantic schema)
   - Strategy-driven plans populate every field; legacy plans leave
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `created_at`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `created_at`, `groups`, `groups_formed`, `method`, `attempts`
 - **`PlanCreate`** (Pydantic schema)
-  - Fields: `vm_ids`
+  - Fields: `vm_ids`, `preclassification_enabled`
+- **`PreviewGroupsResponse`** (Pydantic schema)
+  - Result of POST /api/plans/preview-groups — no plan persisted.
+  - Fields: `vm_count`, `groups_formed`, `groups`, `over_ceiling`, `ceiling`
 - **`WaveMoveVMRequest`** (Pydantic schema)
   - Fields: `vm_id`, `target_wave_number`, `note`
 
@@ -926,7 +931,7 @@ Path: `backend/app/core/config.py`
 **Classes**
 
 - **`Settings`** (Class)
-  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
+  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `llm_max_items_per_call`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
 
 </details>
 
@@ -1230,6 +1235,38 @@ Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.chunked
 - `assemble_vm_profiles(db, vms)` — Build the lightweight VM payload the strategy planner sends to
 - `run_plan_generation(task_id)` — Body of the FastAPI BackgroundTask the generate endpoint spawns.
 - `apply_move_vm(db, plan)` — Create a new plan revision with one VM moved between waves.
+
+</details>
+
+<details><summary><strong><code>app.core.preclassifier</code></strong> — <em>Business logic</em> · Mechanical pre-classification for the migration planner.</summary>
+
+Path: `backend/app/core/preclassifier.py`  
+Depends on: `app.core.config`, `app.models.vm`
+
+**Classes**
+
+- **`GroupKey`** (Class)
+  - Composite identifier for a group.
+  - Fields: `vcenter_id`, `target_namespace`, `role`, `state`, `discriminator`
+  - Methods:
+    - `as_string(self)`
+- **`VMGroup`** (Class)
+  - A mechanical grouping of VMs that should be considered together.
+  - Fields: `key`, `vm_ids`, `shared_attributes`, `estimated_role`, `estimated_state`, `migration_risk`, `dependency_hints`, `notes`
+  - Methods:
+    - `id(self)`
+    - `to_llm_dict(self)` — Compact dict shape sent to the LLM for wave assignment.
+    - `to_api_dict(self)` — Expanded dict shape the API surfaces to the operator UI.
+- **`PreClassifier`** (Class)
+  - Group VMs into mechanical migration candidates.
+  - Methods:
+    - `classify(self, vms, target_cluster_id)`
+
+**Functions**
+
+- `detect_role(vm)` — Return one of web|app|data|edge|infrastructure|other.
+- `detect_state(vm, role)` — Return stateful|stateless|unknown.
+- `detect_risk(role, state, vm_count, has_sequential_names)` — Return low|medium|high based on role, state, and group shape.
 
 </details>
 

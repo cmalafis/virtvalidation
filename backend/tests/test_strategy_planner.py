@@ -616,7 +616,9 @@ def test_status_404_for_unknown_task(client, stub_planner_backend):
     assert r.status_code == 404
 
 
-def test_legacy_synchronous_plan_endpoint_still_works(client, stub_planner_backend):
+def test_legacy_synchronous_plan_endpoint_still_works(
+    client, stub_planner_backend, monkeypatch,
+):
     """The original POST /api/plans (legacy MigrationPlanner path) must
     still function — older test files and external scripts depend on it."""
     from app.core import planner as legacy_planner
@@ -636,16 +638,21 @@ def test_legacy_synchronous_plan_endpoint_still_works(client, stub_planner_backe
             }
         )
 
-    # The legacy planner uses _chat method; monkeypatch it.
-    import pytest as _pytest
-
-    _pytest.MonkeyPatch().setattr(
+    # Use the test's managed monkeypatch fixture so the override is
+    # undone at teardown. The previous version created an unmanaged
+    # ``MonkeyPatch()`` instance that leaked across tests, breaking
+    # any downstream test that drove the group-based planner through
+    # ``_chat``.
+    monkeypatch.setattr(
         legacy_planner.MigrationPlanner, "_chat", fake_legacy_chat
     )
 
     a = _enroll(client, "vm-a")
     b = _enroll(client, "vm-b")
-    r = client.post("/api/plans", json={"vm_ids": [a["id"], b["id"]]})
+    r = client.post(
+        "/api/plans",
+        json={"vm_ids": [a["id"], b["id"]], "preclassification_enabled": False},
+    )
     # Either 201 (working) or 502 (LLM mock didn't take); both prove
     # the route is registered and the legacy schema still validates.
     assert r.status_code in (201, 502)

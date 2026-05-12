@@ -47,8 +47,10 @@ from app.schemas.plan import (
     PlanningStrategyRead,
     PlanningStrategyUpdate,
     PlanRead,
+    PreviewGroupsResponse,
     WaveMoveVMRequest,
 )
+from app.core.preclassifier import PreClassifier
 from app.schemas.report import WaveReport
 
 router = APIRouter(tags=["plans"])
@@ -90,17 +92,46 @@ def _assemble_vm_profiles(db: Session, vm_ids: list[int]) -> list[dict]:
 
 
 @router.post("", response_model=PlanRead, status_code=status.HTTP_201_CREATED)
-def create_plan(payload: PlanCreate, db: Session = Depends(get_db)) -> MigrationPlan:
-    profiles = _assemble_vm_profiles(db, payload.vm_ids)
+def create_plan(payload: PlanCreate, db: Session = Depends(get_db)) -> dict:
+    """Generate a migration plan.
 
+    Default path runs the mechanical pre-classifier first so the LLM
+    only sees ~5-15 groups instead of N raw VMs — see
+    ``docs/PLANNER_ARCHITECTURE.md`` for why. Set
+    ``preclassification_enabled=false`` to fall back to the legacy
+    raw-VM flow (useful for testing model behavior on small fleets).
+    """
+    unique_ids = list(dict.fromkeys(payload.vm_ids))
     planner = MigrationPlanner()
-    try:
-        result = planner.plan(profiles)
-    except PlannerError as e:
-        raise HTTPException(status_code=502, detail=f"Planner failed: {e}") from e
+
+    if payload.preclassification_enabled:
+        vms = list(db.scalars(select(VM).where(VM.id.in_(unique_ids))).all())
+        missing = [vid for vid in unique_ids if vid not in {v.id for v in vms}]
+        if missing:
+            raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
+        try:
+            result = planner.plan_with_groups(vms)
+        except PlannerError as e:
+            raise HTTPException(status_code=502, detail=f"Planner failed: {e}") from e
+        plan_vm_ids = unique_ids
+        groups_payload = result.get("groups", [])
+        groups_formed = result.get("groups_formed", 0)
+        method = result.get("method", "")
+        attempts = result.get("attempts", 0)
+    else:
+        profiles = _assemble_vm_profiles(db, unique_ids)
+        try:
+            result = planner.plan(profiles)
+        except PlannerError as e:
+            raise HTTPException(status_code=502, detail=f"Planner failed: {e}") from e
+        plan_vm_ids = [p["vm_id"] for p in profiles]
+        groups_payload = []
+        groups_formed = 0
+        method = ""
+        attempts = 0
 
     plan = MigrationPlan(
-        vm_ids=[p["vm_id"] for p in profiles],
+        vm_ids=plan_vm_ids,
         waves=result["waves"],
         summary=result.get("summary") or None,
         model=planner.backend.default_model or "",
@@ -108,7 +139,42 @@ def create_plan(payload: PlanCreate, db: Session = Depends(get_db)) -> Migration
     db.add(plan)
     db.commit()
     db.refresh(plan)
-    return plan
+    # Hand-build the response so the transient ``groups`` field gets
+    # surfaced — PlanRead.model_validate(plan) would drop it because
+    # the field doesn't exist on the SA model.
+    body = PlanRead.model_validate(plan).model_dump(mode="json")
+    body["groups"] = groups_payload
+    body["groups_formed"] = groups_formed
+    body["method"] = method
+    body["attempts"] = attempts
+    return body
+
+
+@router.post("/preview-groups", response_model=PreviewGroupsResponse)
+def preview_groups(payload: PlanCreate, db: Session = Depends(get_db)) -> dict:
+    """Show how the pre-classifier WOULD group these VMs — no LLM, no plan.
+
+    The plan wizard calls this before submission so the operator sees
+    the mechanical grouping (e.g. "57 VMs → 8 groups, web tier first,
+    db tier last") without paying the LLM round-trip. Tells operators
+    why specific VMs were clustered together, which is useful for
+    debugging both unexpected groupings and missing metadata.
+    """
+    unique_ids = list(dict.fromkeys(payload.vm_ids))
+    vms = list(db.scalars(select(VM).where(VM.id.in_(unique_ids))).all())
+    missing = [vid for vid in unique_ids if vid not in {v.id for v in vms}]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
+
+    classifier = PreClassifier()
+    groups = classifier.classify(vms)
+    return {
+        "vm_count": len(vms),
+        "groups_formed": len(groups),
+        "groups": [g.to_api_dict() for g in groups],
+        "over_ceiling": len(groups) > classifier.max_groups,
+        "ceiling": classifier.max_groups,
+    }
 
 
 @router.get("", response_model=list[PlanRead])

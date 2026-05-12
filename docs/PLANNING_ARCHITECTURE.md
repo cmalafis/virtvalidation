@@ -1,13 +1,231 @@
-# Planning Architecture — Hierarchical Chunking
+# Planning Architecture
 
-VirtValidate's plan generator is **hierarchical**: Python partitions
-the inventory deterministically before any LLM call, the LLM reasons
-about each chunk independently at appropriate scale, then Python
-assembles the output and calls the LLM one more time for a high-level
-review.
+VirtValidate has two complementary planning paths. Both follow the
+same architectural principle — **mechanical pre-processing in Python
+before any LLM call** — but at different scales and triggered by
+different APIs:
 
-This document explains why we built it that way, what each stage owns,
-and where the architecture's edges are.
+| Path | Entry point | LLM input size | Use case |
+|------|-------------|----------------|----------|
+| **Two-stage** (synchronous) | `POST /api/plans` | M ≤ `LLM_MAX_ITEMS_PER_CALL` groups (default 20) | Default. Quick plan generation on ≤ 1,000 VMs. |
+| **Hierarchical** (async) | `POST /api/plans/generate` | Multiple per-chunk + 1 review call | Large fleets (>1K VMs) with strategy / mapping context. |
+
+If you're touching the planner, read **both** sections — they share
+the core "mechanical pre-processing in Python before any LLM call"
+principle, but the integrity invariants live at different layers.
+
+---
+
+## Two-stage path — mechanical pre-classification + group-based LLM
+
+### Stages
+
+```
+POST /api/plans  →  MigrationPlanner.plan_with_groups()
+                       │
+                       ▼
+  Stage 1 — PreClassifier (Python, deterministic)
+    Partition by vCenter + target namespace, sub-group by
+    application_hint + role, then network/datastore overlap,
+    then name-prefix. Cap M ≤ 20 by consolidating smallest.
+                       │
+                       ▼
+  Stage 2 — LLM wave assignment (small input)
+    Prompt: "Here are 8 pre-formed groups. Assign each to a
+    migration wave (1-N) by dependency + risk."
+    Output: group_ids per wave — never raw vm_ids.
+                       │
+                       ▼
+  Stage 3 — Mechanical expansion
+    Expand group_ids → vm_ids via the Stage 1 group table.
+    Deterministic, bug-free. Integrity checks pass by
+    construction.
+```
+
+### Why this architecture
+
+Before pre-classification, the v0.1.x planner fed raw VM lists to
+the LLM and asked it to group + order in one shot. That failed at
+10+ VMs across every model tested in May 2026:
+
+- Llama 3.2 3B dropped vm_ids past 20.
+- Granite 3.1 8B failed at 57 (the customer fleet that triggered
+  this refactor).
+- Symptoms were silent — fluent JSON output that omitted vm_ids,
+  duplicated ids across waves, or invented ids that weren't in
+  the input.
+
+The fix wasn't a bigger model — it was to stop asking the LLM to
+categorize. Mechanical grouping is something Python can do
+deterministically + auditably. The LLM should only see the small
+number of *groups* it has to *order*.
+
+See `CLAUDE.md` → "LLM Input Discipline (Architectural Rule)" for
+the design rule this implements.
+
+### What the pre-classifier groups by
+
+In priority order:
+
+1. **PRIMARY (must match)** — `source_vcenter_id`, `target_namespace`.
+   Different vCenters or different destination namespaces never merge.
+2. **SECONDARY (strong cohesion)** — `application_hint` (operator-
+   supplied) sub-split by detected role, then network ∩ datastore
+   overlap (≥1 of each).
+3. **TERTIARY (fallback)** — name-prefix bucket
+   (e.g. `web-prod-*` → one group).
+
+Roles are heuristic: name patterns like `db|postgres|mongo` → "data",
+`web|nginx|apache` → "web", `app|api|svc` → "app", and so on. State
+follows role (data + infrastructure → stateful; web/app/edge →
+stateless). Risk follows both (stateful+data → high, stateless+web
+small group → low).
+
+### Output shape
+
+Each group exposes:
+
+- `id` — deterministic composite string
+  (`vc1/prod/data/stateful/hint:epic-emr:data`).
+- `vm_ids` — sorted list.
+- `role`, `state`, `migration_risk` — heuristic tags.
+- `depends_on` — seeded hints (app groups depend on data + infra).
+- `shared_attributes` — networks/datastores/hints that made the
+  group cohere.
+- `notes` — operator-readable one-liner.
+
+The plan response surfaces these in `groups[]` so operators can see
+exactly how their VMs were clustered before wave assignment.
+
+### `POST /api/plans/preview-groups`
+
+Same Stage 1 logic, no Stage 2 LLM call, no plan persisted. Lets
+operators preview the grouping before paying the LLM round-trip.
+Useful for debugging ("why is X in the same group as Y?") and for
+demonstrating the value of mechanical grouping during customer
+demos.
+
+### Wave assignment reliability — retry + mechanical fallback
+
+The Stage-2 LLM call is the only step that involves non-deterministic
+output. Smaller models (Llama 3.2 3B, Granite 3.1 8B) sometimes
+return invalid wave assignments — duplicating a group_id across
+waves, dropping one entirely, or violating the JSON schema. The
+planner is built to handle this gracefully:
+
+  1. **Strict prompt** — the system prompt opens with `HARD
+     CONSTRAINTS` and lists the five non-negotiable rules: every
+     group_id appears in EXACTLY ONE wave, no omissions, no
+     duplicates, sequential wave numbers, self-verify before
+     responding. Constraint repetition before AND after the wave-
+     ordering principles measurably reduces the LLM's failure rate
+     on small models.
+  2. **Retry with corrective context** — when validation rejects an
+     LLM response, the planner re-prompts with the validation error
+     prepended: *"PREVIOUS ATTEMPT FAILED with this error: …"*. The
+     LLM can self-correct given the specific failure mode. Default
+     is 3 attempts (configurable via `max_llm_attempts`).
+  3. **Mechanical fallback** — when every retry fails, the planner
+     produces a wave assignment via deterministic topological sort
+     over `dependency_hints` + role priority
+     (`infrastructure → data → app → web → edge → other`). The
+     plan is less nuanced than the LLM's (rationale comes from
+     template, not bespoke prose) but it's always valid.
+
+The mechanical fallback is **not a failure mode** — it's an
+architectural choice. Federal customers must always get a plan;
+they should never see a 502 from `POST /api/plans` because the LLM
+had a bad day. Plans generated mechanically are just as valid as
+LLM-generated plans, just less nuanced.
+
+The plan response carries a `method` field so operators can see
+which path produced the plan:
+
+  - `"llm"` — first attempt succeeded.
+  - `"llm_retry_1"` / `"llm_retry_2"` — succeeded on retry N.
+    Flags an under-performing model; consider an upgrade if these
+    show up often in audit logs.
+  - `"mechanical_fallback"` — every LLM attempt failed; the
+    deterministic assigner produced this plan. The summary string
+    includes the last LLM error for debugging.
+
+See `tests/test_wave_assignment_robustness.py` for the pinned
+contracts: corrective-context propagation, deterministic fallback,
+configurable `max_llm_attempts`, cycle handling in
+`_topological_sort`.
+
+### Required VM metadata
+
+The preclassifier reads these fields off the `VM` model — each
+contributes to the cohesion signal. Sparse metadata produces more,
+thinner groups; richly populated metadata produces fewer, richer
+groups.
+
+| Field                          | Cohesion role                                      | What happens if missing |
+|--------------------------------|----------------------------------------------------|--------------------------|
+| `source_vcenter_id`            | PRIMARY partition — never merged across            | All VMs land in the "unknown vcenter" partition |
+| `target_namespace`             | PRIMARY partition                                  | Falls back to "default" target namespace |
+| `application_hint`             | Strongest in-partition cohesion (with role split)  | Falls back to network/datastore overlap |
+| `role` (operator-supplied)     | Overrides name-pattern role detection              | Falls back to name pattern matching |
+| `vsphere_networks`             | Secondary cohesion (network ∩ datastore)           | Used only when present |
+| `vsphere_datastores`           | Secondary cohesion                                 | Used only when present |
+| `environment`                  | Reported on group as a shared_attribute            | Group's shared_attributes shows empty `environments` |
+| `os_family`                    | Reported on group                                  | Empty `os_families` |
+
+**Deferred enrichment:** the VM model doesn't yet carry `cluster`,
+`host`, `folder`, `resource_pool` columns that the RVTools export
+includes. Tracked in the roadmap — adding them would let the
+preclassifier produce even richer groups (e.g. "all VMs in the
+prod-us-east-cluster-01 / /prod/ehr-pro folder"). For now, the
+operator-supplied `application_hint` carries that signal.
+
+### Example: rich preclassification output
+
+For the DHA fleet (see `docs/TEST_DATA.md`), the preclassifier
+produces output like:
+
+```json
+{
+  "id": "vc1/ehrpro-prod/data/stateful/hint:ehrpro:data",
+  "vm_count": 3,
+  "role": "data",
+  "state": "stateful",
+  "risk": "high",
+  "depends_on": [],
+  "shared_attributes": {
+    "networks": ["VLAN-120-Data-Prod"],
+    "datastores": ["prod-gold-ssd-01"],
+    "application_hints": ["ehrpro"],
+    "environments": ["production"],
+    "os_families": ["rhel"]
+  },
+  "notes": "share networks: VLAN-120-Data-Prod; share datastores: prod-gold-ssd-01; application_hint: ehrpro; environment: production"
+}
+```
+
+Every cohesion signal is populated → the LLM sees a tight, well-
+described group → wave ordering is easy.
+
+### Opt-out: `preclassification_enabled: false`
+
+`PlanCreate` accepts this flag to fall back to the legacy raw-VM
+flow. Use it for:
+
+- Testing model behavior on small fleets (the legacy path was the
+  shape every model trained on).
+- Single-VM plans where one VM per group is fine.
+
+Federal customers should leave it enabled — the audit trail benefits
+from the deterministic grouping.
+
+---
+
+# Hierarchical Chunking (large-fleet path)
+
+The async pipeline below kicks in for strategy-driven generations
+through `POST /api/plans/generate`. It's a different code path from
+the two-stage synchronous flow above, sized for inventories that
+exceed the synchronous path's working set.
 
 ---
 

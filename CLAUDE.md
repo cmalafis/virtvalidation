@@ -1,5 +1,103 @@
 # VirtValidate — AI VM Migration Validation Platform
 
+## LLM Input Discipline (Architectural Rule)
+
+When designing features that involve LLM calls, the LLM must NEVER
+receive raw collections of items larger than `LLM_MAX_ITEMS_PER_CALL`
+(default: 20; see `app.core.config.settings.llm_max_items_per_call`).
+Always pre-process with deterministic Python rules to reduce the
+LLM's input to a small number of pre-formed groups or decisions.
+
+The LLM is for genuinely ambiguous judgment calls, not for
+categorization or grouping that could be done mechanically.
+
+### Why
+
+- LLMs drop tokens in long structured outputs. Proven empirically in
+  May 2026 testing: Llama 3.2 3B failed at 20 VMs, Granite 3.1 8B
+  failed at 57. Symptoms are silent — dropped vm_ids,
+  duplicated entries across waves, schema violations.
+- Deterministic Python is faster, auditable, and bug-free.
+- Federal customers require auditable decisions; LLMs are
+  harder to audit than Python rules.
+- Most "AI" features have a mechanical core; the LLM is just
+  for the genuinely ambiguous edges.
+- This scales without requiring larger models.
+
+The 20-item ceiling is empirical and may be adjusted upward as
+models improve, but only with explicit benchmarking against the
+production model. Default to assuming the ceiling holds.
+
+### Design-review checklist
+
+When proposing a feature that involves an LLM, the design must
+explicitly answer:
+
+1. What is the maximum size of the LLM's input collection?
+2. If > 20 items, what mechanical pre-processing reduces it?
+3. What would happen if the LLM dropped or duplicated outputs?
+4. Is there a Python-only fallback path?
+
+No LLM feature ships without addressing all four.
+
+### Output validation + retry + fallback (architectural rule)
+
+Every LLM feature MUST:
+
+  - **Validate** the LLM's output against the schema/invariants the
+    caller depends on. Don't trust the model.
+  - **Retry on validation failure** with corrective feedback — the
+    previous attempt's error becomes the first line of the next
+    prompt. Default 3 attempts. Smaller models self-correct more
+    reliably with specific error feedback than with general
+    instructions.
+  - **Fall back to mechanical/deterministic logic** when every
+    retry fails. The user must always receive a valid result —
+    never a 502 because the LLM had a bad day. Plans produced by
+    the fallback are LESS NUANCED than LLM plans, not less valid.
+
+The mechanical fallback is **not a failure mode** — it's an
+architectural choice. Federal customers require auditable
+behavior; "the LLM returned garbage three times and we sent an
+error" is not auditable. "The LLM returned garbage three times
+and we ran the deterministic assigner" is.
+
+Surface the path taken via a `method` field
+(`"llm"` / `"llm_retry_N"` / `"mechanical_fallback"`) so operators
+can debug LLM quality regressions from the audit log.
+
+Reference: `app.core.planner.MigrationPlanner._assign_waves_with_retry` +
+`_mechanical_assign_waves`.
+
+### Reference implementation
+
+`backend/app/core/preclassifier.py` — the planner's pre-classifier.
+Takes N VMs, returns M ≤ 20 mechanical groups by vCenter / target
+namespace / network / datastore / application_hint / role. The LLM
+ranks the groups for wave order; the expansion back to vm_ids is
+mechanical, so the integrity check ("every input vm_id placed
+exactly once") passes by construction.
+
+### Good vs bad shaping examples
+
+| Bad                                            | Good                                                |
+|------------------------------------------------|-----------------------------------------------------|
+| "Group these 100 VMs into waves"               | "Assign these 8 pre-formed groups to waves"         |
+| "Categorize these 500 log lines"               | "Categorize these 12 deduplicated log patterns"     |
+| "Compare these 200 config diffs"               | "Explain these 5 unique diff categories"            |
+
+### Legitimate LLM use (small input, ambiguous decision)
+
+- Wave ordering decision for 5-15 pre-formed groups
+- Risk classification for one VM with ambiguous attributes
+- Rationale generation for one wave's contents
+- Migration recommendation for one unclear validation result
+
+Cite this rule by name in any PR or design discussion that proposes
+a new LLM-driven feature.
+
+---
+
 ## What this is
 Local appliance that validates VMs migrated from VMware to OpenShift
 Virtualization using SSH + local LLM reasoning. Air-gapped by design.
