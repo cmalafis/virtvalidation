@@ -55,7 +55,7 @@ def test_import_creates_new_vms_with_vcenter_scope_and_status(client):
     assert body["marked_missing"] == 0
     # vCenter row's vm_count reflects the import.
     assert client.get(f"/api/sources/vcenters/{vc['id']}").json()["vm_count"] == 2
-    listing = {vm["name"]: vm for vm in client.get("/api/vms").json()}
+    listing = {vm["name"]: vm for vm in client.get("/api/vms").json()["items"]}
     assert listing["alpha"]["source_vcenter_id"] == vc["id"]
     assert listing["alpha"]["status"] == "discovered"
 
@@ -68,7 +68,7 @@ def test_import_updates_tracked_fields_without_clobbering_unrelated_state(client
     # Operator manually edits target_namespace via PATCH — that field
     # is *not* part of the RVTools tracked set, so re-importing must
     # leave it intact.
-    vm_id = next(v["id"] for v in client.get("/api/vms").json() if v["name"] == "alpha")
+    vm_id = next(v["id"] for v in client.get("/api/vms").json()["items"] if v["name"] == "alpha")
     client.patch(f"/api/vms/{vm_id}", json={"target_namespace": "finance-prod"})
     r = _import(client, vc["id"], [
         {"name": "alpha", "source_hostname": "alpha.corp", "ip_address": "10.0.0.99"}

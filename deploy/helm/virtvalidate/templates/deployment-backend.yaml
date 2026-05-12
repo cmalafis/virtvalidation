@@ -39,8 +39,6 @@ spec:
               containerPort: 8000
               protocol: TCP
           env:
-            - name: DATABASE_URL
-              value: {{ include "virtvalidate.databaseUrl" . | quote }}
             - name: SSH_KEY_PATH
               value: /app/keys/id_ed25519
             {{- include "virtvalidate.llmEnv" . | nindent 12 }}
@@ -62,6 +60,8 @@ spec:
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+            - name: DATABASE_URL
+              value: {{ include "virtvalidate.databaseUrl" . | quote }}
           envFrom:
             - configMapRef:
                 name: {{ include "virtvalidate.fullname" . }}-config

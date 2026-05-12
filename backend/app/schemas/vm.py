@@ -68,6 +68,56 @@ class VMRead(VMBase):
     updated_at: datetime
 
 
+class VMListResponse(BaseModel):
+    """Paginated wrapper for the inventory listing.
+
+    The frontend's data table needs the total count separately from
+    the rendered page so it can show "X to Y of Z" and compute the
+    page count without a second round-trip. ``skip`` + ``limit`` echo
+    the resolved values so the caller can detect when its requested
+    page was clipped by the backend's ceiling.
+    """
+
+    items: list[VMRead]
+    total: int
+    skip: int
+    limit: int
+
+
+class VMFacetsResponse(BaseModel):
+    """Per-dimension counts driven by the same filter set as list_vms.
+
+    Each value is a ``{value: count}`` map. Keys are stringified so
+    JSON output stays uniform across enum-backed and free-form
+    columns (status is an enum, environment is free-form text).
+    """
+
+    status: dict[str, int]
+    environment: dict[str, int]
+    os_family: dict[str, int]
+    application_hint: dict[str, int]
+    vcenter_source_id: dict[str, int]
+    classification_level: dict[str, int]
+    total: int
+
+
+class VMStats(BaseModel):
+    """Cheap aggregate counters for dashboard headers.
+
+    Mirrors what the inventory list filter dropdowns would derive
+    from facets, but without echoing per-value counts. Cheap because
+    the queries are bare ``COUNT(*) GROUP BY status`` — no row reads.
+    """
+
+    total: int
+    by_status: dict[str, int]
+    missing_from_last_upload: int
+
+
+class DeleteAllVMsResult(BaseModel):
+    deleted_count: int
+
+
 class BulkVMCreate(BaseModel):
     # See app.core.limits.MAX_VMS_PER_BULK_CREATE — sized for federal
     # customer scale (10K VMs in one RVTools import). Override via

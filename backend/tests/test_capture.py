@@ -253,7 +253,7 @@ def test_bulk_delete_removes_vms_and_audits_each(client, fake_collect_and_store)
     assert body["not_found"] == [99999]
 
     # c remains.
-    listing = client.get("/api/vms").json()
+    listing = client.get("/api/vms").json()["items"]
     assert [vm["name"] for vm in listing] == ["c"]
 
     # Snapshots for a should have cascaded.

@@ -20,6 +20,13 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
 ## Hard rules
 - NEVER call external APIs or LLM services — air-gapped by design
 - All LLM calls go to Ollama at $OLLAMA_HOST (default: http://ollama:11434)
+  except in dev where `LLM_BACKEND_TYPE=mock` swaps in an in-process
+  canned-response backend (see `docs/MOCK_BACKEND.md`). When adding a
+  new LLM-consuming flow, also extend `MockBackend._INTENT_KEYWORDS`
+  + a `_<intent>_response()` method so dev/CI runs without a real LLM.
+  The mock MUST emit the same JSON shape the new flow's parser
+  accepts; pin it with a round-trip test in
+  `tests/test_mock_backend.py`.
 - SSH uses Ed25519 keys only — stored in /app/keys/, never baked into images
 - Use Podman — NOT Docker. Containerfiles NOT Dockerfiles.
 - Volume mounts use :Z SELinux label for RHEL/Fedora compatibility
@@ -90,6 +97,34 @@ you MUST also create an Alembic migration in the same change:
 See `docs/DATABASE_MIGRATIONS.md` for the full workflow including
 data migrations, rollback recovery, and the legacy-`create_all`
 bridge for v0.1.x deployments.
+
+## Paginated list endpoint pattern
+
+Listing endpoints with > a few hundred rows MUST return a wrapped
+response — `{items: [...], total: N, skip: N, limit: N}` — not a
+raw list. `GET /api/vms` is the reference. Routes that return raw
+lists silently truncate at the page size and force the frontend
+to load everything just to render a counter.
+
+When adding a new paginated listing:
+
+1. Define a `*ListResponse` schema in `app/schemas/<resource>.py`
+   with `items / total / skip / limit`.
+2. Accept `skip`, `limit`, `sort_by`, `sort_order`, and any
+   filter dimensions as `Query(...)` params.
+3. For multi-value filters, type the param as
+   `list[Type] | None = Query(default=None)` — FastAPI handles
+   `?status=a&status=b` natively.
+4. Add a `/facets` endpoint if the frontend filter UI shows
+   counts per value.
+5. Add a `/stats` endpoint if the dashboard header reads counts
+   from the list — don't reuse the paginated query.
+6. Add a `DELETE /<resource>/all` endpoint with `?confirm=true`
+   if operators need a wipe action. Re-use the same `_apply_filters`
+   builder so the filter semantics match the listing.
+
+See `docs/INVENTORY_GUIDE.md` for the inventory-table contract
+and `backend/tests/test_inventory_pagination.py` for the pins.
 
 ## Repo structure
 virtvalidate/

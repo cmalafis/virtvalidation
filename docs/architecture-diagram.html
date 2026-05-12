@@ -284,7 +284,25 @@ const DATA = {
             "method": "GET",
             "path": "/api/vms",
             "handler": "list_vms",
-            "summary": ""
+            "summary": "Paginated, filterable inventory listing."
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms/facets",
+            "handler": "vm_facets",
+            "summary": "Per-dimension counts so the filter UI can show \"Production (600)\"."
+          },
+          {
+            "method": "GET",
+            "path": "/api/vms/stats",
+            "handler": "vm_stats",
+            "summary": "Cheap dashboard counters \u2014 no filter set, no row reads."
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/vms/all",
+            "handler": "delete_all_vms",
+            "summary": "Bulk-delete every VM that matches the given filters."
           },
           {
             "method": "GET",
@@ -381,6 +399,7 @@ const DATA = {
           "app.core.limits",
           "app.core.validation",
           "app.models.validation",
+          "app.models.vcenter",
           "app.models.vm",
           "app.schemas.validation",
           "app.schemas.vm"
@@ -544,6 +563,57 @@ const DATA = {
               "status",
               "created_at",
               "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VMListResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "items",
+              "total",
+              "skip",
+              "limit"
+            ],
+            "methods": [],
+            "summary": "Paginated wrapper for the inventory listing."
+          },
+          {
+            "name": "VMFacetsResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "status",
+              "environment",
+              "os_family",
+              "application_hint",
+              "vcenter_source_id",
+              "classification_level",
+              "total"
+            ],
+            "methods": [],
+            "summary": "Per-dimension counts driven by the same filter set as list_vms."
+          },
+          {
+            "name": "VMStats",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "total",
+              "by_status",
+              "missing_from_last_upload"
+            ],
+            "methods": [],
+            "summary": "Cheap aggregate counters for dashboard headers."
+          },
+          {
+            "name": "DeleteAllVMsResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "deleted_count"
             ],
             "methods": [],
             "summary": ""
@@ -3387,6 +3457,7 @@ const DATA = {
           "app.core.config",
           "app.core.llm.base",
           "app.core.llm.kserve_backend",
+          "app.core.llm.mock_backend",
           "app.core.llm.ollama_backend",
           "app.core.llm.vllm_backend"
         ]
@@ -3424,6 +3495,59 @@ const DATA = {
               }
             ],
             "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.llm.base"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.mock_backend",
+        "title": "app.core.llm.mock_backend",
+        "subtitle": "backend/app/core/llm/mock_backend.py",
+        "summary": "Mock LLM backend \u2014 instant canned responses for local dev + CI.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "MockBackend",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "max_planning_chunk_size",
+              "max_context_tokens",
+              "supports_concurrent_calls",
+              "max_concurrent_calls"
+            ],
+            "methods": [
+              {
+                "name": "chat",
+                "summary": ""
+              },
+              {
+                "name": "chat_sync",
+                "summary": ""
+              },
+              {
+                "name": "chat_stream",
+                "summary": ""
+              },
+              {
+                "name": "health_check",
+                "summary": ""
+              },
+              {
+                "name": "list_models",
+                "summary": ""
+              },
+              {
+                "name": "info",
+                "summary": ""
+              }
+            ],
+            "summary": "In-process canned-response backend for local dev / CI."
           }
         ],
         "functions": [],
@@ -5762,6 +5886,57 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/components/InventoryTable.jsx",
+        "title": "InventoryTable.jsx",
+        "subtitle": "frontend/src/components/InventoryTable.jsx",
+        "summary": "Paginated inventory table for the dashboard's inventory tab.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/vms/all?{id}",
+          "/api/vms/facets?{id}",
+          "/api/vms?{id}"
+        ],
+        "members": [
+          {
+            "name": "StatusPill",
+            "kind": "component"
+          },
+          {
+            "name": "fmt",
+            "kind": "helper"
+          },
+          {
+            "name": "formatTimestamp",
+            "kind": "helper"
+          },
+          {
+            "name": "readStateFromUrl",
+            "kind": "helper"
+          },
+          {
+            "name": "writeStateToUrl",
+            "kind": "helper"
+          },
+          {
+            "name": "buildQueryString",
+            "kind": "helper"
+          },
+          {
+            "name": "DeleteAllModal",
+            "kind": "component"
+          },
+          {
+            "name": "FacetDropdown",
+            "kind": "component"
+          },
+          {
+            "name": "InventoryTable",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/components/NetworkReviewDetail.jsx",
         "title": "NetworkReviewDetail.jsx",
         "subtitle": "frontend/src/components/NetworkReviewDetail.jsx",
@@ -6504,18 +6679,21 @@ const DATA = {
           "/api/plans/{id}/waves/{id}/mtv-yaml",
           "/api/plans?limit=1",
           "/api/snapshots/capture-all",
+          "/api/sources/vcenters",
           "/api/storage-reviews",
           "/api/templates/csv",
           "/api/validations/run-all",
           "/api/vms",
           "/api/vms/bulk",
+          "/api/vms/stats",
           "/api/vms/{id}",
           "/api/vms/{id}/baseline/profile",
           "/api/vms/{id}/capture",
           "/api/vms/{id}/capture/{id}",
           "/api/vms/{id}/validate",
           "/api/vms/{id}/validate/{id}",
-          "/api/vms/{id}/validation/latest"
+          "/api/vms/{id}/validation/latest",
+          "/api/vms?limit=1000&sort_by=name"
         ],
         "members": [
           {
@@ -6596,10 +6774,6 @@ const DATA = {
           },
           {
             "name": "Metric",
-            "kind": "component"
-          },
-          {
-            "name": "VMMTVMapping",
             "kind": "component"
           },
           {

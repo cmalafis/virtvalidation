@@ -259,7 +259,7 @@ def test_trigger_validation_updates_vm_status_to_failed_on_critical(client, stub
 
     client.post(f"/api/vms/{vm['id']}/validate")
 
-    listing = client.get("/api/vms").json()
+    listing = client.get("/api/vms").json()["items"]
     target = next(v for v in listing if v["id"] == vm["id"])
     assert target["status"] == "failed"
 

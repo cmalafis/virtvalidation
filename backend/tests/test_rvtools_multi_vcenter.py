@@ -142,7 +142,7 @@ def test_multi_vcenter_file_routes_per_hostname(client):
     assert per_vc[vc_a]["created"] == 2
     assert per_vc[vc_b]["created"] == 1
     # VMs are correctly scoped.
-    vms = {vm["name"]: vm for vm in client.get("/api/vms").json()}
+    vms = {vm["name"]: vm for vm in client.get("/api/vms").json()["items"]}
     assert vms["alpha-1"]["source_vcenter_id"] == vc_a
     assert vms["beta-1"]["source_vcenter_id"] == vc_b
 

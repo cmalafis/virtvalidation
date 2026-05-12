@@ -30,6 +30,7 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=${DATABASE_URL}
+      - LLM_BACKEND_TYPE=mock
       - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3:8b}
       - SECRET_KEY=${SECRET_KEY}

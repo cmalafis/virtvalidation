@@ -1,0 +1,29 @@
+FROM registry.access.redhat.com/ubi9/nginx-124:latest
+
+ARG VERSION=0.1.0-dev
+ARG VCS_REF=unknown
+
+LABEL org.opencontainers.image.title="virtvalidate-frontend" \
+      org.opencontainers.image.description="VirtValidate React dashboard" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="https://github.com/virtvalidate/virtvalidate" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/nginx-124:latest"
+
+USER 0
+COPY dist/ /opt/app-root/src/
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+
+RUN chgrp -R 0 /opt/app-root/src /etc/nginx /usr/local/bin/entrypoint.sh \
+    && chmod -R g=u /opt/app-root/src /etc/nginx /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
+USER 1001
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8080/ > /dev/null || exit 1
+
+CMD ["/usr/local/bin/entrypoint.sh"]

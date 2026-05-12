@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { throwForResponse } from "../utils/apiError";
 
 import { parseCSV, parseXLSXRows, rowToPayload } from "../utils/parseRVTools";
+import InventoryTable from "./InventoryTable";
 
 const STATUS_CONFIG = {
   healthy:  { color: "#00ff88", bg: "rgba(0,255,136,0.08)", label: "HEALTHY",  dot: "#00ff88" },
@@ -427,47 +428,6 @@ function WaveMTVDownload({ planId, waveNumber }) {
   );
 }
 
-// MTV mapping rendered as a compact section under the inventory metric grid.
-// Renders nothing when the VM has no source/target mapping at all — keeps
-// the card height stable for VMs operators haven't filled out yet.
-const VMMTVMapping = ({ vm }) => {
-  const networks = vm.vsphereNetworks || [];
-  const datastores = vm.vsphereDatastores || [];
-  const hasSource = networks.length > 0 || datastores.length > 0;
-  const hasTarget = vm.targetNamespace || vm.targetStorageClass || vm.targetNetworkAttachment;
-  if (!hasSource && !hasTarget) return null;
-
-  const row = (label, value) => (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 6 }}>
-      <span style={{
-        fontSize: 11, color: "#aaaacc", fontFamily: "'Barlow', sans-serif",
-        letterSpacing: "0.08em", textTransform: "uppercase",
-        fontWeight: 600, flexShrink: 0,
-      }}>{label}</span>
-      <span style={{
-        fontSize: 13, color: "#ccccee", fontFamily: "'Share Tech Mono', monospace",
-        textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-      }} title={value}>{value || "—"}</span>
-    </div>
-  );
-
-  return (
-    <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #14142a" }}>
-      <div style={{
-        fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
-        fontFamily: "'Barlow', sans-serif", textTransform: "uppercase",
-        fontWeight: 700, marginBottom: 6,
-      }}>
-        MTV Mapping
-      </div>
-      {networks.length > 0 && row("Networks", networks.join(", "))}
-      {datastores.length > 0 && row("Datastores", datastores.join(", "))}
-      {vm.targetNamespace && row("→ Namespace", vm.targetNamespace)}
-      {vm.targetStorageClass && row("→ StorageClass", vm.targetStorageClass)}
-      {vm.targetNetworkAttachment && row("→ NAD", vm.targetNetworkAttachment)}
-    </div>
-  );
-};
 
 // Skeleton bar — animated shimmer for loading rows
 const Shimmer = ({ width = "100%", height = 12 }) => (
@@ -1730,8 +1690,13 @@ export default function VirtValidate() {
   const loadVMs = useCallback(async ({ retry = false } = {}) => {
     if (retry) setVmsRetrying(true); else setVmsLoading(true);
     try {
-      const { data } = await fetchJSON("/api/vms");
-      const list = data || [];
+      // Validation tab + plan tab still consume the local `vms` array.
+      // Pull the largest page the backend allows so those views see
+      // the full inventory at <=1000 VMs. For larger fleets the
+      // dashboard counter falls back to /api/vms/stats; the inventory
+      // tab uses its own paginated fetch.
+      const { data } = await fetchJSON("/api/vms?limit=1000&sort_by=name");
+      const list = data?.items || [];
       setVms(list.map(mapVM));
       setVmsRaw(new Map(list.map((vm) => [vm.id, vm])));
       setVmsError(null);
@@ -1741,6 +1706,20 @@ export default function VirtValidate() {
     } finally {
       setVmsLoading(false);
       setVmsRetrying(false);
+    }
+  }, []);
+
+  // /api/vms/stats — accurate fleet-wide counters that don't depend on
+  // the paginated `vms` page. The dashboard tile reads from this; the
+  // inventory table refreshes it on mutations so the header stays in
+  // sync with what the operator just changed.
+  const [stats, setStats] = useState(null);
+  const loadStats = useCallback(async () => {
+    try {
+      const { data } = await fetchJSON("/api/vms/stats");
+      setStats(data || null);
+    } catch {
+      setStats(null);
     }
   }, []);
 
@@ -1859,7 +1838,29 @@ export default function VirtValidate() {
 
   // Initial loads
   useEffect(() => { loadVMs(); }, [loadVMs]);
+  useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { loadPlan(); }, [loadPlan]);
+
+  // vCenter sources list — surfaced as a filter dimension on the
+  // inventory table. Lightweight; refresh when the inventory mutates.
+  const [vcenterSources, setVcenterSources] = useState([]);
+  const loadVcenterSources = useCallback(async () => {
+    try {
+      const { data } = await fetchJSON("/api/sources/vcenters");
+      setVcenterSources(Array.isArray(data) ? data : []);
+    } catch {
+      setVcenterSources([]);
+    }
+  }, []);
+  useEffect(() => { loadVcenterSources(); }, [loadVcenterSources]);
+
+  // Bump this any time something mutates VMs so the inventory table
+  // re-fetches its current page even when the parent doesn't unmount it.
+  const [inventoryRefreshSignal, setInventoryRefreshSignal] = useState(0);
+  const bumpInventoryRefresh = useCallback(() => {
+    setInventoryRefreshSignal((n) => n + 1);
+    loadStats();
+  }, [loadStats]);
 
   // Audit log: fetch lazily when tab opens, and re-fetch on filter change.
   useEffect(() => {
@@ -2182,10 +2183,11 @@ export default function VirtValidate() {
       setVMToDelete(null);
       if (selectedVMId === vm.id) setSelectedVMId(null);
       loadVMs();
+      bumpInventoryRefresh();
     } catch (e) {
       toast.error(e.message || `Failed to delete ${vm.name}`, TOAST_OPTS);
     }
-  }, [loadVMs, selectedVMId]);
+  }, [loadVMs, selectedVMId, bumpInventoryRefresh]);
 
   const onBulkDeleteConfirmed = useCallback(async (targets) => {
     const ids = targets.map((t) => t.id);
@@ -2203,18 +2205,11 @@ export default function VirtValidate() {
       setSelectedIds(new Set());
       setBulkDeleteOpen(false);
       loadVMs();
+      bumpInventoryRefresh();
     } catch (e) {
       toast.error(e.message || "Bulk delete failed", TOAST_OPTS);
     }
-  }, [loadVMs]);
-
-  const toggleSelected = useCallback((id) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
+  }, [loadVMs, bumpInventoryRefresh]);
 
   const selectedVM = useMemo(() => vms.find((v) => v.id === selectedVMId) || null, [vms, selectedVMId]);
   const vmNameById = useMemo(() => {
@@ -2223,11 +2218,30 @@ export default function VirtValidate() {
     return m;
   }, [vms]);
 
+  // Header counters source-of-truth: /api/vms/stats. The local `vms`
+  // array is only a single page of the inventory, so deriving counts
+  // from it would silently report wrong totals on >page_size fleets.
+  // Fall back to the page-derived counts only when stats is still
+  // loading on first paint.
   const { healthy, degraded, failed, pending, total } = useMemo(() => {
+    if (stats && stats.by_status) {
+      const bs = stats.by_status;
+      return {
+        healthy: bs.validated || 0,
+        failed: bs.failed || 0,
+        // "degraded" is a verdict-level concept set by the validator;
+        // it has no corresponding VM.status enum value, so the
+        // dashboard header reports 0 here and the inventory table's
+        // status column reflects per-VM verdicts where they exist.
+        degraded: 0,
+        pending: (bs.discovered || 0) + (bs.baseline_captured || 0) + (bs.migrated || 0),
+        total: stats.total || 0,
+      };
+    }
     const counts = { healthy: 0, degraded: 0, failed: 0, pending: 0 };
     for (const v of vms) counts[v.postStatus] = (counts[v.postStatus] || 0) + 1;
     return { ...counts, total: vms.length };
-  }, [vms]);
+  }, [stats, vms]);
 
   const validatedPct = total === 0 ? 0 : Math.round(((healthy + degraded + failed) / total) * 100);
   const tabs = ["validation", "migration plan", "inventory", "reports", "design review", "audit log"];
@@ -2796,173 +2810,26 @@ export default function VirtValidate() {
             </div>
           )}
 
-          {/* INVENTORY TAB */}
+          {/* INVENTORY TAB — paginated table with filters, sort, bulk
+              actions. Owned by InventoryTable; we pass action callbacks
+              that delegate back to the existing modals + audit flows. */}
           {activeTab === "inventory" && (
-            <div className="fade-in">
-              {vmsError ? (
-                <ErrorState
-                  title="Couldn't load VM inventory"
-                  message={vmsError}
-                  onRetry={() => loadVMs({ retry: true })}
-                  retrying={vmsRetrying}
-                />
-              ) : vmsLoading ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} style={{ border: "1px solid #1a1a2e", background: "#0a0a18", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-                      <Shimmer width="60%" height={14}/>
-                      <Shimmer width="40%" height={10}/>
-                      <Shimmer width="100%" height={10}/>
-                      <Shimmer width="85%" height={10}/>
-                    </div>
-                  ))}
-                </div>
-              ) : total === 0 ? (
-                <EmptyState
-                  icon="◌"
-                  title="No VMs in inventory"
-                  description="Enroll a VM by submitting its source hostname and SSH details. VirtValidate will collect baselines on the next scheduled pass."
-                  ctaLabel="Add Your First VM"
-                  onCta={() => setAddVMOpen(true)}
-                />
-              ) : (
-                <>
-                  {/* Bulk-action bar appears once any VM is selected. */}
-                  {selectedIds.size > 0 && (
-                    <div style={{
-                      display: "flex", justifyContent: "space-between", alignItems: "center",
-                      marginBottom: 14, padding: "12px 18px",
-                      border: "1px solid #4488ff66", background: "rgba(68,136,255,0.06)",
-                    }}>
-                      <span style={{
-                        fontSize: 13, color: "#eeeeff", fontFamily: "'Barlow', sans-serif", fontWeight: 600,
-                      }}>
-                        {selectedIds.size} selected
-                      </span>
-                      <div style={{ display: "flex", gap: 10 }}>
-                        <SecondaryButton onClick={() => setSelectedIds(new Set())}>
-                          Clear
-                        </SecondaryButton>
-                        <button
-                          type="button"
-                          onClick={() => setBulkDeleteOpen(true)}
-                          style={{
-                            background: "transparent", border: "1px solid #ff5577",
-                            color: "#ff99aa", padding: "10px 16px", fontSize: 12,
-                            fontFamily: "'Barlow', sans-serif", letterSpacing: "0.06em",
-                            textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
-                          }}>
-                          Delete Selected
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-                    {vms.map(vm => {
-                      const checked = selectedIds.has(vm.id);
-                      const capturing = activeCaptures.has(vm.id);
-                      const original = vmsRaw.get(vm.id);
-                      return (
-                        <div key={vm.id} style={{
-                          border: `1px solid ${checked ? "#4488ff" : "#1a1a2e"}`,
-                          background: checked ? "rgba(68,136,255,0.04)" : "#0a0a18",
-                          padding: 24,
-                          transition: "all 0.15s",
-                        }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, gap: 12 }}>
-                            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => toggleSelected(vm.id)}
-                                aria-label={`Select ${vm.name}`}
-                                style={{ accentColor: "#4488ff", width: 16, height: 16, marginTop: 4 }}
-                              />
-                              <div>
-                                <Link
-                                  to={`/vms/${vm.id}`}
-                                  style={{
-                                    fontSize: 16, fontFamily: "'Barlow', sans-serif",
-                                    fontWeight: 700, color: "#eeeeff",
-                                    textDecoration: "none", display: "block",
-                                  }}
-                                  onMouseEnter={(e) => { e.currentTarget.style.color = "#aaccff"; }}
-                                  onMouseLeave={(e) => { e.currentTarget.style.color = "#eeeeff"; }}
-                                >{vm.name} →</Link>
-                                <div style={{
-                                  fontSize: 13, color: "#aaaacc", marginTop: 4,
-                                  fontFamily: "'Barlow', sans-serif",
-                                }}>{vm.role}</div>
-                              </div>
-                            </div>
-                            <StatusBadge status={vm.postStatus} />
-                          </div>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                            <Metric label="OS" value={vm.os} />
-                            <Metric label="IP" value={vm.ip} />
-                            <Metric label="vCPU" value={fmt(vm.cpu)} />
-                            <Metric label="Memory" value={vm.mem == null ? "—" : `${vm.mem}GB`} />
-                            <Metric label="Disk" value={fmt(vm.disk)} />
-                            <Metric label="Status" value={vm.rawStatus} />
-                          </div>
-                          <VMMTVMapping vm={vm} />
-
-                          {/* Per-VM action footer */}
-                          <div style={{
-                            display: "flex", gap: 8, marginTop: 18, paddingTop: 14,
-                            borderTop: "1px solid #14142a",
-                          }}>
-                            <button
-                              type="button"
-                              onClick={() => onCaptureSingle(vm)}
-                              disabled={capturing}
-                              style={{
-                                flex: 1, display: "inline-flex", alignItems: "center",
-                                justifyContent: "center", gap: 6,
-                                background: "transparent", border: "1px solid #4488ff",
-                                color: capturing ? "#7788aa" : "#aaccff",
-                                padding: "8px 12px", fontSize: 11,
-                                fontFamily: "'Barlow', sans-serif",
-                                letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
-                                cursor: capturing ? "wait" : "pointer",
-                              }}>
-                              {capturing ? <Spinner size={11}/> : "📡"} {capturing ? "Capturing…" : "Capture Now"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setEditingVM(original ?? vm)}
-                              title="Edit VM details"
-                              aria-label={`Edit ${vm.name}`}
-                              style={{
-                                background: "transparent", border: "1px solid #3a3a55",
-                                color: "#aaaacc",
-                                padding: "8px 12px", fontSize: 13,
-                                fontFamily: "'Barlow', sans-serif", cursor: "pointer",
-                              }}>
-                              ✎
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setVMToDelete(original ?? vm)}
-                              title="Delete VM"
-                              aria-label={`Delete ${vm.name}`}
-                              style={{
-                                background: "transparent", border: "1px solid #ff557755",
-                                color: "#ff99aa",
-                                padding: "8px 12px", fontSize: 13,
-                                fontFamily: "'Barlow', sans-serif", cursor: "pointer",
-                              }}>
-                              🗑
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
+            <InventoryTable
+              vcenterSources={vcenterSources}
+              refreshSignal={inventoryRefreshSignal}
+              onMutate={bumpInventoryRefresh}
+              onAddVM={() => setAddVMOpen(true)}
+              onBulkImport={() => { window.location.assign("/rvtools/upload"); }}
+              onCapture={(vm) => onCaptureSingle(vm)}
+              onEdit={(vm) => setEditingVM(vm)}
+              onDelete={(vm) => setVMToDelete(vm)}
+              onBulkDelete={(targets) => {
+                // Stash the bulk target list so BulkDeleteVMsModal can
+                // render the same confirmation UX it already supports.
+                setSelectedIds(new Set(targets.map((t) => t.id)));
+                setBulkDeleteOpen(true);
+              }}
+            />
           )}
 
           {/* REPORTS TAB */}
@@ -3383,13 +3250,13 @@ export default function VirtValidate() {
       <EnrollVMsModal
         open={addVMOpen}
         onClose={() => setAddVMOpen(false)}
-        onCreated={() => loadVMs()}
+        onCreated={() => { loadVMs(); bumpInventoryRefresh(); }}
       />
       <EnrollVMsModal
         open={Boolean(editingVM)}
         editingVM={editingVM}
         onClose={() => setEditingVM(null)}
-        onCreated={() => loadVMs()}
+        onCreated={() => { loadVMs(); bumpInventoryRefresh(); }}
       />
       <GeneratePlanModal
         open={planModalOpen}

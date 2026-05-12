@@ -17,10 +17,11 @@ import threading
 from app.core.config import Settings, settings as _module_settings
 from app.core.llm.base import LLMBackend, LLMBackendError
 from app.core.llm.kserve_backend import KServeBackend
+from app.core.llm.mock_backend import MockBackend
 from app.core.llm.ollama_backend import OllamaBackend
 from app.core.llm.vllm_backend import VLLMBackend
 
-_SUPPORTED_BACKENDS = {"ollama", "kserve", "vllm"}
+_SUPPORTED_BACKENDS = {"ollama", "kserve", "vllm", "mock"}
 
 # Process-wide cache. The settings object is itself a singleton, so a
 # single backend instance covers every request.
@@ -79,6 +80,10 @@ def _instantiate(backend_type: str, cfg: Settings) -> LLMBackend:
             endpoint=cfg.vllm_endpoint,
             model_name=cfg.vllm_model_name,
         )
+    if backend_type == "mock":
+        # Dev-only canned-response backend. See app/core/llm/mock_backend.py
+        # and docs/MOCK_BACKEND.md — never deploy this to production.
+        return MockBackend()
     # _SUPPORTED_BACKENDS gate above already filters this — defensive only.
     raise LLMBackendError(f"Unhandled backend type: {backend_type}")  # pragma: no cover
 

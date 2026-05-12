@@ -5,14 +5,9 @@
 # meant our v0.1 conf.d/default.conf was silently ignored.
 #
 # Listens on 8080 to match UBI's non-privileged convention.
-#
-# Temp paths target /tmp because the Helm chart mounts /var/lib/nginx
-# and /run as emptyDir volumes — those mounts overlay (hide) any
-# subdirectories baked into the image. /tmp is mounted as its own
-# emptyDir, so it stays writable for an arbitrary OCP-assigned UID.
 worker_processes auto;
-error_log /tmp/nginx-error.log notice;
-pid /tmp/nginx.pid;
+error_log /var/log/nginx/error.log notice;
+pid /run/nginx.pid;
 
 events {
     worker_connections 1024;
@@ -23,16 +18,6 @@ http {
     default_type  application/octet-stream;
     sendfile      on;
     keepalive_timeout 65;
-
-    # All writable nginx state lives under /tmp so the Helm chart's
-    # /var/lib/nginx and /run emptyDir mounts don't hide it.
-    client_body_temp_path /tmp/nginx/client_body;
-    proxy_temp_path       /tmp/nginx/proxy;
-    fastcgi_temp_path     /tmp/nginx/fastcgi;
-    uwsgi_temp_path       /tmp/nginx/uwsgi;
-    scgi_temp_path        /tmp/nginx/scgi;
-
-    access_log /tmp/nginx-access.log;
 
     # Reasonable upload ceiling for RVTools XLSX uploads (parsed
     # client-side normally, but oversize files still hit nginx).
@@ -50,7 +35,7 @@ http {
         }
 
         location /api/ {
-            proxy_pass http://virtvalidate-backend:8000;
+            proxy_pass http://backend:8000;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;

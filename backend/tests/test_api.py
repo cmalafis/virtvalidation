@@ -18,7 +18,11 @@ def test_health_endpoint_returns_ok(client):
 def test_list_vms_empty_by_default(client):
     r = client.get("/api/vms")
     assert r.status_code == 200
-    assert r.json() == []
+    body = r.json()
+    assert body["items"] == []
+    assert body["total"] == 0
+    assert body["skip"] == 0
+    assert body["limit"] == 50  # DEFAULT_PAGE_SIZE
 
 
 def test_create_vm_persists_and_returns_201(client, mock_vm_payload):
@@ -37,9 +41,10 @@ def test_list_vms_returns_created_vm(client, mock_vm_payload):
     client.post("/api/vms", json=mock_vm_payload)
     r = client.get("/api/vms")
     assert r.status_code == 200
-    vms = r.json()
-    assert len(vms) == 1
-    assert vms[0]["name"] == "db-01"
+    body = r.json()
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+    assert body["items"][0]["name"] == "db-01"
 
 
 def test_create_duplicate_vm_returns_409(client, mock_vm_payload):
@@ -72,10 +77,14 @@ def test_list_vms_filters_by_status(client, mock_vm_payload):
     client.post("/api/vms", json=mock_vm_payload)
     r = client.get("/api/vms?status=discovered")
     assert r.status_code == 200
-    assert len(r.json()) == 1
+    body = r.json()
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
     r = client.get("/api/vms?status=validated")
     assert r.status_code == 200
-    assert r.json() == []
+    body = r.json()
+    assert body["total"] == 0
+    assert body["items"] == []
 
 
 def test_list_vms_respects_limit(client):
@@ -86,7 +95,11 @@ def test_list_vms_respects_limit(client):
         )
     r = client.get("/api/vms?limit=3")
     assert r.status_code == 200
-    assert len(r.json()) == 3
+    body = r.json()
+    # total reflects pre-pagination count; items is the clipped page.
+    assert body["total"] == 5
+    assert len(body["items"]) == 3
+    assert body["limit"] == 3
 
 
 def test_bulk_create_persists_and_reports_dupes(client, mock_vm_payload):
@@ -118,7 +131,7 @@ def test_bulk_create_persists_and_reports_dupes(client, mock_vm_payload):
     assert "batch" in skipped_by_name["app-01"]
 
     # The two new VMs landed in the DB
-    listing = client.get("/api/vms").json()
+    listing = client.get("/api/vms").json()["items"]
     assert {v["name"] for v in listing} == {"db-01", "app-01", "app-02"}
 
     # ssh_user round-trips

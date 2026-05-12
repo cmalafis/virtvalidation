@@ -29,7 +29,7 @@ Enrolling, listing, editing, and deleting VMs.
 <details><summary><strong><code>app.api.vms</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/vms.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.limits`, `app.core.validation`, `app.models.validation`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
+Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.limits`, `app.core.validation`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
 
 **Routes**
 
@@ -37,7 +37,10 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core
 |---|---|---|---|
 | `POST` | `/api/vms` | `create_vm(payload, db)` | — |
 | `POST` | `/api/vms/bulk` | `create_vms_bulk(payload, db)` | Best-effort batch enrollment. |
-| `GET` | `/api/vms` | `list_vms(db, status_filter, limit, offset)` | — |
+| `GET` | `/api/vms` | `list_vms(db, skip, limit, sort_by, sort_order, status_filter, vcenter_source_id, environment, application_hint, os_family, classification_level, search, offset)` | Paginated, filterable inventory listing. |
+| `GET` | `/api/vms/facets` | `vm_facets(db, status_filter, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Per-dimension counts so the filter UI can show &quot;Production (600)&quot;. |
+| `GET` | `/api/vms/stats` | `vm_stats(db)` | Cheap dashboard counters — no filter set, no row reads. |
+| `DELETE` | `/api/vms/all` | `delete_all_vms(request, db, confirm, status_filter, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Bulk-delete every VM that matches the given filters. |
 | `GET` | `/api/vms/{vm_id}` | `get_vm(vm_id, db)` | — |
 | `PATCH` | `/api/vms/{vm_id}` | `update_vm(request, vm_id, payload, db)` | — |
 | `DELETE` | `/api/vms/{vm_id}` | `delete_vm(request, vm_id, db)` | — |
@@ -84,6 +87,17 @@ Depends on: `app.core.limits`, `app.models.vm`
   - Fields: `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`
 - **`VMRead`** (Class)
   - Fields: `id`, `status`, `created_at`, `updated_at`
+- **`VMListResponse`** (Pydantic schema)
+  - Paginated wrapper for the inventory listing.
+  - Fields: `items`, `total`, `skip`, `limit`
+- **`VMFacetsResponse`** (Pydantic schema)
+  - Per-dimension counts driven by the same filter set as list_vms.
+  - Fields: `status`, `environment`, `os_family`, `application_hint`, `vcenter_source_id`, `classification_level`, `total`
+- **`VMStats`** (Pydantic schema)
+  - Cheap aggregate counters for dashboard headers.
+  - Fields: `total`, `by_status`, `missing_from_last_upload`
+- **`DeleteAllVMsResult`** (Pydantic schema)
+  - Fields: `deleted_count`
 - **`BulkVMCreate`** (Pydantic schema)
   - Fields: `vms`
 - **`BulkVMSkipped`** (Pydantic schema)
@@ -1007,7 +1021,7 @@ Depends on: `app.core.llm.base`, `app.core.llm.factory`
 <details><summary><strong><code>app.core.llm.factory</code></strong> — <em>Business logic</em> · Factory — picks the configured backend based on settings.</summary>
 
 Path: `backend/app/core/llm/factory.py`  
-Depends on: `app.core.config`, `app.core.llm.base`, `app.core.llm.kserve_backend`, `app.core.llm.ollama_backend`, `app.core.llm.vllm_backend`
+Depends on: `app.core.config`, `app.core.llm.base`, `app.core.llm.kserve_backend`, `app.core.llm.mock_backend`, `app.core.llm.ollama_backend`, `app.core.llm.vllm_backend`
 
 **Functions**
 
@@ -1029,6 +1043,26 @@ Depends on: `app.core.llm.base`
     - `chat_stream(self, messages, model, temperature)`
     - `health_check(self)`
     - `list_models(self)`
+
+</details>
+
+<details><summary><strong><code>app.core.llm.mock_backend</code></strong> — <em>Business logic</em> · Mock LLM backend — instant canned responses for local dev + CI.</summary>
+
+Path: `backend/app/core/llm/mock_backend.py`  
+Depends on: `app.core.llm.base`
+
+**Classes**
+
+- **`MockBackend`** (Class)
+  - In-process canned-response backend for local dev / CI.
+  - Fields: `max_planning_chunk_size`, `max_context_tokens`, `supports_concurrent_calls`, `max_concurrent_calls`
+  - Methods:
+    - `chat(self, messages, model, temperature, max_tokens)`
+    - `chat_sync(self, messages, model, temperature, max_tokens)`
+    - `chat_stream(self, messages, model, temperature)`
+    - `health_check(self)`
+    - `list_models(self)`
+    - `info(self)`
 
 </details>
 
@@ -1708,6 +1742,26 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/components/InventoryTable.jsx</code></strong> — <em>Frontend component</em> · Paginated inventory table for the dashboard&#x27;s inventory tab.</summary>
+
+API calls:
+- `/api/vms/all?{id}`
+- `/api/vms/facets?{id}`
+- `/api/vms?{id}`
+
+Exports / inner components:
+- **`StatusPill`** (component)
+- **`fmt`** (helper)
+- **`formatTimestamp`** (helper)
+- **`readStateFromUrl`** (helper)
+- **`writeStateToUrl`** (helper)
+- **`buildQueryString`** (helper)
+- **`DeleteAllModal`** (component)
+- **`FacetDropdown`** (component)
+- **`InventoryTable`** (component)
+
+</details>
+
 <details><summary><strong><code>frontend/src/components/NetworkReviewDetail.jsx</code></strong> — <em>Frontend component</em> · Per-review detail page. Renders the full report view + lets operators</summary>
 
 API calls:
@@ -2007,11 +2061,13 @@ API calls:
 - `/api/plans/{id}/waves/{id}/mtv-yaml`
 - `/api/plans?limit=1`
 - `/api/snapshots/capture-all`
+- `/api/sources/vcenters`
 - `/api/storage-reviews`
 - `/api/templates/csv`
 - `/api/validations/run-all`
 - `/api/vms`
 - `/api/vms/bulk`
+- `/api/vms/stats`
 - `/api/vms/{id}`
 - `/api/vms/{id}/baseline/profile`
 - `/api/vms/{id}/capture`
@@ -2019,6 +2075,7 @@ API calls:
 - `/api/vms/{id}/validate`
 - `/api/vms/{id}/validate/{id}`
 - `/api/vms/{id}/validation/latest`
+- `/api/vms?limit=1000&sort_by=name`
 
 Exports / inner components:
 - **`NetworkReviewStatusPill`** (component)
@@ -2041,7 +2098,6 @@ Exports / inner components:
 - **`StatusBadge`** (component)
 - **`SeverityTag`** (component)
 - **`Metric`** (component)
-- **`VMMTVMapping`** (component)
 - **`Shimmer`** (component)
 - **`SkeletonRow`** (component)
 - **`TableSkeleton`** (component)
