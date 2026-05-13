@@ -306,6 +306,11 @@ function normaliseNamespaceStrategy(raw) {
   };
 }
 
+// Sentinel value the dropdown emits when the operator picks
+// "+ Create new …". Distinct from any real entity name so we can
+// detect it in the onChange handler without ambiguity.
+const CREATE_NEW_SENTINEL = "__create_new__";
+
 export function ResourceMappingDetail() {
   const { id } = useParams();
   const [mapping, setMapping] = useState(null);
@@ -322,31 +327,51 @@ export function ResourceMappingDetail() {
   const [active, setActive] = useState(false);
   const [saving, setSaving] = useState(false);
   const [preflight, setPreflight] = useState(null);
+  // When the operator picks "+ Create new …" we stash the row that
+  // triggered the modal so we can auto-select the new entity onto
+  // that row once it's created.
+  const [creatingNetworkFor, setCreatingNetworkFor] = useState(null);
+  const [creatingSCFor, setCreatingSCFor] = useState(null);
+  // Loaded snapshot for the dirty-flag — compared against current
+  // state to drive the Save button's disabled state.
+  const [loadedSnapshot, setLoadedSnapshot] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     try {
       const m = await fetchJSON(`/api/mappings/${id}`);
-      const t = await fetchJSON(`/api/sources/targets/${m.ocp_target_id}`);
+      const t = await fetchJSON(`/api/sources/targets/${m?.ocp_target_id}`);
       const [nets, scs] = await Promise.all([
-        fetchJSON(`/api/ocp-targets/${m.ocp_target_id}/networks`),
-        fetchJSON(`/api/ocp-targets/${m.ocp_target_id}/storage-classes`),
+        fetchJSON(`/api/ocp-targets/${m?.ocp_target_id}/networks`),
+        fetchJSON(`/api/ocp-targets/${m?.ocp_target_id}/storage-classes`),
       ]);
       // Source signals: walk VMs in this vCenter to count distinct
       // network names and datastore names. limit=1000 matches the
       // backend MAX_PAGE_SIZE cap.
-      const vmsResp = await fetchJSON(`/api/vms?source_vcenter_id=${m.vcenter_source_id}&limit=1000`);
+      const vmsResp = await fetchJSON(`/api/vms?source_vcenter_id=${m?.vcenter_source_id}&limit=1000`);
       const netCount = {}; const dsCount = {};
       for (const vm of (Array.isArray(vmsResp) ? vmsResp : (vmsResp?.items || []))) {
-        for (const n of vm.vsphere_networks || []) netCount[n] = (netCount[n] || 0) + 1;
-        for (const d of vm.vsphere_datastores || []) dsCount[d] = (dsCount[d] || 0) + 1;
+        for (const n of vm?.vsphere_networks || []) netCount[n] = (netCount[n] || 0) + 1;
+        for (const d of vm?.vsphere_datastores || []) dsCount[d] = (dsCount[d] || 0) + 1;
       }
       setMapping(m); setTarget(t);
-      setTargetNetworks(nets); setTargetSCs(scs);
-      setName(m.name); setActive(!!m.is_active);
-      setNetworkRows(m.network_mappings || []);
-      setStorageRows(m.storage_mappings || []);
-      setNsStrategy(normaliseNamespaceStrategy(m.namespace_mappings));
+      setTargetNetworks(nets || []); setTargetSCs(scs || []);
+      const initName = m?.name ?? "";
+      const initActive = !!m?.is_active;
+      const initNetRows = m?.network_mappings ?? [];
+      const initStoreRows = m?.storage_mappings ?? [];
+      const initNs = normaliseNamespaceStrategy(m?.namespace_mappings);
+      setName(initName); setActive(initActive);
+      setNetworkRows(initNetRows);
+      setStorageRows(initStoreRows);
+      setNsStrategy(initNs);
+      setLoadedSnapshot({
+        name: initName,
+        active: initActive,
+        networkRows: initNetRows,
+        storageRows: initStoreRows,
+        nsStrategy: initNs,
+      });
       setSourceSignals({
         networks: Object.entries(netCount).sort((a, b) => b[1] - a[1]).map(([n, c]) => ({ name: n, count: c })),
         datastores: Object.entries(dsCount).sort((a, b) => b[1] - a[1]).map(([n, c]) => ({ name: n, count: c })),
@@ -355,6 +380,19 @@ export function ResourceMappingDetail() {
     finally { setLoading(false); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
+
+  // Refetch only the target-entity catalogs (used after inline create
+  // so the dropdown picks up the new row without a full reload).
+  const refetchCatalogs = useCallback(async () => {
+    if (!mapping?.ocp_target_id) return { nets: [], scs: [] };
+    const [nets, scs] = await Promise.all([
+      fetchJSON(`/api/ocp-targets/${mapping.ocp_target_id}/networks`),
+      fetchJSON(`/api/ocp-targets/${mapping.ocp_target_id}/storage-classes`),
+    ]);
+    setTargetNetworks(nets || []);
+    setTargetSCs(scs || []);
+    return { nets: nets || [], scs: scs || [] };
+  }, [mapping?.ocp_target_id]);
 
   // Render one row per distinct source network/datastore (signal-driven).
   // Existing mapping rows are merged so saved-but-no-longer-seen sources
@@ -380,6 +418,19 @@ export function ResourceMappingDetail() {
   const mappedNetworkCount = allNetworkRows.filter((r) => r.target_network_name).length;
   const mappedStorageCount = allStorageRows.filter((r) => r.target_storage_class).length;
 
+  // Dirty flag: did anything change since load? Stringify is good enough
+  // here — payloads are small and shape-equal arrays serialize identically.
+  const isDirty = useMemo(() => {
+    if (!loadedSnapshot) return false;
+    return (
+      loadedSnapshot.name !== name
+      || loadedSnapshot.active !== active
+      || JSON.stringify(loadedSnapshot.networkRows) !== JSON.stringify(networkRows)
+      || JSON.stringify(loadedSnapshot.storageRows) !== JSON.stringify(storageRows)
+      || JSON.stringify(loadedSnapshot.nsStrategy) !== JSON.stringify(nsStrategy)
+    );
+  }, [loadedSnapshot, name, active, networkRows, storageRows, nsStrategy]);
+
   // Pick the chosen target's metadata so we can auto-fill the read-only
   // type + namespace columns when the operator picks a target.
   const networkByName = useMemo(() => {
@@ -388,7 +439,7 @@ export function ResourceMappingDetail() {
     return m;
   }, [targetNetworks]);
 
-  const updateNetworkTarget = (sourceName, targetName) => {
+  const updateNetworkTarget = useCallback((sourceName, targetName) => {
     setNetworkRows((rows) => {
       const idx = rows.findIndex((r) => r.source_network === sourceName);
       const meta = targetName ? networkByName[targetName] : null;
@@ -403,9 +454,9 @@ export function ResourceMappingDetail() {
       out[idx] = { ...out[idx], ...patched };
       return out;
     });
-  };
+  }, [networkByName]);
 
-  const updateStorageTarget = (sourceName, targetName) => {
+  const updateStorageTarget = useCallback((sourceName, targetName) => {
     setStorageRows((rows) => {
       const idx = rows.findIndex((r) => r.source_datastore === sourceName);
       const patched = {
@@ -417,43 +468,89 @@ export function ResourceMappingDetail() {
       out[idx] = { ...out[idx], ...patched };
       return out;
     });
+  }, []);
+
+  // Dropdown change handler — intercepts the sentinel and opens the
+  // inline-create modal instead of writing it into the row.
+  const handleNetworkSelect = (sourceName, value) => {
+    if (value === CREATE_NEW_SENTINEL) {
+      setCreatingNetworkFor(sourceName);
+      return;
+    }
+    updateNetworkTarget(sourceName, value);
+  };
+  const handleStorageSelect = (sourceName, value) => {
+    if (value === CREATE_NEW_SENTINEL) {
+      setCreatingSCFor(sourceName);
+      return;
+    }
+    updateStorageTarget(sourceName, value);
+  };
+
+  const onNetworkCreated = async (newEntry) => {
+    // Refetch the canonical list so we never trust a single response
+    // for downstream meta lookups, then auto-select onto the row.
+    const { nets } = await refetchCatalogs();
+    const targetRow = creatingNetworkFor;
+    setCreatingNetworkFor(null);
+    if (targetRow && (nets || []).some((n) => n.name === newEntry?.name)) {
+      updateNetworkTarget(targetRow, newEntry.name);
+    }
+  };
+  const onSCCreated = async (newEntry) => {
+    const { scs } = await refetchCatalogs();
+    const targetRow = creatingSCFor;
+    setCreatingSCFor(null);
+    if (targetRow && (scs || []).some((s) => s.name === newEntry?.name)) {
+      updateStorageTarget(targetRow, newEntry.name);
+    }
   };
 
   const save = async () => {
     setSaving(true);
     try {
+      const patchedNetworkRows = networkRows
+        .filter((r) => r.target_network_name)
+        .map((r) => {
+          const meta = networkByName[r.target_network_name];
+          return {
+            source_network: r.source_network,
+            target_network_name: r.target_network_name,
+            target_network_type: meta?.network_type || r.target_network_type || "nad",
+            target_namespace: meta?.namespace || r.target_namespace || null,
+            confidence: r.confidence,
+            rationale: r.rationale,
+          };
+        });
+      const patchedStorageRows = storageRows
+        .filter((r) => r.target_storage_class)
+        .map((r) => ({
+          source_datastore: r.source_datastore,
+          target_storage_class: r.target_storage_class,
+          access_mode: r.access_mode || null,
+          confidence: r.confidence,
+          rationale: r.rationale,
+        }));
       const patched = await fetchJSON(`/api/mappings/${id}`, {
         method: "PATCH",
         body: {
           name: name.trim(),
           is_active: active,
-          network_mappings: networkRows
-            .filter((r) => r.target_network_name)
-            .map((r) => {
-              const meta = networkByName[r.target_network_name];
-              return {
-                source_network: r.source_network,
-                target_network_name: r.target_network_name,
-                target_network_type: meta?.network_type || r.target_network_type || "nad",
-                target_namespace: meta?.namespace || r.target_namespace || null,
-                confidence: r.confidence,
-                rationale: r.rationale,
-              };
-            }),
-          storage_mappings: storageRows
-            .filter((r) => r.target_storage_class)
-            .map((r) => ({
-              source_datastore: r.source_datastore,
-              target_storage_class: r.target_storage_class,
-              access_mode: r.access_mode || null,
-              confidence: r.confidence,
-              rationale: r.rationale,
-            })),
+          network_mappings: patchedNetworkRows,
+          storage_mappings: patchedStorageRows,
           namespace_mappings: nsStrategy,
         },
       });
-      toast.success(`Saved · status: ${patched.status}`, TOAST_OPTS);
+      toast.success(`Saved · status: ${patched?.status ?? "unknown"}`, TOAST_OPTS);
       setMapping(patched);
+      // Reset the dirty baseline to what we just saved.
+      setLoadedSnapshot({
+        name: name.trim(),
+        active,
+        networkRows: patched?.network_mappings ?? patchedNetworkRows,
+        storageRows: patched?.storage_mappings ?? patchedStorageRows,
+        nsStrategy,
+      });
     } catch (e) { toast.error(e.message, TOAST_OPTS); }
     finally { setSaving(false); }
   };
@@ -510,31 +607,46 @@ export function ResourceMappingDetail() {
   const noTargetNetworks = targetNetworks.length === 0;
   const noTargetSCs = targetSCs.length === 0;
 
+  const mappingStatus = mapping?.status ?? "incomplete";
+
   return (
     <Shell>
       <Toaster position="bottom-right" toastOptions={TOAST_OPTS} />
       <header style={headerStyle}>
-        <div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ color: "#88aaff", fontSize: 11, letterSpacing: "0.06em", marginBottom: 4, textTransform: "uppercase", fontWeight: 700 }}>
+            <Link to="/mappings" style={{ color: "#88aaff", textDecoration: "none" }}>Resource Mappings</Link>
+            <span style={{ color: "#3a3a55", margin: "0 8px" }}>/</span>
+            <span style={{ color: "#aaaacc" }}>{name || "(unnamed)"}</span>
+          </div>
           <input style={{ ...inputStyle, fontWeight: 700, fontSize: 18, padding: "6px 8px", width: 360 }}
             value={name} onChange={(e) => setName(e.target.value)} />
-          <div style={{ color: "#aaaacc", fontSize: 12, marginTop: 4, fontFamily: "'Share Tech Mono', monospace" }}>
-            <Link to={`/sources/targets/${mapping.ocp_target_id}`} style={{ color: "#88aaff", textDecoration: "none" }}>
+          <div style={{ color: "#aaaacc", fontSize: 12, marginTop: 6, fontFamily: "'Share Tech Mono', monospace", display: "flex", gap: 14, flexWrap: "wrap" }}>
+            <Link to={`/sources/targets/${mapping?.ocp_target_id}`} style={{ color: "#88aaff", textDecoration: "none" }}>
               {target?.name || "?"}
             </Link>
-            {" "}· status:{" "}
-            <span style={{ color: STATUS_COLORS[mapping.status] || "#aaaacc" }}>
-              {mapping.status}
+            <span>
+              status:{" "}
+              <span style={{ color: STATUS_COLORS[mappingStatus] || "#aaaacc", fontWeight: 700 }}>
+                {String(mappingStatus).replace("_", " ").toUpperCase()}
+              </span>
+            </span>
+            <span>
+              {mappedNetworkCount} of {allNetworkRows.length} networks mapped
+              {" · "}
+              {mappedStorageCount} of {allStorageRows.length} datastores mapped
             </span>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <label style={{ display: "flex", gap: 6, alignItems: "center", color: "#ccccee", fontSize: 12 }}>
             <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
             Active
           </label>
           <button onClick={runPreflight} style={btnGhost}>✓ Preflight</button>
-          <button onClick={save} style={btnPrimary} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
+          <button onClick={save} style={{ ...btnPrimary, opacity: (saving || !isDirty) ? 0.5 : 1 }} disabled={saving || !isDirty}
+            title={!isDirty ? "No changes to save" : ""}>
+            {saving ? "Saving…" : isDirty ? "Save" : "Saved"}
           </button>
           <Link to="/mappings" style={btnSecondary}>← Back</Link>
         </div>
@@ -558,14 +670,19 @@ export function ResourceMappingDetail() {
             </button>
           }
         >
-          {noTargetNetworks ? (
-            <NoCatalogBanner kind="networks" targetId={mapping.ocp_target_id} />
-          ) : (
+          {noTargetNetworks && (
+            <EmptyCatalogHint
+              kind="networks"
+              targetId={mapping?.ocp_target_id}
+              onCreate={() => setCreatingNetworkFor("")}
+            />
+          )}
+          {allNetworkRows.length === 0 ? null : (
             <RowGrid
               template={netEditorRow.gridTemplateColumns}
               headers={["", "Source network", "VMs", "Target network", "Type", "Namespace", "Confidence"]}>
               {allNetworkRows.map((row) => {
-                const signal = sourceSignals.networks.find((n) => n.name === row.source_network);
+                const signal = (sourceSignals.networks || []).find((n) => n.name === row.source_network);
                 const meta = row.target_network_name ? networkByName[row.target_network_name] : null;
                 const mapped = !!row.target_network_name;
                 return (
@@ -577,13 +694,14 @@ export function ResourceMappingDetail() {
                     <span style={{ color: "#aaaacc", fontSize: 12 }}>{signal?.count ?? "—"}</span>
                     <select style={inputStyle}
                       value={row.target_network_name || ""}
-                      onChange={(e) => updateNetworkTarget(row.source_network, e.target.value)}>
+                      onChange={(e) => handleNetworkSelect(row.source_network, e.target.value)}>
                       <option value="">— None selected —</option>
-                      {targetNetworks.map((n) => (
+                      {(targetNetworks || []).map((n) => (
                         <option key={n.id} value={n.name}>
                           {n.name} ({n.network_type}{n.namespace ? ` · ${n.namespace}` : ""})
                         </option>
                       ))}
+                      <option value={CREATE_NEW_SENTINEL}>+ Create new target network…</option>
                     </select>
                     <span style={{ color: "#aaaacc", fontSize: 12, fontFamily: "'Share Tech Mono', monospace" }}>
                       {meta?.network_type || "—"}
@@ -612,16 +730,21 @@ export function ResourceMappingDetail() {
             </button>
           }
         >
-          {noTargetSCs ? (
-            <NoCatalogBanner kind="storage classes" targetId={mapping.ocp_target_id} />
-          ) : (
+          {noTargetSCs && (
+            <EmptyCatalogHint
+              kind="storage classes"
+              targetId={mapping?.ocp_target_id}
+              onCreate={() => setCreatingSCFor("")}
+            />
+          )}
+          {allStorageRows.length === 0 ? null : (
             <RowGrid
               template={storageEditorRow.gridTemplateColumns}
               headers={["", "Source datastore", "VMs", "Target StorageClass", "Access mode", "Confidence"]}>
               {allStorageRows.map((row) => {
-                const signal = sourceSignals.datastores.find((d) => d.name === row.source_datastore);
+                const signal = (sourceSignals.datastores || []).find((d) => d.name === row.source_datastore);
                 const mapped = !!row.target_storage_class;
-                const sc = targetSCs.find((s) => s.name === row.target_storage_class);
+                const sc = (targetSCs || []).find((s) => s.name === row.target_storage_class);
                 return (
                   <div key={row.source_datastore} style={storageEditorRow}>
                     <StatusDot mapped={mapped} />
@@ -631,11 +754,12 @@ export function ResourceMappingDetail() {
                     <span style={{ color: "#aaaacc", fontSize: 12 }}>{signal?.count ?? "—"}</span>
                     <select style={inputStyle}
                       value={row.target_storage_class || ""}
-                      onChange={(e) => updateStorageTarget(row.source_datastore, e.target.value)}>
+                      onChange={(e) => handleStorageSelect(row.source_datastore, e.target.value)}>
                       <option value="">— None selected —</option>
-                      {targetSCs.map((s) => (
+                      {(targetSCs || []).map((s) => (
                         <option key={s.id} value={s.name}>{s.name} ({s.access_mode})</option>
                       ))}
+                      <option value={CREATE_NEW_SENTINEL}>+ Create new storage class…</option>
                     </select>
                     <span style={{ color: "#aaaacc", fontSize: 12, fontFamily: "'Share Tech Mono', monospace" }}>
                       {sc?.access_mode || row.access_mode || "—"}
@@ -648,7 +772,180 @@ export function ResourceMappingDetail() {
           )}
         </Section>
       </main>
+      {creatingNetworkFor !== null && (
+        <InlineCreateNetworkModal
+          targetId={mapping?.ocp_target_id}
+          onClose={() => setCreatingNetworkFor(null)}
+          onCreated={onNetworkCreated}
+        />
+      )}
+      {creatingSCFor !== null && (
+        <InlineCreateStorageClassModal
+          targetId={mapping?.ocp_target_id}
+          onClose={() => setCreatingSCFor(null)}
+          onCreated={onSCCreated}
+        />
+      )}
     </Shell>
+  );
+}
+
+function InlineCreateNetworkModal({ targetId, onClose, onCreated }) {
+  const [name, setName] = useState("");
+  const [type, setType] = useState("nad");
+  const [namespace, setNamespace] = useState("");
+  const [isDefault, setIsDefault] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const created = await fetchJSON(`/api/ocp-targets/${targetId}/networks`, {
+        method: "POST",
+        body: {
+          name: name.trim(),
+          network_type: type,
+          namespace: namespace.trim() || null,
+          is_default: isDefault,
+        },
+      });
+      toast.success(`Created ${created?.name ?? name}`, TOAST_OPTS);
+      await onCreated(created);
+    } catch (err) {
+      toast.error(err.message, TOAST_OPTS);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={modalOverlay} onClick={busy ? undefined : onClose}>
+      <form onSubmit={submit} onClick={(e) => e.stopPropagation()} style={modalBox}>
+        <div style={{ borderBottom: "1px solid #1a1a2e", padding: "18px 22px" }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>New target network</div>
+          <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 4 }}>
+            Operator-declared NetworkAttachmentDefinition / CUDN / UDN /
+            Pod-network entry for this cluster.
+          </div>
+        </div>
+        <div style={{ padding: "18px 22px", display: "grid", gap: 12 }}>
+          <Field label="Name" required>
+            <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)}
+              required autoFocus maxLength={128} placeholder="e.g. prod-vlan-100" />
+          </Field>
+          <Field label="Type" required>
+            <select style={inputStyle} value={type} onChange={(e) => setType(e.target.value)} required>
+              <option value="nad">NAD — NetworkAttachmentDefinition</option>
+              <option value="cudn">CUDN — Cluster User-Defined Network</option>
+              <option value="udn">UDN — User-Defined Network (namespaced)</option>
+              <option value="pod">Pod network (default cluster network)</option>
+            </select>
+          </Field>
+          {type !== "pod" && (
+            <Field label="Namespace" hint="Where the NAD/UDN lives (NADs are namespaced; CUDN is cluster-scoped)">
+              <input style={inputStyle} value={namespace}
+                onChange={(e) => setNamespace(e.target.value)}
+                maxLength={128} placeholder="openshift-multus" />
+            </Field>
+          )}
+          <label style={{ display: "flex", gap: 8, color: "#ccccee", fontSize: 13 }}>
+            <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
+            Default for this type
+          </label>
+        </div>
+        <div style={{ borderTop: "1px solid #1a1a2e", padding: "14px 22px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button type="button" onClick={onClose} style={btnSecondary} disabled={busy}>Cancel</button>
+          <button type="submit" disabled={busy || !name.trim()}
+            style={{ ...btnPrimary, opacity: (busy || !name.trim()) ? 0.5 : 1 }}>
+            {busy ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function InlineCreateStorageClassModal({ targetId, onClose, onCreated }) {
+  const [name, setName] = useState("");
+  const [accessMode, setAccessMode] = useState("ReadWriteOnce");
+  const [isDefault, setIsDefault] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const created = await fetchJSON(`/api/ocp-targets/${targetId}/storage-classes`, {
+        method: "POST",
+        body: {
+          name: name.trim(),
+          access_mode: accessMode,
+          is_default: isDefault,
+        },
+      });
+      toast.success(`Created ${created?.name ?? name}`, TOAST_OPTS);
+      await onCreated(created);
+    } catch (err) {
+      toast.error(err.message, TOAST_OPTS);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={modalOverlay} onClick={busy ? undefined : onClose}>
+      <form onSubmit={submit} onClick={(e) => e.stopPropagation()} style={modalBox}>
+        <div style={{ borderBottom: "1px solid #1a1a2e", padding: "18px 22px" }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>New target storage class</div>
+          <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 4 }}>
+            Operator-declared StorageClass entry. Plans render this name
+            into MTV YAML at generation time.
+          </div>
+        </div>
+        <div style={{ padding: "18px 22px", display: "grid", gap: 12 }}>
+          <Field label="Name" required>
+            <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)}
+              required autoFocus maxLength={128} placeholder="e.g. ocs-rbd" />
+          </Field>
+          <Field label="Access mode" required>
+            <select style={inputStyle} value={accessMode}
+              onChange={(e) => setAccessMode(e.target.value)} required>
+              <option value="ReadWriteOnce">ReadWriteOnce (RWO)</option>
+              <option value="ReadWriteMany">ReadWriteMany (RWX)</option>
+              <option value="ReadOnlyMany">ReadOnlyMany (ROX)</option>
+            </select>
+          </Field>
+          <label style={{ display: "flex", gap: 8, color: "#ccccee", fontSize: 13 }}>
+            <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
+            Default for this cluster
+          </label>
+        </div>
+        <div style={{ borderTop: "1px solid #1a1a2e", padding: "14px 22px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button type="button" onClick={onClose} style={btnSecondary} disabled={busy}>Cancel</button>
+          <button type="submit" disabled={busy || !name.trim()}
+            style={{ ...btnPrimary, opacity: (busy || !name.trim()) ? 0.5 : 1 }}>
+            {busy ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function EmptyCatalogHint({ kind, targetId, onCreate }) {
+  return (
+    <div style={{ border: "1px dashed #2a2a44", background: "#0a0a18", padding: "18px 22px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+      <div>
+        <div style={{ color: "#eeeeff", fontSize: 14, fontWeight: 700 }}>
+          No target {kind} defined for this cluster yet
+        </div>
+        <div style={{ color: "#aaaacc", fontSize: 13, marginTop: 4 }}>
+          Add one inline below, or manage the full catalog on the
+          {" "}
+          <Link to={`/sources/targets/${targetId}`} style={{ color: "#88aaff" }}>target detail page</Link>.
+        </div>
+      </div>
+      <button type="button" onClick={onCreate} style={btnPrimary}>+ Create new</button>
+    </div>
   );
 }
 
@@ -717,22 +1014,6 @@ function NamespaceStrategySection({ strategy, setStrategy }) {
         )}
       </div>
     </Section>
-  );
-}
-
-function NoCatalogBanner({ kind, targetId }) {
-  return (
-    <div style={{ border: "1px dashed #2a2a44", background: "#0a0a18", padding: "24px 22px", textAlign: "center" }}>
-      <div style={{ color: "#eeeeff", fontSize: 14, marginBottom: 8, fontWeight: 700 }}>
-        No target {kind} defined for this cluster
-      </div>
-      <div style={{ color: "#aaaacc", fontSize: 13, marginBottom: 14 }}>
-        Add some on the OCP target detail page before mapping source resources.
-      </div>
-      <Link to={`/sources/targets/${targetId}`} style={btnPrimary}>
-        Open target →
-      </Link>
-    </div>
   );
 }
 

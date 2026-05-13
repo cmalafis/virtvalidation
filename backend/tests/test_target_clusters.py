@@ -374,6 +374,80 @@ def test_get_mapping_handles_non_dict_network_mapping_rows(client):
     assert r.status_code == 200, r.text
 
 
+def test_patch_mapping_rejects_target_network_not_in_catalog(client):
+    """PATCH must validate target_network_name against the operator-
+    declared catalog before persisting — otherwise the editor saves a
+    stale name and plan generation fails at YAML-render time."""
+    vc = _create_vcenter(client)
+    target = _create_target(client)
+    # Declare a single target network so the catalog is non-empty.
+    client.post(
+        f"/api/ocp-targets/{target['id']}/networks",
+        json={"name": "valid-net", "network_type": "nad", "namespace": "openshift-multus"},
+    )
+    mapping = client.post(
+        "/api/mappings",
+        json={
+            "name": "needs-validation",
+            "vcenter_source_id": vc["id"],
+            "ocp_target_id": target["id"],
+            "network_mappings": [],
+            "storage_mappings": [],
+            "namespace_mappings": [],
+        },
+    ).json()
+    r = client.patch(
+        f"/api/mappings/{mapping['id']}",
+        json={
+            "network_mappings": [
+                {
+                    "source_network": "src-prod",
+                    "target_network_name": "ghost-vlan-999",
+                    "target_network_type": "nad",
+                }
+            ],
+        },
+    )
+    assert r.status_code == 422, r.text
+    assert "ghost-vlan-999" in r.json()["detail"]
+
+
+def test_patch_mapping_accepts_valid_target_network(client):
+    """The happy path — same flow as above but with a name that exists."""
+    vc = _create_vcenter(client)
+    target = _create_target(client)
+    client.post(
+        f"/api/ocp-targets/{target['id']}/networks",
+        json={"name": "valid-net", "network_type": "nad", "namespace": "openshift-multus"},
+    )
+    mapping = client.post(
+        "/api/mappings",
+        json={
+            "name": "valid-patch",
+            "vcenter_source_id": vc["id"],
+            "ocp_target_id": target["id"],
+            "network_mappings": [],
+            "storage_mappings": [],
+            "namespace_mappings": [],
+        },
+    ).json()
+    r = client.patch(
+        f"/api/mappings/{mapping['id']}",
+        json={
+            "network_mappings": [
+                {
+                    "source_network": "src-prod",
+                    "target_network_name": "valid-net",
+                    "target_network_type": "nad",
+                }
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["network_mappings"][0]["target_network_name"] == "valid-net"
+
+
 def test_get_mapping_does_not_persist_status_on_read(client):
     """``GET`` is read-only — recomputing status into the in-memory
     response is fine, but we must not commit the recompute or bump
