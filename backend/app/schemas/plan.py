@@ -71,6 +71,10 @@ class WaveRead(BaseModel):
     wave_number: int
     name: str = ""
     vm_ids: list[int] = Field(default_factory=list)
+    # Parallel-indexed to ``vm_ids`` — hostnames rendered in the wave
+    # detail. Empty for legacy plans generated before the field was
+    # added; the frontend falls back to ``/api/vms`` lookups.
+    vm_names: list[str] = Field(default_factory=list)
     rationale: str = ""
     estimated_duration: str = ""
     estimated_risk: str = ""  # legacy field name kept for back-compat

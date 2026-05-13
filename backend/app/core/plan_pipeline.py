@@ -68,6 +68,12 @@ class AnnotatedWave:
     mechanical fallback). The YAML field is populated by Stage 7.
     The pipeline never returns a wave without all of these set —
     every operator-facing wave is rendered with full context.
+
+    ``vm_names`` is parallel-indexed to ``wave.vm_ids`` and is
+    populated by the pipeline before serialization so the frontend
+    can render hostnames without a separate /api/vms round-trip.
+    Operators recognize ``backup-s-app-013.corp.local``; ``vm-2243``
+    is just a row id.
     """
 
     wave: Wave
@@ -77,12 +83,14 @@ class AnnotatedWave:
     notable_concerns: list[str] = field(default_factory=list)
     method: str = "mechanical_fallback"  # llm | llm_retry_N | mechanical_fallback
     mtv_yaml: str = ""
+    vm_names: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Render to the JSON shape persisted in MigrationPlan.waves[]."""
         return {
             "wave_number": self.wave.wave_number,
             "vm_ids": list(self.wave.vm_ids),
+            "vm_names": list(self.vm_names),
             "group_ids": [g.key.as_string() for g in self.wave.groups],
             "vm_count": self.wave.vm_count,
             "estimated_risk": self.wave.estimated_risk,
@@ -231,11 +239,13 @@ async def run_pipeline(
     _progress("annotating")
     annotated = await annotate_waves(waves, backend=backend, max_attempts=max_llm_attempts)
 
-    # Stage 7 — emit MTV YAML per wave.
+    # Stage 7 — emit MTV YAML per wave + stamp parallel-indexed vm_names
+    # so the frontend can render hostnames without a /api/vms join.
     _progress("emitting_yaml")
     vm_by_id = {vm.id: vm for vm in vms}
     resolver = _build_resolver(mapping)
     for aw in annotated:
+        aw.vm_names = [name_lookup.get(vid, f"vm-{vid}") for vid in aw.wave.vm_ids]
         try:
             aw.mtv_yaml = emit_wave_yaml(plan_id, aw.wave, aw.description, vm_by_id, resolver)
         except MTVGenerationError as exc:

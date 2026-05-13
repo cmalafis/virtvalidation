@@ -315,8 +315,9 @@ function WaveCard({ wave, vmsById, waveCount, onMoveVM }) {
 
       {/* VM list with move-vm action per row */}
       <div style={{ marginTop: 8 }}>
-        {(wave.vm_ids || []).map((vmId) => {
+        {(wave.vm_ids || []).map((vmId, idx) => {
           const vm = vmsById[vmId];
+          const displayName = wave.vm_names?.[idx] || vm?.name || `vm-${vmId}`;
           return (
             <div key={vmId} style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -325,7 +326,7 @@ function WaveCard({ wave, vmsById, waveCount, onMoveVM }) {
               <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
                 <span style={{ ...monoBadge, opacity: 0.8 }}>{vmId}</span>
                 <Link to={`/vms/${vmId}`} style={{ color: "#eeeeff", textDecoration: "none", fontWeight: 600 }}>
-                  {vm?.name || `vm-${vmId}`}
+                  {displayName}
                 </Link>
                 {vm?.role && <span style={{ color: "#aaaacc", fontSize: 12 }}>· {vm.role}</span>}
                 {vm?.environment && <span style={{ color: "#aaaacc", fontSize: 12 }}>· {vm.environment}</span>}
