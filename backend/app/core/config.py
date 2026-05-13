@@ -74,6 +74,19 @@ class Settings(BaseSettings):
     # the reference decomposition.
     llm_max_items_per_call: int = 10
 
+    # ----- Plan selection cap -----
+    # Maximum VMs an operator may select for a single plan. With
+    # max_vms_per_wave=10 and a hard cap of 250 selected VMs, a plan
+    # produces at most 25 waves — each gets its own per-wave LLM call
+    # for annotation (Stage 6), so total Stage-6 wall-clock is bounded
+    # by ~5s/call × backend.max_concurrent_calls. Federal customers
+    # operate by making MANY small auditable plans rather than one
+    # giant black-box plan; the cap enforces that operational shape.
+    # Override per-deployment via MAX_VMS_PER_PLAN; structural code
+    # paths handle 5000 VMs in well under 5s on a laptop, so raising
+    # this is a config decision, not a code change.
+    max_vms_per_plan: int = 250
+
     # ----- Level 1 categorizer -----
     # VMs per LLM call. With Llama 3 8B and num_ctx=8192 a 10-VM batch
     # fits comfortably with system prompt + JSON output overhead. Bump

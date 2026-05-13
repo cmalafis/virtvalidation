@@ -94,12 +94,18 @@ class Wave:
     always produces the same Wave list from the same input groups.
     Federal audit trails reconstruct wave membership months later
     by re-running this code against the snapshot inventory.
+
+    ``concurrency_group_id`` is filled in later by Stage 5 (graph
+    coloring); the wave skeleton itself leaves it at ``0``. Waves
+    sharing the same id are parallel-safe — different source vCenters
+    AND no overlapping families.
     """
 
     wave_number: int
     groups: list[VMGroup] = field(default_factory=list)
     estimated_risk: str = "low"
     notes: list[str] = field(default_factory=list)
+    concurrency_group_id: int = 0
 
     @property
     def vm_ids(self) -> list[int]:
