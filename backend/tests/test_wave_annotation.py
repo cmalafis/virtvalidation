@@ -271,3 +271,116 @@ class TestMockBackendRoundTrip:
         assert result.method == "llm"
         assert result.description
         assert 1 <= result.risk_score <= 5
+
+
+# ---------------------------------------------------------------------------
+# Internal-label leakage — both directions
+# ---------------------------------------------------------------------------
+class TestInternalLabelScrubbing:
+    """Stage 6 must never echo preclassifier partition keys to the
+    operator. Validation rejects them; the prompt builder strips them
+    before they reach the LLM."""
+
+    @pytest.mark.parametrize(
+        "leaked",
+        [
+            "Batch 2 is the priority — migrate this cluster carefully.",
+            "Wave references prefix:ehr-stag-db- which spans two datastores.",
+            "merged:hint:app:web+prefix:web-app contains the web tier.",
+            "The vc?/default/staging/data/stateful path covers EHR staging.",
+            "batch_3 is split for ESXi concurrency limits.",
+        ],
+    )
+    def test_validator_rejects_leaked_internal_labels_in_description(self, leaked):
+        with pytest.raises(ValidationError) as excinfo:
+            WaveAnnotation(
+                description=leaked,
+                risk_score=3,
+                risk_rationale="ok",
+                notable_concerns=[],
+            )
+        assert "internal label" in str(excinfo.value)
+
+    def test_validator_rejects_leaked_label_in_rationale(self):
+        with pytest.raises(ValidationError):
+            WaveAnnotation(
+                description="ok",
+                risk_score=3,
+                risk_rationale="Risk anchored on batch_2 cohesion.",
+                notable_concerns=[],
+            )
+
+    def test_validator_rejects_leaked_label_in_notable_concerns(self):
+        with pytest.raises(ValidationError):
+            WaveAnnotation(
+                description="ok",
+                risk_score=3,
+                risk_rationale="ok",
+                notable_concerns=["Verify batch_2 cutover order"],
+            )
+
+    def test_validator_accepts_operator_readable_output(self):
+        """The example output in the system prompt must pass validation."""
+        WaveAnnotation(
+            description=(
+                "Wave 2 migrates the billing application's Oracle data tier "
+                "(oracle-db-prod-01, oracle-db-prod-02) alongside three EHR "
+                "web frontends (ehr-web-01, ehr-web-02, ehr-web-03)."
+            ),
+            risk_score=4,
+            risk_rationale=(
+                "Production Oracle pair where downtime cascades to the EHR "
+                "web tier. Web tier rolls forward easily; database move "
+                "dominates risk."
+            ),
+            notable_concerns=[
+                "Verify Oracle SCN consistency before cutover",
+                "Schedule an extra rollback window for the database move",
+            ],
+        )
+
+    def test_prompt_builder_strips_partition_keys(self):
+        """The user prompt sent to the LLM must NOT contain the
+        preclassifier's partition keys or batch labels."""
+        from app.core.wave_annotation import _render_wave_prompt
+
+        wave = _wave(num=2, groups=[_group(role="data", risk="high")])
+        prompt = _render_wave_prompt(wave, vm_name_by_id={1: "ehr-db-01", 2: "ehr-db-02"})
+        # The internal partition key would look like
+        # "vc1/default/production/data/stateless/dD1" — confirm it's
+        # nowhere in the prompt.
+        assert "prefix:" not in prompt
+        assert "batch_" not in prompt
+        assert "merged:" not in prompt
+        # And the operator-readable surrogate fields are present.
+        assert '"label"' in prompt
+        assert '"sample_vm_names"' in prompt
+        assert "ehr-db-01" in prompt
+
+    def test_retry_feedback_path_includes_validation_error(self):
+        """When the LLM leaks a label, the next attempt's prompt must
+        carry the validation message so smaller models self-correct."""
+
+        async def run():
+            bad = json.dumps(
+                {
+                    "description": "Batch 2 needs attention.",
+                    "risk_score": 3,
+                    "risk_rationale": "ok",
+                    "notable_concerns": [],
+                }
+            )
+            good = _VALID_LLM_RESPONSE
+            backend = _ScriptedBackend([bad, good])
+            result = await annotate_one_wave(
+                _wave(), backend=backend, max_attempts=2, semaphore=None
+            )
+            return result, backend
+
+        result, backend = asyncio.run(run())
+        assert result.method == "llm_retry_1"
+        # The second call's user message must mention the leaked
+        # label so the model knows what to fix.
+        retry_user_msg = backend._calls[1][-1]["content"]
+        assert "internal label" in retry_user_msg
+        assert "Batch 2" in retry_user_msg or "batch 2" in retry_user_msg.lower()
