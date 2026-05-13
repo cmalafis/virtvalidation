@@ -287,6 +287,80 @@ Auto-detection of `environment` from VM name / folder / cluster
 — wire it into any new VM creation path. See
 `docs/ENVIRONMENT_LABELS.md`.
 
+## Migration plan pipeline (Stages 0-7, deterministic + LLM annotation)
+
+`app.core.plan_pipeline.run_pipeline` is the single entry point for
+plan generation. The stages:
+
+  0. **Validate mapping coverage** (`mapping_validation.py`) —
+     every selected VM must resolve to a target NAD + StorageClass
+     + namespace. Returns 422 with VM-level gap detail.
+  1. **Hard partition** (`preclassifier.classify`) — by
+     `(source_vcenter_id, target_namespace, environment_normalized)`.
+  2. **Sub-partition** — within each primary, by network /
+     datastore / role / application_hint overlap.
+  3. **HA family anti-affinity split** (`family.split_overconcentrated_families`)
+     — any group with more than ceil(family_size/2) members of one
+     family is split into sub-groups. Family detection in
+     `family.detect_family` is name-based; the existing HA-aware
+     wave-skeleton logic refines on top.
+  4. **Wave packing** (`wave_skeleton.MechanicalWaveAssigner`) —
+     greedy, deterministic, ≤10 VMs/wave, ≤2 HA peers/wave,
+     partition coherence (one MTV Plan CR per wave).
+  5. **Concurrency analysis** (`concurrency.assign_concurrency_groups`)
+     — graph-color waves so two waves with the same
+     `concurrency_group_id` are parallel-safe (different vCenters
+     AND disjoint families).
+  6. **Per-wave LLM annotation** (`wave_annotation.annotate_waves`)
+     — one LLM call per wave, ≤10 groups per call, parallel via
+     `asyncio.gather` under `Semaphore(backend.max_concurrent_calls)`.
+     Validate-retry-fallback per the architectural rule above.
+     Each wave's `method` is `"llm"` / `"llm_retry_N"` /
+     `"mechanical_fallback"`.
+  7. **MTV YAML emission** (`plan_pipeline.emit_wave_yaml` wraps
+     `mtv.generate_wave_yaml`) — per-wave NetworkMap + StorageMap
+     + Plan CR. No placeholder names; Stage 0 catches gaps before
+     emission.
+
+Stages 0-5 + 7 are pure Python and run in well under 1s for 250 VMs.
+Stage 6 wall-clock is dominated by the slowest single LLM call,
+not their sum, because of `asyncio.gather`.
+
+Selection cap: `settings.max_vms_per_plan` (default 250). `POST
+/api/plans` returns 422 above the cap so the operator narrows
+filters or splits into multiple plans rather than running one
+huge black-box plan.
+
+When adding a new pipeline stage, extend
+`plan_pipeline._PIPELINE_STAGE_TO_STATUS` so the Plan row's
+`status` field reflects the new step name; the frontend's poll
+loop picks up new stages without further changes.
+
+## VM lifecycle (plan membership, parallel to VM.status)
+
+`VM.lifecycle_state` answers "is this VM available for a new
+plan?". It's server-enforced through `app.core.vm_lifecycle`:
+
+```
+available  → planned          POST /api/plans
+planned    → migrated         POST /api/plans/{id}/mark-succeeded
+planned    → available        DELETE /api/plans/{id}  OR  plan→failed
+migrated   → rolled_back      PATCH /api/vms/{id}
+rolled_back → available       PATCH /api/vms/{id}
+```
+
+`VM.status` (discovered → baseline_captured → migrated → validated
+→ failed) is orthogonal — it tracks the baseline/validation
+lifecycle, NOT plan membership. The "migrated" overlap is a
+naming collision: `status=migrated` means "we observed the VM
+running on OCP-Virt"; `lifecycle_state=migrated` means "operator
+declared this plan succeeded". Both can be set independently.
+
+The plan selector hides anything not `available` by default;
+inventory shows the lifecycle pill on every row and surfaces
+"Revert to VMware" + "Make available" affordances on the
+operator-driven transitions.
+
 ## Paginated list endpoint pattern
 
 Listing endpoints with > a few hundred rows MUST return a wrapped
@@ -332,11 +406,14 @@ virtvalidate/
 
 ## Current status
 - [x] Frontend dashboard (React) — VirtValidate.jsx
-- [ ] Backend API skeleton
-- [ ] SSH collection engine
-- [ ] LLM validation engine
-- [ ] Migration planner
-- [ ] PostgreSQL models
+- [x] Backend API skeleton
+- [x] SSH collection engine
+- [x] LLM validation engine
+- [x] Migration planner (Stages 0-7; see "Migration plan pipeline" above)
+- [x] PostgreSQL models
+- [x] VM plan-membership lifecycle (`VMLifecycleState`)
+- [x] PlanWizard per-VM selector with selection cap + filters
+- [x] Inventory revert affordances (migrated → rolled_back → available)
 
 ## DEFENSIVE CODING REQUIREMENTS
 

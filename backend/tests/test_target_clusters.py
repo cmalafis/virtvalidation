@@ -784,61 +784,12 @@ def test_generate_wave_yaml_without_resolver_falls_back_to_per_vm_fields():
 
 # ---------------------------------------------------------------------------
 # Plan generation + mapping_id
+#
+# Tests that exercised the legacy POST /api/plans/generate endpoint
+# were deleted alongside the route in the planner rearchitecture.
+# Mapping-coverage validation for the new POST /api/plans path lives
+# in tests/test_plans_lifecycle_api.py.
 # ---------------------------------------------------------------------------
-def test_plan_generate_request_rejects_unknown_mapping_id(client, monkeypatch):
-    """Trigger endpoint must validate mapping_id before spawning the LLM."""
-    vc = _create_vcenter(client)
-    target = _create_target(client)
-    _discover_target_manually(client, target["id"])
-    _create_vm(client, "vm-a", source_vcenter_id=vc["id"])
-    strategy = client.post(
-        "/api/planning-strategies",
-        json={"name": "s-unknown-mapping", "primary_grouping": "application"},
-    ).json()
-    r = client.post(
-        "/api/plans/generate",
-        json={
-            "name": "p",
-            "strategy_id": strategy["id"],
-            "scope": {"source_vcenter_id": vc["id"]},
-            "mapping_id": 99_999,
-        },
-    )
-    assert r.status_code == 404
-    assert "Resource mapping" in r.json()["detail"]
-
-
-def test_plan_generate_request_rejects_mapping_for_wrong_vcenter(client):
-    vc1 = _create_vcenter(client, name="vc-east")
-    vc2 = _create_vcenter(client, name="vc-west")
-    target = _create_target(client)
-    _discover_target_manually(client, target["id"])
-    _create_vm(client, "vm-a", source_vcenter_id=vc1["id"])
-    mapping = client.post(
-        "/api/mappings",
-        json={
-            "name": "for-vc2",
-            "vcenter_source_id": vc2["id"],
-            "ocp_target_id": target["id"],
-            "network_mappings": [],
-            "storage_mappings": [],
-            "namespace_mappings": [],
-        },
-    ).json()
-    strategy = client.post(
-        "/api/planning-strategies",
-        json={"name": "s-mismatch", "primary_grouping": "application"},
-    ).json()
-    r = client.post(
-        "/api/plans/generate",
-        json={
-            "name": "p",
-            "strategy_id": strategy["id"],
-            "scope": {"source_vcenter_id": vc1["id"]},
-            "mapping_id": mapping["id"],
-        },
-    )
-    assert r.status_code == 409
 
 
 def test_mtv_yaml_export_uses_active_mapping_when_present(client, db_session):

@@ -30,7 +30,6 @@ from app.core.scheduler import shutdown_scheduler, start_scheduler
 from app.core.startup import fail_orphan_plans
 from app.middleware.audit import AuditMiddleware
 from app.models import audit as _audit_models  # noqa: F401  (register models on Base)
-from app.models import chunk as _chunk_models  # noqa: F401  (register models on Base)
 from app.models import grouping as _grouping_models  # noqa: F401  (register models on Base)
 from app.models import llm_usage as _llm_usage_models  # noqa: F401  (register models on Base)
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)

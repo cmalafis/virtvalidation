@@ -168,31 +168,6 @@ class MigrationPlan(Base):
     mapping_id: Mapped[int | None] = mapped_column(
         ForeignKey("resource_mappings.id", ondelete="SET NULL"), nullable=True
     )
-    # The full prompt sent to the LLM. Stored verbatim so federal
-    # reviewers can reproduce the call if they need to.
-    generation_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Raw LLM response body (pre-parse). Useful for debugging when
-    # parsing fails — operators can re-run the parser without
-    # re-billing the LLM.
-    generation_response: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Plan-level fields the strategy planner produces alongside waves.
-    plan_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # LLM-flagged concerns about the plan itself — usually conflicts
-    # between customer constraints and inventory shape (e.g., "you said
-    # max 10 VMs/wave but app X has 23 indivisible VMs").
-    warnings: Mapped[list[str]] = mapped_column(JSONType, default=list, nullable=False)
-    next_actions: Mapped[list[str]] = mapped_column(JSONType, default=list, nullable=False)
-
-    # Plan revisioning. supersedes_plan_id chains backwards to the
-    # previous revision; revision_number increments. The chain lets
-    # the comparison view walk history without a self-join hack.
-    supersedes_plan_id: Mapped[int | None] = mapped_column(
-        ForeignKey("migration_plans.id", ondelete="SET NULL"), nullable=True
-    )
-    revision_number: Mapped[int] = mapped_column(
-        Integer, default=1, server_default="1", nullable=False
-    )
 
     # ---- Async generation lifecycle ----
     # Populated by the BackgroundTask that the POST endpoint kicks off.
