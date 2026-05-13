@@ -292,15 +292,22 @@ def _compute_mapping_status(mapping: ResourceMapping, db: Session) -> ResourceMa
 
     ``needs_review``: target row references a resource that's no
     longer present on the cluster (drift).
+
+    Non-dict entries in ``network_mappings`` / ``storage_mappings``
+    are skipped defensively — legacy payloads occasionally contain
+    nulls or strings, and crashing the read because of a bad row is
+    worse than ignoring it.
     """
+    network_rows = [m for m in (mapping.network_mappings or []) if isinstance(m, dict)]
+    storage_rows = [m for m in (mapping.storage_mappings or []) if isinstance(m, dict)]
     networks = {
         m.get("source_network")
-        for m in (mapping.network_mappings or [])
+        for m in network_rows
         if (m.get("target_network_name") or "").strip()
     }
     datastores = {
         m.get("source_datastore")
-        for m in (mapping.storage_mappings or [])
+        for m in storage_rows
         if (m.get("target_storage_class") or "").strip()
     }
 
@@ -329,17 +336,39 @@ def _compute_mapping_status(mapping: ResourceMapping, db: Session) -> ResourceMa
         # we don't want to flip every mapping to needs_review just
         # because the catalogs are blank.
         if target_sc_names is not None:
-            for m in mapping.storage_mappings or []:
+            for m in storage_rows:
                 referenced = m.get("target_storage_class")
                 if referenced and referenced not in target_sc_names:
                     return ResourceMappingStatus.needs_review
         if target_net_names is not None:
-            for m in mapping.network_mappings or []:
+            for m in network_rows:
                 referenced = m.get("target_network_name")
                 if referenced and referenced not in target_net_names:
                     return ResourceMappingStatus.needs_review
 
     return ResourceMappingStatus.complete
+
+
+def _safe_compute_status(
+    mapping: ResourceMapping, db: Session, context: str
+) -> ResourceMappingStatus:
+    """Defensive wrapper around ``_compute_mapping_status``.
+
+    The recompute touches multiple tables (target_networks,
+    target_storage_classes, vms) and walks JSON columns whose shape
+    has changed across versions. A single bad row would otherwise 500
+    the request that triggered the recompute. We'd rather surface a
+    slightly stale status than block the operator from opening the
+    editor or saving."""
+    try:
+        return _compute_mapping_status(mapping, db)
+    except Exception:  # noqa: BLE001 — see docstring
+        logger.exception(
+            "mapping.status.recompute_failed mapping_id=%s context=%s",
+            mapping.id,
+            context,
+        )
+        return mapping.status or ResourceMappingStatus.incomplete
 
 
 def _target_net_names(db: Session, target: OCPTarget) -> set[str] | None:
@@ -425,7 +454,7 @@ def create_mapping(
                 f"Mapping named {payload.name!r} already exists for this " "source/target pair"
             ),
         ) from e
-    mapping.status = _compute_mapping_status(mapping, db)
+    mapping.status = _safe_compute_status(mapping, db, context="create_mapping")
     if payload.is_active:
         # Single-active per (source, target) pair — flip every other
         # mapping for this pair off.
@@ -458,10 +487,13 @@ def create_mapping(
 @mappings_router.get("/{mapping_id}", response_model=ResourceMappingRead)
 def get_mapping(mapping_id: int, db: Session = Depends(get_db)) -> ResourceMapping:
     mapping = _get_mapping_or_404(db, mapping_id)
-    # Recompute status on read so drift surfaces without an explicit refresh.
-    mapping.status = _compute_mapping_status(mapping, db)
-    db.commit()
-    db.refresh(mapping)
+    # Recompute status on read so drift surfaces in the editor without
+    # an explicit refresh. We deliberately do NOT commit the recomputed
+    # value: persisting on every GET caused 500s when the recompute
+    # touched a partially-migrated DB, and a GET-side write also bumps
+    # updated_at on every page load. The in-memory assignment is enough
+    # for the response.
+    mapping.status = _safe_compute_status(mapping, db, context="get_mapping")
     return mapping
 
 
@@ -528,7 +560,7 @@ def update_mapping(
                 ResourceMapping.ocp_target_id == mapping.ocp_target_id,
                 ResourceMapping.id != mapping.id,
             ).update({ResourceMapping.is_active: False}, synchronize_session=False)
-    mapping.status = _compute_mapping_status(mapping, db)
+    mapping.status = _safe_compute_status(mapping, db, context="update_mapping")
     db.commit()
     db.refresh(mapping)
     request.state.skip_audit_log = True

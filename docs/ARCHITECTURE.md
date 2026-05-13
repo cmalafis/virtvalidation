@@ -1882,6 +1882,7 @@ Depends on: `app.models.target`, `app.models.vcenter`
 <details><summary><strong><code>app.schemas.target_entities</code></strong> — <em>Data models / schemas</em> · Pydantic schemas for operator-defined TargetNetwork /</summary>
 
 Path: `backend/app/schemas/target_entities.py`  
+Depends on: `app.models.target_network`, `app.models.target_storage_class`
 
 **Classes**
 

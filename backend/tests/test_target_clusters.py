@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from app.core.mtv import MappingResolver, WaveContext, generate_wave_yaml
 
 
@@ -208,9 +206,7 @@ def test_create_mapping_with_full_coverage_marks_complete(client):
                 "target_storage_class": "ocs-rbd",
             }
         ],
-        "namespace_mappings": [
-            {"criteria": "default", "target_namespace": "finance-prod"}
-        ],
+        "namespace_mappings": [{"criteria": "default", "target_namespace": "finance-prod"}],
     }
     r = client.post("/api/mappings", json=body)
     assert r.status_code == 201, r.text
@@ -278,9 +274,7 @@ def test_get_mapping_recomputes_drift_status_when_target_resource_disappears(cli
             "storage_mappings": [
                 {"source_datastore": "src-tier1", "target_storage_class": "ocs-rbd"}
             ],
-            "namespace_mappings": [
-                {"criteria": "default", "target_namespace": "finance-prod"}
-            ],
+            "namespace_mappings": [{"criteria": "default", "target_namespace": "finance-prod"}],
         },
     ).json()
     assert mapping["status"] == "complete"
@@ -305,6 +299,105 @@ def test_get_mapping_recomputes_drift_status_when_target_resource_disappears(cli
     )
     refreshed = client.get(f"/api/mappings/{mapping['id']}").json()
     assert refreshed["status"] == "needs_review"
+
+
+def test_get_mapping_does_not_500_when_status_recompute_fails(client, monkeypatch):
+    """A failure inside ``_compute_mapping_status`` (a partially-migrated
+    DB, a corrupt JSON column, a flaky downstream query) must not crash
+    the editor on open. Fall back to the stored status and serve the
+    response."""
+    vc = _create_vcenter(client)
+    target = _create_target(client)
+    _discover_target_manually(client, target["id"])
+    mapping = client.post(
+        "/api/mappings",
+        json={
+            "name": "boom",
+            "vcenter_source_id": vc["id"],
+            "ocp_target_id": target["id"],
+            "network_mappings": [],
+            "storage_mappings": [],
+            "namespace_mappings": [],
+        },
+    ).json()
+
+    from app.api import targets as targets_api
+
+    def _raise(*_a, **_kw):
+        raise RuntimeError("simulated target_networks table missing")
+
+    monkeypatch.setattr(targets_api, "_compute_mapping_status", _raise)
+    r = client.get(f"/api/mappings/{mapping['id']}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["id"] == mapping["id"]
+    assert body["status"] in {"complete", "incomplete", "needs_review"}
+
+
+def test_get_mapping_handles_non_dict_network_mapping_rows(client):
+    """Legacy / hand-edited mappings occasionally have non-dict entries
+    (None, plain strings) in the JSON column. The detail endpoint must
+    skip them rather than crash."""
+    vc = _create_vcenter(client)
+    target = _create_target(client)
+    _discover_target_manually(client, target["id"])
+    mapping = client.post(
+        "/api/mappings",
+        json={
+            "name": "legacy",
+            "vcenter_source_id": vc["id"],
+            "ocp_target_id": target["id"],
+            "network_mappings": [],
+            "storage_mappings": [],
+            "namespace_mappings": [],
+        },
+    ).json()
+
+    from app.core import db as _db
+    from app.models.target import ResourceMapping
+
+    session = _db.SessionLocal()
+    try:
+        row = session.get(ResourceMapping, mapping["id"])
+        row.network_mappings = [
+            None,
+            "stray string",
+            {},
+            {"source_network": "src-prod", "target_network_name": "prod-vlan-100"},
+        ]
+        row.storage_mappings = [None, {"source_datastore": "src-tier1"}]
+        session.commit()
+    finally:
+        session.close()
+
+    r = client.get(f"/api/mappings/{mapping['id']}")
+    assert r.status_code == 200, r.text
+
+
+def test_get_mapping_does_not_persist_status_on_read(client):
+    """``GET`` is read-only — recomputing status into the in-memory
+    response is fine, but we must not commit the recompute or bump
+    ``updated_at`` on every page load."""
+    vc = _create_vcenter(client)
+    target = _create_target(client)
+    _discover_target_manually(client, target["id"])
+    mapping = client.post(
+        "/api/mappings",
+        json={
+            "name": "no-write",
+            "vcenter_source_id": vc["id"],
+            "ocp_target_id": target["id"],
+            "network_mappings": [],
+            "storage_mappings": [],
+            "namespace_mappings": [],
+        },
+    ).json()
+    initial_updated_at = mapping["updated_at"]
+    # Two reads back to back. updated_at must NOT change.
+    for _ in range(2):
+        r = client.get(f"/api/mappings/{mapping['id']}")
+        assert r.status_code == 200
+        assert r.json()["updated_at"] == initial_updated_at
 
 
 def test_setting_active_flips_other_mappings_in_same_pair(client):
@@ -430,9 +523,7 @@ def test_suggest_storage_drops_hallucinated_target_names(client):
             }
         ],
     }
-    with patch(
-        "app.core.mapping_suggester.get_llm_backend"
-    ) as factory:
+    with patch("app.core.mapping_suggester.get_llm_backend") as factory:
         backend = factory.return_value
         backend.chat_sync.return_value = {"content": __import__("json").dumps(fake_response)}
         r = client.post(f"/api/mappings/{mapping['id']}/suggest-storage")
@@ -456,11 +547,13 @@ def test_mapping_resolver_resolves_network_storage_namespace():
                 "target_network_type": "nad",
             }
         ],
-        storage_mappings=[
-            {"source_datastore": "src-tier1", "target_storage_class": "ocs-rbd"}
-        ],
+        storage_mappings=[{"source_datastore": "src-tier1", "target_storage_class": "ocs-rbd"}],
         namespace_mappings=[
-            {"criteria": "environment", "criteria_value": "prod", "target_namespace": "finance-prod"},
+            {
+                "criteria": "environment",
+                "criteria_value": "prod",
+                "target_namespace": "finance-prod",
+            },
             {"criteria": "default", "target_namespace": "finance-dev"},
         ],
     )
@@ -506,12 +599,8 @@ def test_generate_wave_yaml_with_resolver_uses_mapped_names():
                 "target_network_type": "nad",
             }
         ],
-        storage_mappings=[
-            {"source_datastore": "src-tier1", "target_storage_class": "ocs-rbd"}
-        ],
-        namespace_mappings=[
-            {"criteria": "default", "target_namespace": "finance-prod"}
-        ],
+        storage_mappings=[{"source_datastore": "src-tier1", "target_storage_class": "ocs-rbd"}],
+        namespace_mappings=[{"criteria": "default", "target_namespace": "finance-prod"}],
     )
     yaml_text = generate_wave_yaml(ctx, vms, resolver=resolver)
     # Confirm the mapping-driven names land in the YAML, not the per-VM
@@ -647,12 +736,8 @@ def test_mtv_yaml_export_uses_active_mapping_when_present(client, db_session):
                 "target_network_type": "nad",
             }
         ],
-        storage_mappings=[
-            {"source_datastore": "src-tier1", "target_storage_class": "ocs-rbd"}
-        ],
-        namespace_mappings=[
-            {"criteria": "default", "target_namespace": "finance-prod"}
-        ],
+        storage_mappings=[{"source_datastore": "src-tier1", "target_storage_class": "ocs-rbd"}],
+        namespace_mappings=[{"criteria": "default", "target_namespace": "finance-prod"}],
         is_active=True,
     )
     db_session.add(mapping)
@@ -660,9 +745,7 @@ def test_mtv_yaml_export_uses_active_mapping_when_present(client, db_session):
     plan = MigrationPlan(
         name="p",
         vm_ids=[vm.id],
-        waves=[
-            {"wave_number": 1, "vm_ids": [vm.id], "rationale": "only wave"}
-        ],
+        waves=[{"wave_number": 1, "vm_ids": [vm.id], "rationale": "only wave"}],
         model="test-model",
         strategy_id=None,
         mapping_id=mapping.id,
@@ -682,8 +765,8 @@ def test_mtv_yaml_export_409_when_referenced_mapping_deleted(client, db_session)
     """Plan still references a mapping_id but the row was deleted —
     surface a 409 with a clear message rather than silently falling back."""
     from app.models.plan import MigrationPlan
-    from app.models.vm import VM
     from app.models.vcenter import VCenterSource
+    from app.models.vm import VM
 
     vc = VCenterSource(name="vc-409", hostname="vc.local")
     db_session.add(vc)

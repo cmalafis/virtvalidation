@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 from app.models.target import OCPAuthType, OCPTargetStatus, ResourceMappingStatus
 from app.models.vcenter import ClassificationLevel
+
+
+def _drop_non_dict_rows(value: Any) -> Any:
+    """Pydantic before-validator that strips non-dict elements from a
+    list. The mapping JSON columns occasionally contain ``None`` or
+    stray strings from legacy versions; we'd rather quietly drop those
+    rows than 500 the read with a response-validation error."""
+    if isinstance(value, list):
+        return [v for v in value if isinstance(v, dict)]
+    return value
+
+
+_DictRowList = Annotated[list[dict], BeforeValidator(_drop_non_dict_rows)]
 
 
 # ---------------------------------------------------------------------------
@@ -198,8 +211,8 @@ class ResourceMappingRead(BaseModel):
     name: str
     vcenter_source_id: int
     ocp_target_id: int
-    network_mappings: list[dict] = Field(default_factory=list)
-    storage_mappings: list[dict] = Field(default_factory=list)
+    network_mappings: _DictRowList = Field(default_factory=list)
+    storage_mappings: _DictRowList = Field(default_factory=list)
     # JSON column — list (legacy) or dict (new strategy shape).
     namespace_mappings: list[dict] | dict = Field(default_factory=list)
     is_active: bool = False
