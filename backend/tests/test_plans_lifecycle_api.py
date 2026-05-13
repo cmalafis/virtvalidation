@@ -9,6 +9,7 @@ Exercises the API contract that the wizard + inventory pages rely on:
   - VMs transition through available -> planned -> migrated correctly
   - DELETE plan rolls VMs back to available
   - POST /api/plans/{id}/mark-succeeded is 409 unless plan is complete
+  - POST /api/plans without mapping_id auto-resolves the active mapping
 """
 
 from __future__ import annotations
@@ -174,6 +175,115 @@ class TestPatchLifecycle:
         client.post(f"/api/plans/{plan['id']}/mark-succeeded").raise_for_status()
         # Operator must go through rolled_back; direct migrated -> available is 422
         r = client.patch(f"/api/vms/{vm['id']}", json={"lifecycle_state": "available"})
+        assert r.status_code == 422
+
+
+class TestMappingAutoResolve:
+    """POST /api/plans without mapping_id auto-resolves the active mapping
+    for the VMs' source vCenter. Without this, the legacy modal — which
+    posts only ``vm_ids`` — would see every source resource as unmapped
+    and report N false-positive coverage gaps.
+    """
+
+    def _seed_vcenter_and_mapping(self, client):
+        """Create one vCenter + one OCP target + one active ResourceMapping
+        covering ``vlan-100`` and ``tier1``. Returns the vcenter dict.
+        """
+        r = client.post(
+            "/api/sources/vcenters",
+            json={"name": "vc-auto", "hostname": "vc-auto.example"},
+        )
+        assert r.status_code == 201, r.text
+        vc = r.json()
+        r = client.post(
+            "/api/sources/targets",
+            json={
+                "name": "target-auto",
+                "api_endpoint": "https://target-auto.example",
+                "auth_type": "token",
+            },
+        )
+        assert r.status_code == 201, r.text
+        target = r.json()
+        client.post(
+            "/api/mappings",
+            json={
+                "name": "active-mapping",
+                "vcenter_source_id": vc["id"],
+                "ocp_target_id": target["id"],
+                "network_mappings": [
+                    {
+                        "source_network": "vlan-100",
+                        "target_network_name": "vlan-100-nad",
+                        "target_network_type": "nad",
+                    }
+                ],
+                "storage_mappings": [
+                    {
+                        "source_datastore": "tier1",
+                        "target_storage_class": "ocs-rbd",
+                    }
+                ],
+                "namespace_mappings": [{"criteria": "default", "target_namespace": "prod"}],
+                "is_active": True,
+            },
+        ).raise_for_status()
+        return vc
+
+    def test_auto_resolves_when_mapping_id_omitted(self, client, monkeypatch):
+        _setup_backend(monkeypatch)
+        vc = self._seed_vcenter_and_mapping(client)
+        # VM has NO per-VM target_* fallbacks; mapping has to be found
+        # for validation to pass.
+        vm = _enroll(
+            client,
+            "vm-auto",
+            source_vcenter_id=vc["id"],
+            target_namespace=None,
+            target_network_attachment=None,
+            target_storage_class=None,
+        )
+        # POST without mapping_id — auto-resolution must find the active
+        # mapping and let Stage 0 pass.
+        r = client.post("/api/plans", json={"vm_ids": [vm["id"]]})
+        assert r.status_code == 202, r.text
+        # mapping_id_used should be persisted on the plan row.
+        plan = client.get(f"/api/plans/{r.json()['id']}").json()
+        assert plan["mapping_id"] is not None
+
+    def test_multi_vcenter_no_auto_resolve(self, client, monkeypatch):
+        # When VMs span vCenters, auto-resolution declines (ambiguous)
+        # and Stage 0 reports gaps. Operator must pick a mapping
+        # explicitly via the wizard.
+        _setup_backend(monkeypatch)
+        vc_a = self._seed_vcenter_and_mapping(client)
+        # Create a second vCenter (no mapping needed for the assertion).
+        r = client.post(
+            "/api/sources/vcenters",
+            json={"name": "vc-b", "hostname": "vc-b.example"},
+        )
+        assert r.status_code == 201, r.text
+        vc_b = r.json()
+        vm_a = _enroll(
+            client,
+            "vm-a",
+            source_vcenter_id=vc_a["id"],
+            target_namespace=None,
+            target_network_attachment=None,
+            target_storage_class=None,
+        )
+        vm_b = _enroll(
+            client,
+            "vm-b",
+            source_vcenter_id=vc_b["id"],
+            target_namespace=None,
+            target_network_attachment=None,
+            target_storage_class=None,
+        )
+        r = client.post("/api/plans", json={"vm_ids": [vm_a["id"], vm_b["id"]]})
+        # Auto-resolution returned None (spans two vcenters), so the
+        # validator sees mapping=None and reports gaps for vm_b's
+        # uncovered sources. 422 either way.
         assert r.status_code == 422
 
 

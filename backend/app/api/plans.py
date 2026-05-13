@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import (
@@ -47,7 +48,49 @@ from app.schemas.plan import (
 )
 from app.schemas.report import WaveReport
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["plans"])
+
+
+def _resolve_active_mapping_for_vms(db: Session, vms: list[VM]) -> ResourceMapping | None:
+    """Auto-pick the active ResourceMapping when the operator didn't
+    pass ``mapping_id``.
+
+    Returns None when:
+      - VMs span multiple ``source_vcenter_id`` values (ambiguous;
+        operator must pick explicitly via the wizard)
+      - no VM has a ``source_vcenter_id``
+      - no active mapping exists for the single shared vCenter
+
+    When more than one active mapping exists for the same
+    (vcenter, ocp_target) pair — a data inconsistency the editor's
+    PATCH normally prevents by flipping siblings off — log and pick
+    the lowest id deterministically. Stage 0 validation will catch
+    coverage gaps regardless.
+    """
+    vcenter_ids = {vm.source_vcenter_id for vm in vms if vm.source_vcenter_id is not None}
+    if len(vcenter_ids) != 1:
+        return None
+    (vc_id,) = vcenter_ids
+    candidates = list(
+        db.scalars(
+            select(ResourceMapping)
+            .where(ResourceMapping.vcenter_source_id == vc_id)
+            .where(ResourceMapping.is_active.is_(True))
+            .order_by(ResourceMapping.id.asc())
+        ).all()
+    )
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        logger.warning(
+            "plan.create.multiple_active_mappings vcenter_id=%d ids=%s picked=%d",
+            vc_id,
+            [m.id for m in candidates],
+            candidates[0].id,
+        )
+    return candidates[0]
 
 
 @router.post("", response_model=PlanRead, status_code=status.HTTP_202_ACCEPTED)
@@ -94,11 +137,12 @@ def create_plan(
     if missing:
         raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
 
-    # Resolve mapping (optional). The new pipeline runs Stage 0
-    # validation inside the background task, but we lift the same
-    # check here so the operator sees gap detail synchronously
-    # rather than waiting for the BackgroundTask to fail.
-    mapping = None
+    # Resolve mapping. The new wizard always sends ``mapping_id``; CLI
+    # / script callers can omit it and we'll auto-resolve the active
+    # mapping for the VMs' source vCenter. Stage 0 validation below
+    # runs against whichever mapping we landed on (or None if neither
+    # path produced one), so coverage gaps still surface synchronously.
+    mapping: ResourceMapping | None = None
     if payload.mapping_id is not None:
         mapping = db.get(ResourceMapping, payload.mapping_id)
         if mapping is None:
@@ -106,6 +150,13 @@ def create_plan(
                 status_code=404,
                 detail=f"Resource mapping {payload.mapping_id} not found",
             )
+    else:
+        mapping = _resolve_active_mapping_for_vms(db, vms)
+
+    # Persist whichever mapping ID we actually consulted (auto-resolved
+    # or operator-supplied) so the background task + audit trail show
+    # the mapping that drove the plan.
+    mapping_id_used = mapping.id if mapping is not None else None
 
     coverage = validate_plan_inputs(vms, mapping)
     if not coverage.ok:
@@ -119,7 +170,7 @@ def create_plan(
         # when it completes. Empty string is the sentinel for "not yet
         # generated".
         model="",
-        mapping_id=payload.mapping_id,
+        mapping_id=mapping_id_used,
         status="pending",
         progress_message="Queued",
         progress_percent=0,
