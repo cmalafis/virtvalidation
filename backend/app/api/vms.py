@@ -22,12 +22,17 @@ from app.schemas.validation import (
 )
 from app.schemas.vm import (
     BaselineProfile,
+    BulkEnvironmentSetRequest,
+    BulkEnvironmentSetResult,
     BulkVMCreate,
     BulkVMDelete,
     BulkVMDeleteResult,
     BulkVMResult,
     CaptureTaskRead,
     DeleteAllVMsResult,
+    EnvironmentSetRequest,
+    RedetectEnvironmentRequest,
+    RedetectEnvironmentResult,
     SnapshotCreate,
     SnapshotRead,
     VMCreate,
@@ -87,6 +92,8 @@ def create_vms_bulk(payload: BulkVMCreate, db: Session = Depends(get_db)) -> dic
     IntegrityErrors. Returns the created rows and a list of names that were
     skipped (with reason). Within-batch duplicates are also caught.
     """
+    from app.core.environment import Environment, detect_environment
+
     existing_names: set[str] = set(db.scalars(select(VM.name)).all())
     seen_in_batch: set[str] = set()
     created: list[VM] = []
@@ -101,7 +108,28 @@ def create_vms_bulk(payload: BulkVMCreate, db: Session = Depends(get_db)) -> dic
             skipped.append({"name": name, "reason": "duplicate within batch"})
             continue
         seen_in_batch.add(name)
-        vm = VM(**entry.model_dump())
+        fields = entry.model_dump()
+        vm = VM(**fields)
+        # Auto-detect environment when the caller didn't provide one.
+        # The detection cascade reads name / folder / cluster /
+        # custom_attributes; tiers 2-4 only resolve once those
+        # fields are populated by the RVTools import flow.
+        # ``environment_source`` records provenance so a later
+        # redetect-all job can skip operator-supplied labels.
+        if not vm.environment:
+            result = detect_environment(
+                name=vm.name,
+                folder_path=vm.vsphere_folder,
+                cluster=vm.vsphere_cluster,
+                custom_attributes=vm.custom_attributes,
+            )
+            if result.environment != Environment.UNKNOWN:
+                vm.environment = result.environment.value
+                vm.environment_source = "auto_detected"
+        else:
+            # Caller provided an explicit value — preserve operator
+            # intent + mark source so redetect leaves it alone.
+            vm.environment_source = "user_set"
         db.add(vm)
         created.append(vm)
 
@@ -319,19 +347,12 @@ def vm_stats(db: Session = Depends(get_db)) -> dict:
     pulling every row.
     """
     total = db.scalar(select(func.count(VM.id))) or 0
-    status_rows = db.execute(
-        select(VM.status, func.count()).group_by(VM.status)
-    ).all()
+    status_rows = db.execute(select(VM.status, func.count()).group_by(VM.status)).all()
     by_status: dict[str, int] = {}
     for value, count in status_rows:
         key = value.value if hasattr(value, "value") else str(value)
         by_status[key] = count
-    missing = (
-        db.scalar(
-            select(func.count(VM.id)).where(VM.missing_from_last_upload.is_(True))
-        )
-        or 0
-    )
+    missing = db.scalar(select(func.count(VM.id)).where(VM.missing_from_last_upload.is_(True))) or 0
     return {
         "total": total,
         "by_status": by_status,
@@ -419,6 +440,213 @@ def delete_all_vms(
     db.commit()
     request.state.skip_audit_log = True
     return {"deleted_count": deleted_count}
+
+
+# ---------------------------------------------------------------------------
+# Environment management — operator override + bulk set + redetect.
+# These three routes must be declared BEFORE ``/{vm_id}`` paths so
+# FastAPI doesn't route ``/bulk-set-environment`` to the integer-typed
+# ``vm_id`` parameter. The same trick applies elsewhere in this file
+# (``/all``, ``/facets``, ``/stats``).
+# ---------------------------------------------------------------------------
+def _normalize_env_or_400(value: str) -> str:
+    """Validate + canonicalize an environment string via the enum.
+
+    Raises 400 instead of silently mapping invalid input to UNKNOWN —
+    the manual-override path should fail loudly so operators see the
+    typo. The bulk import path keeps the looser permissive
+    behavior because legitimate RVTools data often contains
+    variants we haven't seen yet.
+    """
+    from app.core.environment import Environment, normalize
+
+    env = normalize(value)
+    if env == Environment.UNKNOWN and (value or "").strip().lower() not in {
+        "",
+        "unknown",
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown environment value {value!r}. "
+                f"Allowed values: {', '.join(e.value for e in Environment)}."
+            ),
+        )
+    return env.value
+
+
+@router.post("/bulk-set-environment", response_model=BulkEnvironmentSetResult)
+def bulk_set_environment(
+    request: Request,
+    payload: BulkEnvironmentSetRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Atomically set the environment of N VMs.
+
+    All-or-nothing: if any vm_id is missing, the whole call fails
+    with 404 and nothing is persisted. The audit log records the
+    bulk operation + the rationale so federal reviewers can trace
+    why a chunk of inventory was relabeled.
+    """
+    new_env = _normalize_env_or_400(payload.environment)
+    requested = list(dict.fromkeys(payload.vm_ids))
+    found = {vm.id: vm for vm in db.scalars(select(VM).where(VM.id.in_(requested))).all()}
+    missing = [vid for vid in requested if vid not in found]
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"VMs not found: {missing[:20]}",
+        )
+    for vm in found.values():
+        vm.environment = new_env
+        vm.environment_source = "user_set"
+    actor = request.headers.get("x-actor", "user")
+    record_audit(
+        db,
+        action="vm.environment.bulk_set",
+        actor=actor,
+        resource_type="vm",
+        resource_id=None,
+        details={
+            "vm_ids": requested,
+            "environment": new_env,
+            "rationale": payload.rationale,
+            "count": len(found),
+        },
+    )
+    db.commit()
+    request.state.skip_audit_log = True
+    return {"updated": len(found), "not_found": []}
+
+
+@router.post("/redetect-environment", response_model=RedetectEnvironmentResult)
+def redetect_environment(
+    request: Request,
+    payload: RedetectEnvironmentRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Re-run the detection cascade on the fleet (or one vCenter).
+
+    Skips VMs marked ``user_set`` by default so operator overrides
+    survive bulk re-runs. ``force=true`` overrides that protection;
+    ``dry_run=true`` returns the projected changes without
+    persisting. Federal audit trails record the redetect operation
+    summary so reviewers can reconstruct which labels are pre- vs
+    post-redetect.
+    """
+    from app.core.environment import Environment, detect_environment
+
+    stmt = select(VM)
+    if payload.vcenter_source_id is not None:
+        stmt = stmt.where(VM.source_vcenter_id == payload.vcenter_source_id)
+    vms = list(db.scalars(stmt).all())
+
+    updated = 0
+    skipped_user_set = 0
+    still_unknown = 0
+    summary: dict[str, int] = {}
+    unknown_samples: list[str] = []
+
+    for vm in vms:
+        if vm.environment_source == "user_set" and not payload.force:
+            skipped_user_set += 1
+            # Tally the current value into the summary so the operator
+            # sees the full breakdown including untouched labels.
+            current = (vm.environment or "unknown") or "unknown"
+            summary[current] = summary.get(current, 0) + 1
+            continue
+        result = detect_environment(
+            name=vm.name,
+            folder_path=vm.vsphere_folder,
+            cluster=vm.vsphere_cluster,
+            custom_attributes=vm.custom_attributes,
+        )
+        new_value = result.environment.value
+        if result.environment == Environment.UNKNOWN:
+            still_unknown += 1
+            if len(unknown_samples) < 10:
+                unknown_samples.append(vm.name)
+        if not payload.dry_run:
+            if result.environment != Environment.UNKNOWN:
+                if vm.environment != new_value:
+                    vm.environment = new_value
+                    vm.environment_source = "auto_detected"
+                    updated += 1
+                # else: same value, no update counted
+            elif vm.environment is not None and vm.environment_source != "user_set":
+                # Detector says UNKNOWN, but VM had an auto-detected
+                # value — wipe it so the operator sees the gap.
+                vm.environment = None
+                vm.environment_source = "unset"
+        else:
+            if result.environment != Environment.UNKNOWN and vm.environment != new_value:
+                updated += 1
+        summary[new_value] = summary.get(new_value, 0) + 1
+
+    if not payload.dry_run:
+        actor = request.headers.get("x-actor", "user")
+        record_audit(
+            db,
+            action="vm.environment.redetect",
+            actor=actor,
+            resource_type="vm",
+            resource_id=None,
+            details={
+                "scanned": len(vms),
+                "updated": updated,
+                "skipped_user_set": skipped_user_set,
+                "force": payload.force,
+                "vcenter_source_id": payload.vcenter_source_id,
+            },
+        )
+        db.commit()
+    request.state.skip_audit_log = True
+
+    return {
+        "scanned": len(vms),
+        "updated": updated,
+        "skipped_user_set": skipped_user_set,
+        "still_unknown": still_unknown,
+        "summary_by_environment": summary,
+        "still_unknown_samples": unknown_samples,
+    }
+
+
+@router.patch("/{vm_id}/environment", response_model=VMRead)
+def set_vm_environment(
+    request: Request,
+    vm_id: int,
+    payload: EnvironmentSetRequest,
+    db: Session = Depends(get_db),
+) -> VM:
+    """Operator override of one VM's environment.
+
+    Marks ``environment_source="user_set"`` so the next redetect
+    run leaves the value alone. Audit-logged for compliance.
+    """
+    vm = _get_vm_or_404(db, vm_id)
+    new_env = _normalize_env_or_400(payload.environment)
+    actor = request.headers.get("x-actor", "user")
+    before = vm.environment
+    vm.environment = new_env
+    vm.environment_source = "user_set"
+    record_audit(
+        db,
+        action="vm.environment.set",
+        actor=actor,
+        resource_type="vm",
+        resource_id=vm.id,
+        details={
+            "vm_name": vm.name,
+            "before": before,
+            "after": new_env,
+            "rationale": payload.rationale,
+        },
+    )
+    db.commit()
+    db.refresh(vm)
+    request.state.skip_audit_log = True
+    return vm
 
 
 @router.get("/{vm_id}", response_model=VMRead)

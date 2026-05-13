@@ -305,6 +305,24 @@ const DATA = {
             "summary": "Bulk-delete every VM that matches the given filters."
           },
           {
+            "method": "POST",
+            "path": "/api/vms/bulk-set-environment",
+            "handler": "bulk_set_environment",
+            "summary": "Atomically set the environment of N VMs."
+          },
+          {
+            "method": "POST",
+            "path": "/api/vms/redetect-environment",
+            "handler": "redetect_environment",
+            "summary": "Re-run the detection cascade on the fleet (or one vCenter)."
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/vms/{vm_id}/environment",
+            "handler": "set_vm_environment",
+            "summary": "Operator override of one VM's environment."
+          },
+          {
             "method": "GET",
             "path": "/api/vms/{vm_id}",
             "handler": "get_vm",
@@ -448,6 +466,10 @@ const DATA = {
               "target_network_attachment",
               "source_vcenter_id",
               "application_hint",
+              "vsphere_cluster",
+              "vsphere_folder",
+              "custom_attributes",
+              "environment_source",
               "missing_from_last_upload",
               "last_seen_in_upload_at",
               "created_at",
@@ -513,7 +535,10 @@ const DATA = {
               "target_storage_class",
               "target_network_attachment",
               "source_vcenter_id",
-              "application_hint"
+              "application_hint",
+              "vsphere_cluster",
+              "vsphere_folder",
+              "custom_attributes"
             ],
             "methods": [],
             "summary": ""
@@ -614,6 +639,67 @@ const DATA = {
             "table": "",
             "fields": [
               "deleted_count"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "EnvironmentSetRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "environment",
+              "rationale"
+            ],
+            "methods": [],
+            "summary": "Body for PATCH /api/vms/{id}/environment."
+          },
+          {
+            "name": "BulkEnvironmentSetRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids",
+              "environment",
+              "rationale"
+            ],
+            "methods": [],
+            "summary": "Body for POST /api/vms/bulk-set-environment."
+          },
+          {
+            "name": "BulkEnvironmentSetResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "updated",
+              "not_found"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "RedetectEnvironmentRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vcenter_source_id",
+              "force",
+              "dry_run"
+            ],
+            "methods": [],
+            "summary": "Body for POST /api/vms/redetect-environment."
+          },
+          {
+            "name": "RedetectEnvironmentResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "scanned",
+              "updated",
+              "skipped_user_set",
+              "still_unknown",
+              "summary_by_environment",
+              "still_unknown_samples"
             ],
             "methods": [],
             "summary": ""
@@ -6285,7 +6371,7 @@ const DATA = {
         "api_calls": [
           "/api/sources/vcenters",
           "/api/validations/preview-tiers",
-          "/api/vms?limit=10000"
+          "/api/vms?limit=1000"
         ],
         "members": [
           {
@@ -6725,7 +6811,7 @@ const DATA = {
           "/api/sources/targets",
           "/api/sources/targets/{id}",
           "/api/sources/vcenters",
-          "/api/vms?source_vcenter_id={id}&limit=10000"
+          "/api/vms?source_vcenter_id={id}&limit=1000"
         ],
         "members": [
           {
@@ -7319,6 +7405,10 @@ const DATA = {
           },
           {
             "name": "rowToPayload",
+            "kind": "helper"
+          },
+          {
+            "name": "_collectCustomAttributes",
             "kind": "helper"
           },
           {

@@ -64,6 +64,31 @@ class VM(Base):
     # ahead of time (e.g., "epic-emr-prod", "athena-billing").
     application_hint: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
+    # vSphere placement metadata. The RVTools export carries these
+    # columns; the preclassifier + environment detector read them to
+    # support tier-2/tier-3 detection (folder pattern, cluster name
+    # pattern) and richer partition keys. NULL when the importer
+    # didn't see the column or the operator created the VM manually.
+    vsphere_cluster: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    vsphere_folder: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Custom Attributes from RVTools — a dict of operator-supplied
+    # labels (Environment, App, Tier, Owner). Tier-2 of the env
+    # detector reads ``custom_attributes["Environment"]`` first. Free-
+    # form so any key the customer ships is preserved verbatim for
+    # audit; the planner only consumes the keys it knows about.
+    custom_attributes: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    # Provenance of the ``environment`` field. ``unset`` = never
+    # touched; ``auto_detected`` = the importer or redetect job
+    # populated it; ``user_set`` = an operator explicitly chose it.
+    # Redetect-by-default skips user_set so operator overrides
+    # survive bulk re-runs.
+    environment_source: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="unset",
+        server_default="unset",
+    )
+
     # RVTools delta-import lifecycle. ``missing_from_last_upload`` is
     # set on VMs that were in the prior upload but absent from the
     # latest one — operators decide whether to decommission or keep.
@@ -71,7 +96,10 @@ class VM(Base):
     # observed in any RVTools import; together these support a "stale
     # inventory" filter without auto-deleting rows.
     missing_from_last_upload: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="0", nullable=False,
+        Boolean,
+        default=False,
+        server_default="0",
+        nullable=False,
     )
     last_seen_in_upload_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

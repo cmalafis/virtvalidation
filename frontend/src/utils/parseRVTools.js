@@ -25,6 +25,12 @@ export const HEADER_ALIASES = {
   // multi-vCenter uploads. Lives separately from source_hostname
   // (which is the *VM's* hostname, not the vCenter's).
   source_vcenter_hostname:    ["vcenter", "vc", "vcenterserver", "vcserver"],
+  // vSphere placement metadata. Tiers 2-4 of the environment
+  // detection cascade (folder pattern, cluster name pattern) read
+  // these. RVTools exports them under simple column names; we
+  // tolerate the casing variants we've seen in the field.
+  vsphere_cluster:            ["cluster", "vspherecluster", "computecluster"],
+  vsphere_folder:             ["folder", "folderpath", "vmfolder", "vspherefolder"],
 };
 
 // vsphere_networks and vsphere_datastores are list-typed; CSV operators put
@@ -70,6 +76,8 @@ const FIELD_MAX = {
   target_namespace: 253,
   target_storage_class: 253,
   target_network_attachment: 253,
+  vsphere_cluster: 255,
+  vsphere_folder: 512,
 };
 
 const cap = (v, field) => {
@@ -110,7 +118,43 @@ export function rowToPayload(rawRow) {
     // ("vc-east-01.dha.mil." vs "VC-EAST-01.DHA.MIL") cluster
     // together when grouping.
     source_vcenter_hostname: normalizeHostname(vcenterHost),
+    // Placement metadata feeding the environment detection cascade.
+    vsphere_cluster: cap(get("vsphere_cluster"), "vsphere_cluster"),
+    vsphere_folder: cap(get("vsphere_folder"), "vsphere_folder"),
+    // Custom Attributes from RVTools. The exporter typically gives
+    // each custom attribute its own column ("Environment", "App",
+    // "Tier", "Owner") rather than packing them into a single cell.
+    // We scoop up the well-known keys here; future keys can be
+    // added without breaking the bulk import.
+    custom_attributes: _collectCustomAttributes(lookup),
   };
+}
+
+
+const _CUSTOM_ATTR_KEYS = ["Environment", "App", "Tier", "Owner", "Application"];
+
+function _collectCustomAttributes(lookup) {
+  // ``lookup`` is keyed by normKey'd column names so "Custom Attribute - Environment"
+  // becomes "customattributeenvironment". Try the bare key first
+  // ("environment"), then the RVTools "Custom Attribute - X" pattern.
+  const out = {};
+  for (const key of _CUSTOM_ATTR_KEYS) {
+    const lower = key.toLowerCase();
+    const candidates = [
+      lower,
+      `customattribute${lower}`,
+      `ca${lower}`,
+      `custom${lower}`,
+    ];
+    for (const c of candidates) {
+      const v = lookup[c];
+      if (v != null && String(v).trim() !== "") {
+        out[key] = String(v).trim().slice(0, 256);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 

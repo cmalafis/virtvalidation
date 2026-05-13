@@ -104,63 +104,70 @@ Pinned by `backend/tests/test_environment_partition.py`.
 
 ---
 
+## What's wired (P refactor)
+
+The P refactor completed the wiring O deferred:
+
+  - **VM columns** — `vsphere_cluster`, `vsphere_folder`,
+    `custom_attributes` (JSON), `environment_source` columns
+    landed in Alembic migration `20260512_3369ee37afd9`. Existing
+    rows with non-null `environment` got `environment_source =
+    "auto_detected"` in the backfill.
+  - **RVTools parser** — `frontend/src/utils/parseRVTools.js` now
+    extracts Cluster / Folder columns and the well-known custom-
+    attribute columns (Environment, App, Tier, Owner,
+    Application).
+  - **Importer integration** — `POST /api/vms/bulk` runs
+    `detect_environment` on every incoming VM that doesn't carry
+    an explicit `environment` value. Operator-supplied values
+    are tagged `user_set`; detector-supplied values are tagged
+    `auto_detected`.
+  - **Override endpoints** —
+    `PATCH /api/vms/{id}/environment`,
+    `POST /api/vms/bulk-set-environment` (atomic), and
+    `POST /api/vms/redetect-environment` (with `force` / `dry_run`)
+    are all live. Each writes an audit-log entry under the
+    `vm.environment.*` actions.
+
 ## Deferred work
 
-This first cut delivers the typed enum + detection + partition.
-Several spec items are explicitly **not** included in this
-refactor and remain open follow-ons:
-
-### Model migration to typed enum
-
-`VM.environment` is still a free-text `String(64)` column. The
-typed enum lives in `app.core.environment` and is applied via
-`normalize()` at read time. A future Alembic migration will:
-
-  - Add an `environment_source` column
-    (`"unset"|"auto_detected"|"user_set"|"imported"`).
-  - Convert `environment` to a constrained enum or check
-    constraint over the canonical values.
-  - Backfill existing rows by running `detect_environment` over
-    each VM's name + (future) folder + cluster fields.
-
-### RVTools import integration
-
-`detect_environment` is not yet wired into the bulk-create path
-(`POST /api/vms/bulk`). When the migration above lands, the
-importer will:
-
-  1. Run detection on every incoming VM.
-  2. Set `environment` + `environment_source="auto_detected"`.
-  3. Surface UNKNOWN VMs in the import-summary UI.
-
-### VM model additions
-
-The detection cascade reads `folder_path`, `cluster`, and
-`custom_attributes` — but the VM model doesn't have those columns
-today. Tier 2-4 of the cascade are only fully effective once
-those columns land. Tracked in the spec's Part 1.2.
-
-### Bulk relabel + redetect endpoints
-
-`PATCH /api/vms/{id}/environment`, `POST /api/vms/bulk-set-environment`,
-`POST /api/vms/redetect-environment` are open follow-ons. The
-classifier function exists; only the API surface remains.
+The following items from the spec remain open follow-ons. The
+P refactor was scoped to the detection wiring; multi-cluster
+routing and the larger UI surface are still ahead.
 
 ### Removing OCP cluster authentication
 
 The spec calls for removing `api_token`, `ca_cert`, `verify_ssl`
 from the `OCPTarget` model and dropping the discovery endpoints.
-That's a separate large refactor (touches `app/models/target.py`,
+Separate large refactor — touches `app/models/target.py`,
 `app/api/targets.py`, `app/core/ocp_discovery.py`, plus the
-frontend OCPTargets page) and is deferred.
+frontend OCPTargets page.
 
-### Mapping templates
+### Mapping templates + multi-cluster routing
 
 The spec's Part 4 — `NetworkMapping` and `StorageMapping` models
 with per-cluster mappings — and Part 5 — per-VM
-`target_cluster_id` override + `EnvironmentClusterMapping` — both
-require new models, migrations, CRUD APIs, and frontend pages.
-Open follow-ons.
+`target_cluster_id` override + `EnvironmentClusterMapping` —
+both require new models, migrations, CRUD APIs, and frontend
+pages.
+
+### UI flows
+
+The Environment Labels page, Target Clusters page, Environment
+Routing page, Mapping Templates pages, and the wizard partition
+preview are all open. Backend endpoints for the labels workflow
+are now wired (PATCH / bulk / redetect); the frontend doesn't
+surface them yet.
+
+### Per-vCenter source-signal aggregation endpoint
+
+The mapping page (`ResourceMappings.jsx`) used to fetch
+`limit=10000` VMs to aggregate which networks / datastores
+exist in a vCenter — that's now capped at the backend's 1000-
+page-size limit. For vCenters with >1000 VMs, aggregating
+server-side via a dedicated
+`GET /api/sources/vcenters/{id}/source-signals` endpoint would
+restore full fidelity. Open follow-on.
 
 ---
 

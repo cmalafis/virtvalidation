@@ -36,10 +36,18 @@ export default function BulkOperations() {
     setLoading(true);
     try {
       const [v, c] = await Promise.all([
-        fetchJSON("/api/vms?limit=10000"),
+        // limit=1000 matches the backend's MAX_PAGE_SIZE cap. The
+        // backend used to return 422 for higher values; bulk pages
+        // with >1000 VMs are deferred — at that scale the operator
+        // should filter the inventory by vCenter / environment
+        // first. The response is the wrapped {items, total, ...}
+        // shape; pull items off so legacy callers expecting an
+        // array keep working.
+        fetchJSON("/api/vms?limit=1000"),
         fetchJSON("/api/sources/vcenters").catch(() => []),
       ]);
-      setVms(Array.isArray(v) ? v : []);
+      const vmList = Array.isArray(v) ? v : (v?.items || []);
+      setVms(vmList);
       setVcenters(Array.isArray(c) ? c : []);
     } catch (e) { toast.error(e.message, TOAST_OPTS); }
     finally { setLoading(false); }

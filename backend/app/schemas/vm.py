@@ -31,6 +31,14 @@ class VMBase(BaseModel):
     # Optional pre-categorization hint — if set at enrollment time,
     # Level 1 will use it as a seed instead of inferring from name patterns.
     application_hint: str | None = Field(default=None, max_length=128)
+    # vSphere placement metadata used by the environment detection
+    # cascade. NULL when the operator created the VM manually or the
+    # RVTools export didn't include the column. All three are
+    # advisory — the planner reads them when present but doesn't
+    # require them.
+    vsphere_cluster: str | None = Field(default=None, max_length=255)
+    vsphere_folder: str | None = Field(default=None, max_length=512)
+    custom_attributes: dict = Field(default_factory=dict)
 
 
 class VMCreate(VMBase):
@@ -116,6 +124,61 @@ class VMStats(BaseModel):
 
 class DeleteAllVMsResult(BaseModel):
     deleted_count: int
+
+
+class EnvironmentSetRequest(BaseModel):
+    """Body for PATCH /api/vms/{id}/environment.
+
+    Operator override — the API validates the value against the
+    canonical Environment enum via ``normalize()`` and rejects
+    anything that doesn't map. ``rationale`` is recorded in the
+    audit log for federal compliance review.
+    """
+
+    environment: str = Field(min_length=1, max_length=64)
+    rationale: str | None = Field(default=None, max_length=512)
+
+
+class BulkEnvironmentSetRequest(BaseModel):
+    """Body for POST /api/vms/bulk-set-environment.
+
+    Atomic — either every vm_id updates or none do. Use sparingly:
+    the planner partitions by environment, so bulk-changing the
+    environment of in-flight VMs across an existing plan will
+    invalidate the plan's wave structure.
+    """
+
+    vm_ids: list[int] = Field(min_length=1, max_length=MAX_VMS_PER_BULK_CREATE)
+    environment: str = Field(min_length=1, max_length=64)
+    rationale: str | None = Field(default=None, max_length=512)
+
+
+class BulkEnvironmentSetResult(BaseModel):
+    updated: int
+    not_found: list[int]
+
+
+class RedetectEnvironmentRequest(BaseModel):
+    """Body for POST /api/vms/redetect-environment.
+
+    ``force=true`` overwrites VMs marked ``user_set`` — only use
+    after the operator confirms they want to discard manual
+    labels (e.g. a major fleet re-import). ``dry_run=true``
+    returns the projected changes without persisting them.
+    """
+
+    vcenter_source_id: int | None = Field(default=None)
+    force: bool = False
+    dry_run: bool = False
+
+
+class RedetectEnvironmentResult(BaseModel):
+    scanned: int
+    updated: int
+    skipped_user_set: int
+    still_unknown: int
+    summary_by_environment: dict[str, int]
+    still_unknown_samples: list[str]
 
 
 class BulkVMCreate(BaseModel):

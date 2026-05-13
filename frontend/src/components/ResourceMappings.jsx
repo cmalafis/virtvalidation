@@ -214,11 +214,17 @@ export function ResourceMappingDetail() {
     try {
       const m = await fetchJSON(`/api/mappings/${id}`);
       const t = await fetchJSON(`/api/sources/targets/${m.ocp_target_id}`);
-      // Build source-signal lists by walking VMs in scope (cheap path:
-      // load VMs filtered by vcenter and aggregate locally).
-      const vms = await fetchJSON(`/api/vms?source_vcenter_id=${m.vcenter_source_id}&limit=10000`);
+      // Build source-signal lists by walking VMs in scope. limit=1000
+      // matches the backend MAX_PAGE_SIZE cap (previously
+      // limit=10000 here triggered a 422 against the mapping page).
+      // For vCenters with >1000 VMs, the aggregation under-counts
+      // signals that only appear on later pages — a dedicated
+      // /api/sources/vcenters/{id}/source-signals endpoint that
+      // aggregates server-side is the open follow-on; this cap
+      // unblocks the mapping page today.
+      const vmsResp = await fetchJSON(`/api/vms?source_vcenter_id=${m.vcenter_source_id}&limit=1000`);
       const netCount = {}; const dsCount = {};
-      for (const vm of (Array.isArray(vms) ? vms : (vms?.items || []))) {
+      for (const vm of (Array.isArray(vmsResp) ? vmsResp : (vmsResp?.items || []))) {
         for (const n of vm.vsphere_networks || []) netCount[n] = (netCount[n] || 0) + 1;
         for (const d of vm.vsphere_datastores || []) dsCount[d] = (dsCount[d] || 0) + 1;
       }

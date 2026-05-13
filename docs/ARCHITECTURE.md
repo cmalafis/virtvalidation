@@ -41,6 +41,9 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core
 | `GET` | `/api/vms/facets` | `vm_facets(db, status_filter, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Per-dimension counts so the filter UI can show &quot;Production (600)&quot;. |
 | `GET` | `/api/vms/stats` | `vm_stats(db)` | Cheap dashboard counters — no filter set, no row reads. |
 | `DELETE` | `/api/vms/all` | `delete_all_vms(request, db, confirm, status_filter, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Bulk-delete every VM that matches the given filters. |
+| `POST` | `/api/vms/bulk-set-environment` | `bulk_set_environment(request, payload, db)` | Atomically set the environment of N VMs. |
+| `POST` | `/api/vms/redetect-environment` | `redetect_environment(request, payload, db)` | Re-run the detection cascade on the fleet (or one vCenter). |
+| `PATCH` | `/api/vms/{vm_id}/environment` | `set_vm_environment(request, vm_id, payload, db)` | Operator override of one VM&#x27;s environment. |
 | `GET` | `/api/vms/{vm_id}` | `get_vm(vm_id, db)` | — |
 | `PATCH` | `/api/vms/{vm_id}` | `update_vm(request, vm_id, payload, db)` | — |
 | `DELETE` | `/api/vms/{vm_id}` | `delete_vm(request, vm_id, db)` | — |
@@ -67,7 +70,7 @@ Depends on: `app.core.db`
 
 - **`VMStatus`** (Class)
 - **`VM`** (SQLAlchemy model · table `vms`)
-  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
+  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`, `environment_source`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
 - **`BaselineSnapshot`** (SQLAlchemy model · table `baseline_snapshots`)
   - Fields: `id`, `vm_id`, `snapshot_number`, `ssh_user`, `raw_data`, `checksum`, `collected_at`, `vm`
 
@@ -81,7 +84,7 @@ Depends on: `app.core.limits`, `app.models.vm`
 **Classes**
 
 - **`VMBase`** (Pydantic schema)
-  - Fields: `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`
+  - Fields: `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`
 - **`VMCreate`** (Class)
 - **`VMUpdate`** (Pydantic schema)
   - Fields: `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`
@@ -98,6 +101,19 @@ Depends on: `app.core.limits`, `app.models.vm`
   - Fields: `total`, `by_status`, `missing_from_last_upload`
 - **`DeleteAllVMsResult`** (Pydantic schema)
   - Fields: `deleted_count`
+- **`EnvironmentSetRequest`** (Pydantic schema)
+  - Body for PATCH /api/vms/{id}/environment.
+  - Fields: `environment`, `rationale`
+- **`BulkEnvironmentSetRequest`** (Pydantic schema)
+  - Body for POST /api/vms/bulk-set-environment.
+  - Fields: `vm_ids`, `environment`, `rationale`
+- **`BulkEnvironmentSetResult`** (Pydantic schema)
+  - Fields: `updated`, `not_found`
+- **`RedetectEnvironmentRequest`** (Pydantic schema)
+  - Body for POST /api/vms/redetect-environment.
+  - Fields: `vcenter_source_id`, `force`, `dry_run`
+- **`RedetectEnvironmentResult`** (Pydantic schema)
+  - Fields: `scanned`, `updated`, `skipped_user_set`, `still_unknown`, `summary_by_environment`, `still_unknown_samples`
 - **`BulkVMCreate`** (Pydantic schema)
   - Fields: `vms`
 - **`BulkVMSkipped`** (Pydantic schema)
@@ -1860,7 +1876,7 @@ Exports / inner components:
 API calls:
 - `/api/sources/vcenters`
 - `/api/validations/preview-tiers`
-- `/api/vms?limit=10000`
+- `/api/vms?limit=1000`
 
 Exports / inner components:
 - **`BulkOperations`** (component)
@@ -2038,7 +2054,7 @@ API calls:
 - `/api/sources/targets`
 - `/api/sources/targets/{id}`
 - `/api/sources/vcenters`
-- `/api/vms?source_vcenter_id={id}&limit=10000`
+- `/api/vms?source_vcenter_id={id}&limit=1000`
 
 Exports / inner components:
 - **`ResourceMappings`** (component)
@@ -2268,6 +2284,7 @@ Exports / inner components:
 Exports / inner components:
 - **`shortenOSFamily`** (helper)
 - **`rowToPayload`** (helper)
+- **`_collectCustomAttributes`** (helper)
 - **`normalizeHostname`** (helper)
 - **`groupByVCenter`** (helper)
 - **`parseCSV`** (helper)
