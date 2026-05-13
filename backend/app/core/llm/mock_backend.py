@@ -50,6 +50,18 @@ _INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
         ],
     ),
     (
+        "wave_annotation",
+        [
+            # Per-wave annotation prompt for the new pipeline. One LLM
+            # call per wave (≤10 groups per call); returns the structured
+            # {description, risk_score, risk_rationale, notable_concerns}
+            # shape. Must come BEFORE wave_rationale so the more-specific
+            # signature wins.
+            "annotate this single wave",
+            "wave annotation schema",
+        ],
+    ),
+    (
         "wave_rationale",
         [
             # Batched per-wave rationale prompt covers up to 10 waves per
@@ -244,6 +256,8 @@ class MockBackend(LLMBackend):
         intent = _detect_intent(prompt_text)
         if intent == "categorize":
             payload = self._categorization_response(prompt_text)
+        elif intent == "wave_annotation":
+            payload = self._wave_annotation_response(prompt_text)
         elif intent == "wave_rationale":
             payload = self._wave_rationale_response(prompt_text)
         elif intent == "plan_groups":
@@ -305,6 +319,37 @@ class MockBackend(LLMBackend):
                     "members": members,
                 },
             ]
+        }
+
+    def _wave_annotation_response(self, prompt: str) -> dict:
+        """Per-wave annotation, one call per wave (≤10 groups per call).
+
+        Returns the structured schema the Stage-6 parser validates:
+        ``{description, risk_score, risk_rationale, notable_concerns}``.
+        The mock derives the wave number from the prompt so multiple
+        parallel calls have distinct content.
+        """
+        import re as _re
+
+        match = _re.search(r"Wave\s+(\d+)", prompt)
+        wave_number = int(match.group(1)) if match else 1
+        groups_match = _re.findall(r'"id"\s*:\s*"([^"]+)"', prompt)
+        group_count = len(groups_match) or 1
+        return {
+            "description": (
+                f"Wave {wave_number} migrates {group_count} pre-formed group(s). "
+                "Mock annotation: groups co-locate by shared networks / "
+                "datastores; dependency order honored upstream by Stage 4."
+            ),
+            "risk_score": 3,
+            "risk_rationale": (
+                "Mock risk: balanced — no single group dominates the "
+                "wave, HA families spread across waves preserves quorum."
+            ),
+            "notable_concerns": [
+                f"Wave {wave_number}: verify cutover order matches "
+                "the topological dependency hints rendered upstream."
+            ],
         }
 
     def _wave_rationale_response(self, prompt: str) -> dict:
