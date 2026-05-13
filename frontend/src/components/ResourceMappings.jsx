@@ -147,14 +147,26 @@ export default function ResourceMappings() {
 
 function ConfirmDeleteModal({ mapping, onClose, onDeleted }) {
   const [busy, setBusy] = useState(false);
+  const [conflict, setConflict] = useState(null);
+
   const confirm = async () => {
     setBusy(true);
+    setConflict(null);
     try {
       await fetchJSON(`/api/mappings/${mapping.id}`, { method: "DELETE" });
       toast.success(`Deleted ${mapping.name}`, TOAST_OPTS);
       await onDeleted();
     } catch (e) {
-      toast.error(e.message, TOAST_OPTS);
+      // The 409 body shape is {detail: {detail, referenced_by: [...]}}.
+      // fetchJSON's err.detail is whatever lives under top-level "detail",
+      // which here is our nested object. Surface the referencing plans
+      // inline rather than toasting a generic message.
+      const nested = e?.detail;
+      if (e?.status === 409 && nested && typeof nested === "object" && nested.referenced_by) {
+        setConflict(nested);
+      } else {
+        toast.error(e.message, TOAST_OPTS);
+      }
       setBusy(false);
     }
   };
@@ -168,26 +180,39 @@ function ConfirmDeleteModal({ mapping, onClose, onDeleted }) {
         </div>
         <div style={{ padding: "18px 22px", color: "#ccccee", fontSize: 13, lineHeight: 1.6 }}>
           You are about to delete{" "}
-          <strong style={{ color: "#eeeeff" }}>{mapping.name}</strong>.
-          {/* Plan.mapping_id has ON DELETE SET NULL — existing plans
-              survive but lose the mapping link, so their MTV YAML
-              export falls back to per-VM target_* fields with
-              placeholder names. Re-generate before applying. */}
+          <strong style={{ color: "#eeeeff" }}>{mapping?.name}</strong>.
           <p style={{ marginTop: 12 }}>
-            Migration plans that reference this mapping will be unlinked
-            from it. Their MTV YAML export will fall back to per-VM
-            target fields and may emit placeholder names. Re-generate
-            those plans with a different mapping before applying.
+            The backend rejects this delete if any plan still references
+            the mapping — delete or reassign those plans first.
           </p>
+          {conflict && (
+            <div style={{ marginTop: 14, border: "1px solid #ff5577", background: "rgba(255,51,85,0.06)", padding: "12px 14px" }}>
+              <div style={{ color: "#ff5577", fontWeight: 700, fontSize: 13 }}>
+                Cannot delete — referenced by {(conflict.referenced_by ?? []).length} plan(s)
+              </div>
+              <ul style={{ marginTop: 8, paddingLeft: 18, color: "#ccccee", fontSize: 12 }}>
+                {(conflict.referenced_by ?? []).map((row) => (
+                  <li key={row?.plan_id}>
+                    <Link to={`/plans/${row?.plan_id}`} style={{ color: "#88aaff" }}>
+                      Plan #{row?.plan_id} {row?.plan_name ? `· ${row.plan_name}` : ""}
+                    </Link>
+                    {row?.status ? <span style={{ color: "#aaaacc" }}> · status: {row.status}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
         <div style={{ borderTop: "1px solid #1a1a2e", padding: "14px 22px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
           <button type="button" onClick={onClose} style={btnSecondary} disabled={busy}>
-            Cancel
+            {conflict ? "Close" : "Cancel"}
           </button>
-          <button type="button" onClick={confirm} disabled={busy}
-            style={{ ...btnDanger, opacity: busy ? 0.5 : 1 }}>
-            {busy ? "Deleting…" : "Delete"}
-          </button>
+          {!conflict && (
+            <button type="button" onClick={confirm} disabled={busy}
+              style={{ ...btnDanger, opacity: busy ? 0.5 : 1 }}>
+              {busy ? "Deleting…" : "Delete"}
+            </button>
+          )}
         </div>
       </div>
     </div>

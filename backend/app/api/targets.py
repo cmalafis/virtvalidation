@@ -31,6 +31,7 @@ from app.core.mapping_suggester import (
     suggest_storage_mappings,
 )
 from app.core.ocp_discovery import OCPDiscoveryClient, OCPDiscoveryError
+from app.models.plan import MigrationPlan
 from app.models.target import (
     OCPTarget,
     OCPTargetStatus,
@@ -573,7 +574,37 @@ def delete_mapping(
     mapping_id: int,
     db: Session = Depends(get_db),
 ) -> None:
+    """Delete a resource mapping.
+
+    Returns 409 with the list of referencing plans when the mapping
+    is still in use. Previously this relied on
+    ``Plan.mapping_id ON DELETE SET NULL`` which silently orphaned
+    plans — operators couldn't tell why their plan's MTV YAML export
+    suddenly emitted placeholder names. The 409 body matches the same
+    shape used by ``target_entities.delete_network`` so the frontend
+    can render referencing rows consistently."""
     mapping = _get_mapping_or_404(db, mapping_id)
+    referencing = list(
+        db.scalars(select(MigrationPlan).where(MigrationPlan.mapping_id == mapping.id)).all()
+    )
+    if referencing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": (
+                    f"Mapping {mapping.name!r} is still referenced by "
+                    f"{len(referencing)} plan(s); delete or reassign them first."
+                ),
+                "referenced_by": [
+                    {
+                        "plan_id": p.id,
+                        "plan_name": p.name,
+                        "status": p.status,
+                    }
+                    for p in referencing
+                ],
+            },
+        )
     record_audit(
         db,
         action="resource_mapping.delete",

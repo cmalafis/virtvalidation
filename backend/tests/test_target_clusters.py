@@ -474,6 +474,76 @@ def test_get_mapping_does_not_persist_status_on_read(client):
         assert r.json()["updated_at"] == initial_updated_at
 
 
+def test_delete_mapping_204_when_not_referenced(client):
+    vc = _create_vcenter(client)
+    target = _create_target(client)
+    mapping = client.post(
+        "/api/mappings",
+        json={
+            "name": "deletable",
+            "vcenter_source_id": vc["id"],
+            "ocp_target_id": target["id"],
+            "network_mappings": [],
+            "storage_mappings": [],
+            "namespace_mappings": [],
+        },
+    ).json()
+    r = client.delete(f"/api/mappings/{mapping['id']}")
+    assert r.status_code == 204, r.text
+    r = client.get(f"/api/mappings/{mapping['id']}")
+    assert r.status_code == 404
+
+
+def test_delete_mapping_404_when_missing(client):
+    r = client.delete("/api/mappings/9999")
+    assert r.status_code == 404
+
+
+def test_delete_mapping_409_when_referenced_by_plan(client, db_session):
+    """A plan with mapping_id pointed at this row blocks the delete.
+    The 409 body lists the referencing plans so the UI can navigate."""
+    vc = _create_vcenter(client)
+    target = _create_target(client)
+    mapping = client.post(
+        "/api/mappings",
+        json={
+            "name": "in-use",
+            "vcenter_source_id": vc["id"],
+            "ocp_target_id": target["id"],
+            "network_mappings": [],
+            "storage_mappings": [],
+            "namespace_mappings": [],
+        },
+    ).json()
+
+    from app.core import db as _db
+    from app.models.plan import MigrationPlan
+
+    session = _db.SessionLocal()
+    try:
+        plan = MigrationPlan(
+            name="cutover-Q3",
+            vm_ids=[],
+            waves=[],
+            model="mock",
+            mapping_id=mapping["id"],
+            status="complete",
+        )
+        session.add(plan)
+        session.commit()
+        plan_id = plan.id
+    finally:
+        session.close()
+
+    r = client.delete(f"/api/mappings/{mapping['id']}")
+    assert r.status_code == 409, r.text
+    body = r.json()
+    # FastAPI nests our dict under the top-level "detail" key.
+    detail = body["detail"]
+    assert "referenced_by" in detail
+    assert any(row["plan_id"] == plan_id for row in detail["referenced_by"])
+
+
 def test_setting_active_flips_other_mappings_in_same_pair(client):
     vc = _create_vcenter(client)
     target = _create_target(client)

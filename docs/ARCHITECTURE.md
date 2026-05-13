@@ -716,7 +716,7 @@ Depends on: `app.core.audit`, `app.core.db`, `app.models.target`, `app.models.ta
 <details><summary><strong><code>app.api.targets</code></strong> — <em>API endpoints</em> · OCP target cluster registry + ResourceMapping CRUD + plan-time mapping resolution.</summary>
 
 Path: `backend/app/api/targets.py`  
-Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.core.ocp_discovery`, `app.models.target`, `app.models.target_network`, `app.models.target_storage_class`, `app.models.vcenter`, `app.models.vm`, `app.schemas.target`
+Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.core.ocp_discovery`, `app.models.plan`, `app.models.target`, `app.models.target_network`, `app.models.target_storage_class`, `app.models.vcenter`, `app.models.vm`, `app.schemas.target`
 
 **Routes**
 
@@ -732,7 +732,7 @@ Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.
 | `POST` | `/api/mappings` | `create_mapping(request, payload, db)` | — |
 | `GET` | `/api/mappings/{mapping_id}` | `get_mapping(mapping_id, db)` | — |
 | `PATCH` | `/api/mappings/{mapping_id}` | `update_mapping(request, mapping_id, payload, db)` | — |
-| `DELETE` | `/api/mappings/{mapping_id}` | `delete_mapping(request, mapping_id, db)` | — |
+| `DELETE` | `/api/mappings/{mapping_id}` | `delete_mapping(request, mapping_id, db)` | Delete a resource mapping. |
 | `POST` | `/api/mappings/{mapping_id}/suggest-network` | `suggest_networks(mapping_id, db)` | Ask the LLM to match source vSphere networks onto the operator&#x27;s |
 | `POST` | `/api/mappings/{mapping_id}/suggest-storage` | `suggest_storage(mapping_id, db)` | — |
 | `POST` | `/api/mappings/{mapping_id}/preflight` | `preflight(mapping_id, db)` | Validate a mapping is ready to drive plan generation. |
