@@ -131,7 +131,14 @@ class Settings(BaseSettings):
     mtv_namespace: str = "openshift-mtv"
     mtv_source_provider: str = "vmware"
     mtv_destination_provider: str = "host"
-    mtv_default_target_namespace: str = "openshift-mtv"
+    # Empty by default: operators must explicitly pick a workload
+    # namespace via the mapping's NamespaceStrategy or per-VM
+    # target_namespace. The MTV control-plane namespace
+    # (``openshift-mtv``) is NOT a valid default for workload VMs —
+    # it would mix admin and workload resources. The mapping
+    # validator surfaces the gap at plan creation; the YAML
+    # generator surfaces it again at download time as a backstop.
+    mtv_default_target_namespace: str = ""
 
     # Path to the VM inventory CSV template served by /api/templates/csv.
     # Defaults to the in-container location populated by the Containerfile.

@@ -357,6 +357,10 @@ export function ResourceMappingDetail() {
   // that row once it's created.
   const [creatingNetworkFor, setCreatingNetworkFor] = useState(null);
   const [creatingSCFor, setCreatingSCFor] = useState(null);
+  // "networks" | "storage-classes" | null — drives the inline catalog
+  // manager modal so operators can delete typos they created from
+  // "+ Create new …" without leaving the mapping editor.
+  const [managingKind, setManagingKind] = useState(null);
   // Loaded snapshot for the dirty-flag — compared against current
   // state to drive the Save button's disabled state.
   const [loadedSnapshot, setLoadedSnapshot] = useState(null);
@@ -685,14 +689,24 @@ export function ResourceMappingDetail() {
         <Section
           title={`Network mappings — ${mappedNetworkCount} of ${allNetworkRows.length} source networks mapped`}
           action={
-            <button
-              style={{ ...btnGhost, opacity: noTargetNetworks ? 0.5 : 1 }}
-              onClick={suggestNetwork}
-              disabled={noTargetNetworks}
-              title={noTargetNetworks ? "Define target networks on the cluster first" : "Ask the LLM for matches"}
-            >
-              🤖 AI Suggest
-            </button>
+            <div style={{ display: "inline-flex", gap: 8 }}>
+              <button
+                style={{ ...btnGhost, opacity: noTargetNetworks ? 0.5 : 1 }}
+                onClick={suggestNetwork}
+                disabled={noTargetNetworks}
+                title={noTargetNetworks ? "Define target networks on the cluster first" : "Ask the LLM for matches"}
+              >
+                🤖 AI Suggest
+              </button>
+              <button
+                style={btnGhost}
+                onClick={() => setManagingKind("networks")}
+                disabled={!mapping?.ocp_target_id}
+                title="Manage the cluster's network catalog (edit / delete entries)"
+              >
+                ⚙ Manage
+              </button>
+            </div>
           }
         >
           {noTargetNetworks && (
@@ -745,14 +759,24 @@ export function ResourceMappingDetail() {
         <Section
           title={`Storage mappings — ${mappedStorageCount} of ${allStorageRows.length} source datastores mapped`}
           action={
-            <button
-              style={{ ...btnGhost, opacity: noTargetSCs ? 0.5 : 1 }}
-              onClick={suggestStorage}
-              disabled={noTargetSCs}
-              title={noTargetSCs ? "Define target storage classes on the cluster first" : "Ask the LLM for matches"}
-            >
-              🤖 AI Suggest
-            </button>
+            <div style={{ display: "inline-flex", gap: 8 }}>
+              <button
+                style={{ ...btnGhost, opacity: noTargetSCs ? 0.5 : 1 }}
+                onClick={suggestStorage}
+                disabled={noTargetSCs}
+                title={noTargetSCs ? "Define target storage classes on the cluster first" : "Ask the LLM for matches"}
+              >
+                🤖 AI Suggest
+              </button>
+              <button
+                style={btnGhost}
+                onClick={() => setManagingKind("storage-classes")}
+                disabled={!mapping?.ocp_target_id}
+                title="Manage the cluster's storage class catalog (edit / delete entries)"
+              >
+                ⚙ Manage
+              </button>
+            </div>
           }
         >
           {noTargetSCs && (
@@ -811,9 +835,152 @@ export function ResourceMappingDetail() {
           onCreated={onSCCreated}
         />
       )}
+      {managingKind !== null && mapping?.ocp_target_id && (
+        <TargetEntityManagerModal
+          targetId={mapping.ocp_target_id}
+          kind={managingKind}
+          onClose={() => setManagingKind(null)}
+          onChanged={refetchCatalogs}
+        />
+      )}
     </Shell>
   );
 }
+
+// Inline catalog manager for target networks / storage classes. Opens
+// from a "Manage" button on each section, lists every entity for this
+// OCP target, and lets the operator delete typos. FK-protected deletes
+// surface the 409 referenced_by inline so the operator can find the
+// mapping that's still using it.
+function TargetEntityManagerModal({ targetId, kind, onClose, onChanged }) {
+  const isNet = kind === "networks";
+  const title = isNet ? "Target networks" : "Target storage classes";
+  const path = isNet ? "networks" : "storage-classes";
+  const [items, setItems] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState(null);
+  const [confirmId, setConfirmId] = useState(null);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const data = await fetchJSON(`/api/ocp-targets/${targetId}/${path}`);
+      setItems(data || []);
+    } catch (e) {
+      setError(e.message);
+      setItems([]);
+    }
+  }, [targetId, path]);
+  useEffect(() => { load(); }, [load]);
+
+  const remove = async (id, name) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await fetchJSON(`/api/ocp-targets/${targetId}/${path}/${id}`, { method: "DELETE" });
+      toast.success(`Deleted ${name}`, TOAST_OPTS);
+      setConfirmId(null);
+      await load();
+      if (onChanged) onChanged();
+    } catch (e) {
+      // 409 referenced_by is already formatted by formatApiErrorDetail
+      // into "<message> (<mapping names>)", so just surface the message.
+      setError(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div style={modalOverlay} onClick={busyId !== null ? undefined : onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...modalBox, width: 720 }}>
+        <div style={{ borderBottom: "1px solid #1a1a2e", padding: "18px 22px",
+          display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{title}</div>
+            <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 4 }}>
+              Manage the catalog of {isNet ? "NADs / CUDNs / UDNs / pod-network" : "StorageClasses"}{" "}
+              this cluster knows about. Delete entries you created by mistake; entries
+              still referenced by an active mapping are protected.
+            </div>
+          </div>
+          <button type="button" onClick={onClose} style={btnSecondary}
+            disabled={busyId !== null}>Close</button>
+        </div>
+        <div style={{ padding: "16px 22px" }}>
+          {error && (
+            <div style={{ background: "#3a1a22", border: "1px solid #ff5577",
+              color: "#ffdde4", padding: "10px 14px", marginBottom: 14, fontSize: 13,
+              lineHeight: 1.5 }}>
+              {error}
+            </div>
+          )}
+          {items === null ? (
+            <div style={{ color: "#aaaacc", fontSize: 13 }}>Loading…</div>
+          ) : items.length === 0 ? (
+            <div style={{ color: "#aaaacc", fontSize: 13, padding: "12px 0" }}>
+              No {isNet ? "networks" : "storage classes"} defined for this cluster.
+            </div>
+          ) : (
+            <div style={{ border: "1px solid #1a1a2e", background: "#07070f" }}>
+              {items.map((it, idx) => (
+                <div key={it.id} style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr auto auto auto",
+                  gap: 14, padding: "10px 14px", alignItems: "center",
+                  borderTop: idx === 0 ? "none" : "1px solid #1a1a2e",
+                }}>
+                  <div>
+                    <div style={{ fontFamily: "'Share Tech Mono', monospace",
+                      fontSize: 13, color: "#eeeeff" }}>{it.name}</div>
+                    {isNet && it.namespace && (
+                      <div style={{ fontSize: 11, color: "#777799", marginTop: 2 }}>
+                        ns: {it.namespace}
+                      </div>
+                    )}
+                  </div>
+                  <span style={{ color: "#aaaacc", fontSize: 12,
+                    fontFamily: "'Share Tech Mono', monospace" }}>
+                    {isNet ? it.network_type : it.access_mode}
+                  </span>
+                  {it.is_default ? (
+                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
+                      color: "#88ccff", border: "1px solid #4488ff",
+                      padding: "2px 8px", textTransform: "uppercase" }}>
+                      Default
+                    </span>
+                  ) : <span />}
+                  {confirmId === it.id ? (
+                    <span style={{ display: "inline-flex", gap: 6 }}>
+                      <button type="button" disabled={busyId === it.id}
+                        onClick={() => remove(it.id, it.name)}
+                        style={{ ...btnGhost, border: "1px solid #ff5577",
+                          color: "#ffdde4", padding: "4px 10px" }}>
+                        {busyId === it.id ? "Deleting…" : "Confirm"}
+                      </button>
+                      <button type="button" onClick={() => setConfirmId(null)}
+                        disabled={busyId !== null} style={{ ...btnGhost, padding: "4px 10px" }}>
+                        Cancel
+                      </button>
+                    </span>
+                  ) : (
+                    <button type="button" onClick={() => { setError(null); setConfirmId(it.id); }}
+                      title="Delete this entry"
+                      disabled={busyId !== null}
+                      style={{ ...btnGhost, padding: "4px 10px" }}>
+                      ✕ Delete
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function InlineCreateNetworkModal({ targetId, onClose, onCreated }) {
   const [name, setName] = useState("");

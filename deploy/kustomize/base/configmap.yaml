@@ -7,7 +7,12 @@ data:
   MTV_NAMESPACE: openshift-mtv
   MTV_SOURCE_PROVIDER: vmware
   MTV_DESTINATION_PROVIDER: host
-  MTV_DEFAULT_TARGET_NAMESPACE: openshift-mtv
+  # Empty by design: forces operators to set a workload namespace
+  # explicitly (mapping NamespaceStrategy or per-VM target_namespace)
+  # rather than silently landing every VM in the MTV control-plane
+  # namespace. Override only if you genuinely want every plan to
+  # default to a single namespace.
+  MTV_DEFAULT_TARGET_NAMESPACE: ""
   FIPS_MODE: "false"
   SSH_KEY_ALGORITHM: ed25519
   # LLM backend type — overlays patch this. ConfigMap value rather than

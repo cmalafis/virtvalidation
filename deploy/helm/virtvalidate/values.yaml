@@ -281,7 +281,11 @@ config:
   mtvNamespace: openshift-mtv
   mtvSourceProvider: vmware
   mtvDestinationProvider: host
-  mtvDefaultTargetNamespace: openshift-mtv
+  # Empty by design: forces operators to set a workload namespace
+  # explicitly (mapping NamespaceStrategy or per-VM target_namespace).
+  # The MTV control-plane namespace (openshift-mtv above) is NOT a
+  # valid workload default — it would mix admin and workload VMs.
+  mtvDefaultTargetNamespace: ""
 
 # Extra env vars — escape hatch for fields not surfaced above. Each entry
 # matches the standard `name`/`value` (or `valueFrom`) shape so secrets

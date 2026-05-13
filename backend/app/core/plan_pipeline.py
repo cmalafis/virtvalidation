@@ -261,8 +261,16 @@ async def run_pipeline(
     assign_concurrency_groups(waves, name_lookup)
 
     # Stage 6 — parallel LLM annotation (validate-retry-fallback).
+    # ``name_lookup`` is reused: built once at Stage 3, threaded into
+    # the annotator so the prompt builder can render operator-readable
+    # sample_vm_names instead of partition keys or raw vm_ids.
     _progress("annotating")
-    annotated = await annotate_waves(waves, backend=backend, max_attempts=max_llm_attempts)
+    annotated = await annotate_waves(
+        waves,
+        backend=backend,
+        max_attempts=max_llm_attempts,
+        vm_name_by_id=name_lookup,
+    )
 
     # Stage 7 — emit MTV YAML per wave + stamp parallel-indexed vm_names
     # so the frontend can render hostnames without a /api/vms join.

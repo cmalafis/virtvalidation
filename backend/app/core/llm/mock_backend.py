@@ -326,29 +326,41 @@ class MockBackend(LLMBackend):
 
         Returns the structured schema the Stage-6 parser validates:
         ``{description, risk_score, risk_rationale, notable_concerns}``.
-        The mock derives the wave number from the prompt so multiple
-        parallel calls have distinct content.
+        The mock derives the wave number and a sample VM name from
+        the prompt so multiple parallel calls have distinct content
+        AND the response stays operator-readable (no partition keys,
+        no batch_N labels — the same constraint real LLMs must obey).
         """
         import re as _re
 
         match = _re.search(r"Wave\s+(\d+)", prompt)
         wave_number = int(match.group(1)) if match else 1
-        groups_match = _re.findall(r'"id"\s*:\s*"([^"]+)"', prompt)
-        group_count = len(groups_match) or 1
+        # New prompt shape uses "label" per group instead of "id".
+        labels = _re.findall(r'"label"\s*:\s*"([^"]+)"', prompt)
+        group_count = len(labels) or 1
+        # Pick a representative sample hostname from the first group's
+        # sample_vm_names so the description references a real VM.
+        sample_names = _re.findall(r'"sample_vm_names"\s*:\s*\[\s*"([^"]+)"', prompt)
+        first_vm = sample_names[0] if sample_names else f"vm-{wave_number}-01"
+        first_label = labels[0] if labels else "untagged tier"
         return {
             "description": (
-                f"Wave {wave_number} migrates {group_count} pre-formed group(s). "
-                "Mock annotation: groups co-locate by shared networks / "
-                "datastores; dependency order honored upstream by Stage 4."
+                f"Wave {wave_number} migrates {group_count} group(s) including "
+                f"{first_label}. Cutover order follows shared networks / "
+                f"datastores; start with {first_vm} and continue through the "
+                "remaining hostnames in this wave. Dependency order is honored "
+                "by the deterministic stage upstream."
             ),
             "risk_score": 3,
             "risk_rationale": (
-                "Mock risk: balanced — no single group dominates the "
-                "wave, HA families spread across waves preserves quorum."
+                f"Balanced wave anchored on {first_label}: no single group "
+                "dominates the change window, and HA families have already "
+                "been spread across other waves so the original cluster "
+                "keeps quorum during cutover."
             ),
             "notable_concerns": [
-                f"Wave {wave_number}: verify cutover order matches "
-                "the topological dependency hints rendered upstream."
+                f"Verify the cutover order in Wave {wave_number} matches the "
+                "topological dependency hints rendered upstream."
             ],
         }
 

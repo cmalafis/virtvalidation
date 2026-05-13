@@ -178,3 +178,65 @@ class TestStage0Validation:
         assert not result.ok
         kinds = {g.kind for g in result.gaps}
         assert kinds == {"no_mapping"}
+
+    def test_per_environment_strategy_without_matching_env_emits_namespace_gap(self):
+        """Regression: previously the validator accepted any
+        non-empty ``namespace_mappings`` dict, so a VM with no
+        ``environment`` field paired with a ``per_environment``
+        strategy passed Stage 0 silently — then landed in the
+        ``openshift-mtv`` admin namespace at YAML emission time.
+        Stage 0 now invokes the resolver and catches the gap."""
+        vm = _vm("untagged-app-01", networks=("vlan-100",), datastores=("tier1",))
+        vm.source_vcenter_id = 1
+        vm.environment = None  # no env → per_environment can't resolve
+        m = ResourceMapping(
+            name="m-per-env",
+            vcenter_source_id=1,
+            ocp_target_id=1,
+            network_mappings=[{"source_network": "vlan-100", "target_network_name": "nad"}],
+            storage_mappings=[{"source_datastore": "tier1", "target_storage_class": "sc-a"}],
+            namespace_mappings={
+                "strategy": "per_environment",
+                "per_env_namespaces": {"production": "prod-vms", "staging": "stg-vms"},
+            },
+        )
+        result = validate_plan_inputs([vm], [m])
+        assert not result.ok
+        namespace_gaps = [g for g in result.gaps if g.kind == "namespace"]
+        assert len(namespace_gaps) == 1
+        assert namespace_gaps[0].vm_name == "untagged-app-01"
+
+    def test_single_strategy_always_resolves(self):
+        """A ``single`` strategy with ``single_namespace`` set must
+        pass Stage 0 even for VMs missing environment/app_hint —
+        the single namespace covers everything."""
+        vm = _vm("untagged-app-02", networks=("vlan-100",), datastores=("tier1",))
+        vm.source_vcenter_id = 1
+        m = ResourceMapping(
+            name="m-single",
+            vcenter_source_id=1,
+            ocp_target_id=1,
+            network_mappings=[{"source_network": "vlan-100", "target_network_name": "nad"}],
+            storage_mappings=[{"source_datastore": "tier1", "target_storage_class": "sc-a"}],
+            namespace_mappings={"strategy": "single", "single_namespace": "migrated-vms"},
+        )
+        result = validate_plan_inputs([vm], [m])
+        assert result.ok, result.render()
+
+    def test_per_environment_with_matching_env_resolves(self):
+        vm = _vm("prod-app-01", networks=("vlan-100",), datastores=("tier1",))
+        vm.source_vcenter_id = 1
+        vm.environment = "production"
+        m = ResourceMapping(
+            name="m-per-env-ok",
+            vcenter_source_id=1,
+            ocp_target_id=1,
+            network_mappings=[{"source_network": "vlan-100", "target_network_name": "nad"}],
+            storage_mappings=[{"source_datastore": "tier1", "target_storage_class": "sc-a"}],
+            namespace_mappings={
+                "strategy": "per_environment",
+                "per_env_namespaces": {"production": "prod-vms"},
+            },
+        )
+        result = validate_plan_inputs([vm], [m])
+        assert result.ok, result.render()

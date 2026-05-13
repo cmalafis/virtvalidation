@@ -581,10 +581,16 @@ def wave_mtv_yaml(
             )
 
     if mapping_for_wave is not None:
+        # ``namespace_mappings`` is a dict (NamespaceStrategy) or a
+        # list (legacy criteria rows). DO NOT coerce to list — that
+        # turns the dict into a list of its keys and the resolver
+        # then iterates strings, raising AttributeError at request
+        # time. The model's JSON column preserves whichever shape
+        # the operator saved, and MappingResolver dispatches on it.
         resolver = MappingResolver(
             network_mappings=list(mapping_for_wave.network_mappings or []),
             storage_mappings=list(mapping_for_wave.storage_mappings or []),
-            namespace_mappings=list(mapping_for_wave.namespace_mappings or []),
+            namespace_mappings=mapping_for_wave.namespace_mappings or [],
         )
         used_mapping_id = mapping_for_wave.id
         # Stamp last_used_at so operators can spot stale mappings.

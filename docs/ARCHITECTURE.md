@@ -2188,6 +2188,8 @@ API calls:
 - `/api/mappings/{id}/suggest-storage`
 - `/api/ocp-targets/{id}/networks`
 - `/api/ocp-targets/{id}/storage-classes`
+- `/api/ocp-targets/{id}/{id}`
+- `/api/ocp-targets/{id}/{id}/{id}`
 - `/api/sources/targets`
 - `/api/sources/targets/{id}`
 - `/api/sources/vcenters`
@@ -2199,6 +2201,7 @@ Exports / inner components:
 - **`CreateModal`** (component)
 - **`normaliseNamespaceStrategy`** (helper)
 - **`ResourceMappingDetail`** (component)
+- **`TargetEntityManagerModal`** (component)
 - **`InlineCreateNetworkModal`** (component)
 - **`InlineCreateStorageClassModal`** (component)
 - **`EmptyCatalogHint`** (component)
