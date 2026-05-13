@@ -509,6 +509,17 @@ def _fail_plan_with_lifecycle_release(plan_id: int, error: str) -> None:
         db.close()
 
 
+_PIPELINE_STAGE_TO_STATUS = {
+    "validating": ("validating", 5),
+    "partitioning": ("partitioning", 15),
+    "splitting": ("splitting", 30),
+    "packing": ("packing", 45),
+    "analyzing_concurrency": ("analyzing_concurrency", 55),
+    "annotating": ("annotating", 70),
+    "emitting_yaml": ("emitting_yaml", 90),
+}
+
+
 def run_simple_plan_generation(
     plan_id: int,
     *,
@@ -519,17 +530,23 @@ def run_simple_plan_generation(
 ) -> None:
     """Body of the BackgroundTask the POST /api/plans endpoint spawns.
 
-    Walks the planner pipeline writing status transitions to the
-    Plan row at each stage. On failure the typed-exception message
+    Walks the new pipeline (Stages 0-7) writing status transitions to
+    the Plan row at each stage. On failure the typed-exception message
     is preserved verbatim in ``Plan.error_message`` so the operator
-    sees the same string the lifespan startup health-check logs
-    would surface.
+    sees the same string the lifespan startup health-check logs would
+    surface. VMs roll back to ``lifecycle_state=available`` on every
+    failure path via the shared helper.
+
+    ``ha_strategy`` / ``preclassification_enabled`` are retained for
+    back-compat with the existing PlanCreate schema but are no longer
+    consulted — the new pipeline runs the deterministic stages
+    unconditionally and the LLM never decides wave structure.
     """
-    # Lazy-imported so the module loads cheaply even when the planner
-    # isn't reachable (e.g. in unit tests that don't exercise this
-    # path).
-    from app.core.llm.base import LLMBackendError
-    from app.core.planner import MigrationPlanner, PlannerError
+    import asyncio
+
+    from app.core.llm.factory import get_llm_backend
+    from app.core.mtv import MTVGenerationError
+    from app.core.plan_pipeline import PlanValidationError, run_pipeline
 
     started = datetime.now(timezone.utc)
     _update_plan_status(
@@ -547,94 +564,64 @@ def run_simple_plan_generation(
         if missing:
             _fail_plan_with_lifecycle_release(plan_id, f"Unknown vm_ids: {missing}")
             return
-        planner = MigrationPlanner()
 
-        if preclassification_enabled:
-            _update_plan_status(
-                plan_id,
-                status_value="chunking",
-                progress_message="Grouping VMs (preclassifier)",
-                progress_percent=20,
-            )
-            # The planner runs preclassifier + LLM rationale internally;
-            # update status to llm_grouping before invoking so the UI
-            # progresses through the visible states the spec calls out.
-            _update_plan_status(
-                plan_id,
-                status_value="llm_grouping",
-                progress_message="LLM generating per-wave rationale",
-                progress_percent=45,
-            )
-            try:
-                result = planner.plan_with_groups(vms, ha_strategy=ha_strategy)
-            except (PlannerError, LLMBackendError) as e:
-                # Verbatim error_message — the typed-exception layer
-                # already wrote operator-actionable detail (auth vs
-                # unreachable vs timeout vs response error). Don't
-                # rewrap it.
-                logger.warning("Plan %d generation failed: %s", plan_id, e)
-                _fail_plan_with_lifecycle_release(plan_id, str(e))
-                return
-        else:
-            _update_plan_status(
-                plan_id,
-                status_value="llm_grouping",
-                progress_message="Legacy raw-VM LLM call",
-                progress_percent=45,
-            )
-            from app.core.baseline import synthesize_profile
-
-            profiles: list[dict] = []
-            for vm in vms:
-                snapshots = list(
-                    db.scalars(
-                        select(BaselineSnapshot)
-                        .where(BaselineSnapshot.vm_id == vm.id)
-                        .order_by(BaselineSnapshot.collected_at.asc())
-                    ).all()
-                )
-                profile = synthesize_profile(vm.id, snapshots)
-                profiles.append(
-                    {
-                        "vm_id": vm.id,
-                        "name": vm.name,
-                        "role": vm.role or "",
-                        "os_family": vm.os_family or "",
-                        "vsphere_networks": list(vm.vsphere_networks or []),
-                        "vsphere_datastores": list(vm.vsphere_datastores or []),
-                        "target_namespace": vm.target_namespace or "",
-                        "target_storage_class": vm.target_storage_class or "",
-                        "target_network_attachment": vm.target_network_attachment or "",
-                        "baseline": profile.model_dump(mode="json"),
-                    }
-                )
-            try:
-                result = planner.plan(profiles)
-            except (PlannerError, LLMBackendError) as e:
-                logger.warning("Plan %d generation failed: %s", plan_id, e)
-                _fail_plan_with_lifecycle_release(plan_id, str(e))
-                return
-
-        _update_plan_status(
-            plan_id,
-            status_value="assembling",
-            progress_message="Persisting plan",
-            progress_percent=90,
+        plan_row = db.get(MigrationPlan, plan_id)
+        if plan_row is None:
+            return
+        mapping = (
+            db.get(ResourceMapping, plan_row.mapping_id)
+            if plan_row.mapping_id is not None
+            else None
         )
+
+        def _progress_cb(stage: str) -> None:
+            status_value, pct = _PIPELINE_STAGE_TO_STATUS.get(stage, (stage, None))
+            _update_plan_status(
+                plan_id,
+                status_value=status_value,
+                progress_message=f"Stage: {stage}",
+                progress_percent=pct,
+            )
+
+        backend = get_llm_backend()
+        try:
+            pipeline_result = asyncio.run(
+                run_pipeline(
+                    vms,
+                    mapping,
+                    plan_id=plan_id,
+                    backend=backend,
+                    progress_cb=_progress_cb,
+                )
+            )
+        except PlanValidationError as e:
+            logger.warning("Plan %d validation failed: %s", plan_id, e)
+            _fail_plan_with_lifecycle_release(plan_id, str(e))
+            return
+        except MTVGenerationError as e:  # pragma: no cover — Stage 0 should catch
+            _fail_plan_with_lifecycle_release(plan_id, f"MTV YAML generation: {e}")
+            return
+        except Exception as e:  # noqa: BLE001 — surface verbatim to operator
+            logger.exception("Plan %d pipeline error", plan_id)
+            _fail_plan_with_lifecycle_release(plan_id, str(e))
+            return
 
         plan = db.get(MigrationPlan, plan_id)
         if plan is None:
             return
         plan.vm_ids = unique_ids
-        plan.waves = result["waves"]
-        plan.summary = result.get("summary") or None
-        plan.model = getattr(planner.backend, "default_model", "") or ""
+        plan.waves = [aw.to_dict() for aw in pipeline_result.waves]
+        plan.summary = None
+        plan.model = getattr(backend, "default_model", "") or ""
         plan.status = "complete"
         plan.progress_message = "Done"
         plan.progress_percent = 100
         plan.completed_at = datetime.now(timezone.utc)
         db.commit()
 
+        method_counts: dict[str, int] = {}
+        for m in pipeline_result.method_per_wave.values():
+            method_counts[m] = method_counts.get(m, 0) + 1
         record_audit(
             db,
             action="plan.generated",
@@ -644,17 +631,18 @@ def run_simple_plan_generation(
             details={
                 "vm_count": len(plan.vm_ids),
                 "wave_count": len(plan.waves),
-                "method": result.get("method", ""),
+                "method_per_wave": pipeline_result.method_per_wave,
+                "method_counts": method_counts,
                 "elapsed_seconds": int((datetime.now(timezone.utc) - started).total_seconds()),
             },
         )
         db.commit()
         logger.info(
-            "plan %d generated: %d waves for %d VMs (method=%s)",
+            "plan %d generated: %d waves for %d VMs (methods=%s)",
             plan.id,
             len(plan.waves),
             len(plan.vm_ids),
-            result.get("method", ""),
+            method_counts,
         )
     finally:
         db.close()

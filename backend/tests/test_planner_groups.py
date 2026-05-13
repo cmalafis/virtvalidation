@@ -137,6 +137,12 @@ def test_plan_with_groups_waves_carry_group_ids():
 # API integration
 # ---------------------------------------------------------------------------
 def _seed_vms(client, count=5, prefix="web"):
+    # Per-VM target_namespace + target_network_attachment +
+    # target_storage_class satisfies Stage 0 (mapping_validation)
+    # AND Stage 7 (MTV YAML emission) without a real ResourceMapping
+    # — both layers accept VM-level fallbacks for callers without a
+    # mapping_id. Real plans go through the mapping editor; these
+    # tests exercise the structural pipeline without that surface.
     for i in range(1, count + 1):
         client.post(
             "/api/vms",
@@ -144,6 +150,10 @@ def _seed_vms(client, count=5, prefix="web"):
                 "name": f"{prefix}-{i:02d}",
                 "source_hostname": f"{prefix}-{i:02d}.local",
                 "vsphere_networks": [f"{prefix}-net"],
+                "vsphere_datastores": [f"{prefix}-ds"],
+                "target_namespace": "prod",
+                "target_network_attachment": f"{prefix}-nad",
+                "target_storage_class": "ocs-rbd",
                 "application_hint": "test-app",
             },
         ).raise_for_status()
@@ -255,16 +265,19 @@ def test_post_plans_404_for_unknown_vm_ids_before_task_spawns(client):
 
 
 def test_get_plan_surfaces_error_message_when_background_fails(client, monkeypatch):
-    # Force the planner to fail with a typed LLM exception. The
+    # Force the pipeline to fail with a typed LLM exception. The
     # error_message column must carry the verbatim str(e) so the
     # frontend can show "Cannot reach KServe at ..." rather than a
     # generic "Plan generation failed".
     from app.core.llm.base import LLMUnreachableError
 
-    def _boom(self, vms, ha_strategy="spread"):
+    async def _boom(*args, **kwargs):
         raise LLMUnreachableError("Cannot reach KServe at https://wrong.svc")
 
-    monkeypatch.setattr("app.core.planner.MigrationPlanner.plan_with_groups", _boom)
+    # Patch the pipeline orchestrator the background task drives.
+    # The background task does ``from app.core.plan_pipeline import
+    # run_pipeline`` lazily so we target the source module directly.
+    monkeypatch.setattr("app.core.plan_pipeline.run_pipeline", _boom)
     monkeypatch.setattr("app.core.config.settings.llm_backend_type", "mock")
     from app.core.llm.factory import reset_backend_cache
 

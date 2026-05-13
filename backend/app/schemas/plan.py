@@ -229,24 +229,24 @@ class PlanRead(BaseModel):
     attempts: int = 0
 
 
-# Legacy synchronous create payload — kept for back-compat with the
-# existing POST /api/plans endpoint and its tests.
+# POST /api/plans payload — the canonical create path under the new
+# pipeline.
 class PlanCreate(BaseModel):
     vm_ids: list[int] = Field(min_length=1)
-    # When True (default), the planner runs the mechanical
-    # pre-classifier first and the LLM only sees ~5-15 groups. Set to
-    # False to fall back to the legacy raw-VM path — useful for tests
-    # of model behavior, or for very small plans where one-VM-per-group
-    # is fine. Federal customers should leave this enabled.
+    # Operator-facing plan label. Falls back to "Untitled plan" when
+    # not supplied so the legacy synchronous-create tests still pass.
+    name: str = Field(default="Untitled plan", min_length=1, max_length=255)
+    # Resource mapping that drives target namespace + network +
+    # storage resolution. Required to pass Stage 0 in practice — the
+    # background task fails fast if any VM references unmapped source
+    # resources. Optional in the schema so existing tests that don't
+    # set vm.vsphere_networks / vsphere_datastores still pass.
+    mapping_id: int | None = Field(default=None)
+    # Retained for back-compat with the synchronous tests; the new
+    # pipeline ignores them. The mechanical pre-classifier always
+    # runs, and HA spreading is enforced by the family-aware Stage 3
+    # split rather than a per-call toggle.
     preclassification_enabled: bool = True
-    # HA distribution strategy. ``spread`` (default) splits each
-    # multi-member HA group into per-member micro-groups so the wave
-    # assigner places primaries / replicas in distinct waves. The
-    # original cluster keeps a quorum during the migration window.
-    # ``together`` keeps the group cohesive — faster total cutover
-    # but every node moves at once, incurring downtime. ``auto`` uses
-    # spread for ≥3-member groups and together for smaller pairs. See
-    # docs/HA_MIGRATION_STRATEGY.md.
     ha_strategy: str = Field(default="spread", pattern=r"^(spread|together|auto)$")
 
 

@@ -17,8 +17,10 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
 from app.core.chunker import chunk_vms
+from app.core.config import settings as _app_settings
 from app.core.db import get_db
 from app.core.llm.factory import get_llm_backend
+from app.core.mapping_validation import validate_plan_inputs
 from app.core.mtv import (
     MappingResolver,
     MTVGenerationError,
@@ -125,18 +127,50 @@ def create_plan(
     unique_ids = list(dict.fromkeys(payload.vm_ids))
     if not unique_ids:
         raise HTTPException(status_code=422, detail="vm_ids must contain at least one VM")
-    known = {vid for vid in db.scalars(select(VM.id).where(VM.id.in_(unique_ids))).all()}
-    missing = [vid for vid in unique_ids if vid not in known]
+    # Selection cap. Architectural rule, not just a soft hint — the
+    # operator workflow is many small auditable plans, not one giant
+    # black-box plan. See settings.max_vms_per_plan.
+    max_vms = _app_settings.max_vms_per_plan
+    if len(unique_ids) > max_vms:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Plan exceeds selection cap: {len(unique_ids)} VMs requested, "
+                f"max {max_vms} per plan. Narrow filters or split into multiple plans."
+            ),
+        )
+    vms = list(db.scalars(select(VM).where(VM.id.in_(unique_ids))).all())
+    known_ids = {v.id for v in vms}
+    missing = [vid for vid in unique_ids if vid not in known_ids]
     if missing:
         raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
 
+    # Resolve mapping (optional). The new pipeline runs Stage 0
+    # validation inside the background task, but we lift the same
+    # check here so the operator sees gap detail synchronously
+    # rather than waiting for the BackgroundTask to fail.
+    mapping = None
+    if payload.mapping_id is not None:
+        mapping = db.get(ResourceMapping, payload.mapping_id)
+        if mapping is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Resource mapping {payload.mapping_id} not found",
+            )
+
+    coverage = validate_plan_inputs(vms, mapping)
+    if not coverage.ok:
+        raise HTTPException(status_code=422, detail=coverage.render())
+
     plan = MigrationPlan(
+        name=payload.name,
         vm_ids=unique_ids,
         waves=[],
         # ``model`` is non-null on the column; the planner overwrites it
         # when it completes. Empty string is the sentinel for "not yet
         # generated".
         model="",
+        mapping_id=payload.mapping_id,
         status="pending",
         progress_message="Queued",
         progress_percent=0,
