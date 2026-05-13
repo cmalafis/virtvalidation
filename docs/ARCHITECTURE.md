@@ -2171,6 +2171,7 @@ API calls:
 
 Exports / inner components:
 - **`ResourceMappings`** (component)
+- **`ConfirmDeleteModal`** (component)
 - **`CreateModal`** (component)
 - **`normaliseNamespaceStrategy`** (helper)
 - **`ResourceMappingDetail`** (component)

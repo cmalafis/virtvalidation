@@ -37,6 +37,7 @@ export default function ResourceMappings() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
@@ -107,7 +108,23 @@ export default function ResourceMappings() {
                   <span style={{ color: "#ccccee", fontSize: 12 }}>{m.network_mappings?.length ?? 0}</span>
                   <span style={{ color: "#ccccee", fontSize: 12 }}>{m.storage_mappings?.length ?? 0}</span>
                   <Pill label={m.status?.toUpperCase().replace("_", " ")} color={STATUS_COLORS[m.status]} />
-                  <span style={{ color: "#aaaacc", textAlign: "right", fontSize: 12 }}>open →</span>
+                  <span style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12 }}>
+                    <button
+                      type="button"
+                      style={btnDanger}
+                      title={`Delete ${m.name}`}
+                      onClick={(e) => {
+                        // The row is wrapped in a Link; without this
+                        // the click would also navigate to the editor.
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setConfirmingDelete(m);
+                      }}
+                    >
+                      Delete
+                    </button>
+                    <span style={{ color: "#aaaacc", fontSize: 12 }}>→</span>
+                  </span>
                 </div>
               </Link>
             ))}
@@ -119,7 +136,61 @@ export default function ResourceMappings() {
           onClose={() => setCreateOpen(false)}
           onSaved={async () => { setCreateOpen(false); await load(); }} />
       )}
+      {confirmingDelete && (
+        <ConfirmDeleteModal mapping={confirmingDelete}
+          onClose={() => setConfirmingDelete(null)}
+          onDeleted={async () => { setConfirmingDelete(null); await load(); }} />
+      )}
     </Shell>
+  );
+}
+
+function ConfirmDeleteModal({ mapping, onClose, onDeleted }) {
+  const [busy, setBusy] = useState(false);
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      await fetchJSON(`/api/mappings/${mapping.id}`, { method: "DELETE" });
+      toast.success(`Deleted ${mapping.name}`, TOAST_OPTS);
+      await onDeleted();
+    } catch (e) {
+      toast.error(e.message, TOAST_OPTS);
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={modalOverlay} onClick={busy ? undefined : onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={modalBox}>
+        <div style={{ borderBottom: "1px solid #1a1a2e", padding: "18px 22px" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#ff5577" }}>
+            Delete resource mapping?
+          </div>
+        </div>
+        <div style={{ padding: "18px 22px", color: "#ccccee", fontSize: 13, lineHeight: 1.6 }}>
+          You are about to delete{" "}
+          <strong style={{ color: "#eeeeff" }}>{mapping.name}</strong>.
+          {/* Plan.mapping_id has ON DELETE SET NULL — existing plans
+              survive but lose the mapping link, so their MTV YAML
+              export falls back to per-VM target_* fields with
+              placeholder names. Re-generate before applying. */}
+          <p style={{ marginTop: 12 }}>
+            Migration plans that reference this mapping will be unlinked
+            from it. Their MTV YAML export will fall back to per-VM
+            target fields and may emit placeholder names. Re-generate
+            those plans with a different mapping before applying.
+          </p>
+        </div>
+        <div style={{ borderTop: "1px solid #1a1a2e", padding: "14px 22px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button type="button" onClick={onClose} style={btnSecondary} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" onClick={confirm} disabled={busy}
+            style={{ ...btnDanger, opacity: busy ? 0.5 : 1 }}>
+            {busy ? "Deleting…" : "Delete"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -815,14 +886,14 @@ const headerStyle = {
 };
 const tableHeaderStyle = {
   display: "grid",
-  gridTemplateColumns: "1.4fr 1.2fr 1.2fr 0.6fr 0.6fr 1fr 0.6fr",
+  gridTemplateColumns: "1.4fr 1.2fr 1.2fr 0.6fr 0.6fr 1fr 1.1fr",
   padding: "12px 18px", borderBottom: "1px solid #1a1a2e", background: "#0a0a16",
   fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
   fontWeight: 700, textTransform: "uppercase",
 };
 const tableRowStyle = {
   display: "grid",
-  gridTemplateColumns: "1.4fr 1.2fr 1.2fr 0.6fr 0.6fr 1fr 0.6fr",
+  gridTemplateColumns: "1.4fr 1.2fr 1.2fr 0.6fr 0.6fr 1fr 1.1fr",
   padding: "14px 18px", borderBottom: "1px solid #0f0f1e",
   alignItems: "center", fontSize: 13, cursor: "pointer",
 };
@@ -858,6 +929,11 @@ const btnSecondary = {
 const btnGhost = {
   background: "transparent", border: "1px solid #2a2a44", color: "#ccccee",
   padding: "8px 12px", fontFamily: "'Barlow', sans-serif", fontSize: 11,
+  letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
+};
+const btnDanger = {
+  background: "transparent", border: "1px solid #ff5577", color: "#ff5577",
+  padding: "6px 12px", fontFamily: "'Barlow', sans-serif", fontSize: 11,
   letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
 };
 const modalOverlay = {
