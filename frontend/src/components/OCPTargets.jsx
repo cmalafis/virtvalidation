@@ -112,7 +112,10 @@ function Row({ t, onDelete, onDiscover }) {
   const nss = t.namespaces?.length ?? 0;
   return (
     <div style={tableRowStyle}>
-      <span style={{ color: "#eeeeff", fontWeight: 600 }}>{t.name}</span>
+      <Link to={`/sources/targets/${t.id}`}
+        style={{ color: "#eeeeff", fontWeight: 600, textDecoration: "none" }}>
+        {t.name}
+      </Link>
       <span style={{ color: "#ccccee", fontFamily: "'Share Tech Mono', monospace", fontSize: 12 }}>{t.api_endpoint}</span>
       <span style={{ color: "#ccccee", fontFamily: "'Share Tech Mono', monospace", fontSize: 12 }}>{t.ocp_version || "—"}</span>
       <span style={{ color: "#ccccee", fontSize: 12 }}>

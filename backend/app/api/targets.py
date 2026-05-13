@@ -32,7 +32,6 @@ from app.core.mapping_suggester import (
 )
 from app.core.ocp_discovery import OCPDiscoveryClient, OCPDiscoveryError
 from app.models.target import (
-    OCPAuthType,
     OCPTarget,
     OCPTargetStatus,
     ResourceMapping,
@@ -65,22 +64,16 @@ targets_router = APIRouter(tags=["ocp-targets"])
 def _get_target_or_404(db: Session, target_id: int) -> OCPTarget:
     target = db.get(OCPTarget, target_id)
     if target is None:
-        raise HTTPException(
-            status_code=404, detail=f"OCP target {target_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"OCP target {target_id} not found")
     return target
 
 
 @targets_router.get("", response_model=list[OCPTargetRead])
 def list_targets(db: Session = Depends(get_db)) -> list[OCPTarget]:
-    return list(
-        db.scalars(select(OCPTarget).order_by(OCPTarget.name)).all()
-    )
+    return list(db.scalars(select(OCPTarget).order_by(OCPTarget.name)).all())
 
 
-@targets_router.post(
-    "", response_model=OCPTargetRead, status_code=status.HTTP_201_CREATED
-)
+@targets_router.post("", response_model=OCPTargetRead, status_code=status.HTTP_201_CREATED)
 def create_target(
     request: Request,
     payload: OCPTargetCreate,
@@ -159,9 +152,7 @@ def delete_target(
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
-@targets_router.post(
-    "/{target_id}/discover", response_model=OCPDiscoveryResponse
-)
+@targets_router.post("/{target_id}/discover", response_model=OCPDiscoveryResponse)
 def discover_target(
     request: Request,
     target_id: int,
@@ -188,19 +179,19 @@ def discover_target(
     actor = request.headers.get("x-actor", "user")
     payload = payload or OCPDiscoveryRequest()
 
-    if payload.manual_storage_classes is not None or payload.manual_network_attachments is not None or payload.manual_namespaces is not None:
+    if (
+        payload.manual_storage_classes is not None
+        or payload.manual_network_attachments is not None
+        or payload.manual_namespaces is not None
+    ):
         # Manual discovery — operator pasted resources. Trust the
         # input shape (Pydantic already validated it) and write straight
         # through.
-        target.storage_classes = (
-            [s.model_dump() for s in (payload.manual_storage_classes or [])]
-        )
-        target.network_attachments = (
-            [n.model_dump() for n in (payload.manual_network_attachments or [])]
-        )
-        target.namespaces = (
-            [ns.model_dump() for ns in (payload.manual_namespaces or [])]
-        )
+        target.storage_classes = [s.model_dump() for s in (payload.manual_storage_classes or [])]
+        target.network_attachments = [
+            n.model_dump() for n in (payload.manual_network_attachments or [])
+        ]
+        target.namespaces = [ns.model_dump() for ns in (payload.manual_namespaces or [])]
         target.cluster_capacity = target.cluster_capacity or {}
         target.last_synced_at = datetime.now(timezone.utc)
         target.last_error = None
@@ -283,15 +274,11 @@ mappings_router = APIRouter(tags=["resource-mappings"])
 def _get_mapping_or_404(db: Session, mapping_id: int) -> ResourceMapping:
     mapping = db.get(ResourceMapping, mapping_id)
     if mapping is None:
-        raise HTTPException(
-            status_code=404, detail=f"Resource mapping {mapping_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Resource mapping {mapping_id} not found")
     return mapping
 
 
-def _compute_mapping_status(
-    mapping: ResourceMapping, db: Session
-) -> ResourceMappingStatus:
+def _compute_mapping_status(mapping: ResourceMapping, db: Session) -> ResourceMappingStatus:
     """Walk the mapping payload + the cluster scope's source resources
     to determine completeness.
 
@@ -304,15 +291,19 @@ def _compute_mapping_status(
     ``needs_review``: target row references a resource that's no
     longer present on the cluster (drift).
     """
-    networks = {m.get("source_network") for m in (mapping.network_mappings or [])
-                if (m.get("target_network_name") or "").strip()}
-    datastores = {m.get("source_datastore") for m in (mapping.storage_mappings or [])
-                  if (m.get("target_storage_class") or "").strip()}
+    networks = {
+        m.get("source_network")
+        for m in (mapping.network_mappings or [])
+        if (m.get("target_network_name") or "").strip()
+    }
+    datastores = {
+        m.get("source_datastore")
+        for m in (mapping.storage_mappings or [])
+        if (m.get("target_storage_class") or "").strip()
+    }
 
     vms = list(
-        db.scalars(
-            select(VM).where(VM.source_vcenter_id == mapping.vcenter_source_id)
-        ).all()
+        db.scalars(select(VM).where(VM.source_vcenter_id == mapping.vcenter_source_id)).all()
     )
     needed_networks: set[str] = set()
     needed_datastores: set[str] = set()
@@ -334,9 +325,7 @@ def _compute_mapping_status(
             referenced = m.get("target_storage_class")
             if referenced and referenced not in target_sc_names:
                 return ResourceMappingStatus.needs_review
-        target_net_names = {
-            n.get("name") for n in (target.network_attachments or [])
-        }
+        target_net_names = {n.get("name") for n in (target.network_attachments or [])}
         for m in mapping.network_mappings or []:
             referenced = m.get("target_network_name")
             if referenced and referenced not in target_net_names:
@@ -348,15 +337,11 @@ def _compute_mapping_status(
 @mappings_router.get("", response_model=list[ResourceMappingRead])
 def list_mappings(db: Session = Depends(get_db)) -> list[ResourceMapping]:
     return list(
-        db.scalars(
-            select(ResourceMapping).order_by(ResourceMapping.updated_at.desc())
-        ).all()
+        db.scalars(select(ResourceMapping).order_by(ResourceMapping.updated_at.desc())).all()
     )
 
 
-@mappings_router.post(
-    "", response_model=ResourceMappingRead, status_code=status.HTTP_201_CREATED
-)
+@mappings_router.post("", response_model=ResourceMappingRead, status_code=status.HTTP_201_CREATED)
 def create_mapping(
     request: Request,
     payload: ResourceMappingCreate,
@@ -390,8 +375,7 @@ def create_mapping(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Mapping named {payload.name!r} already exists for this "
-                "source/target pair"
+                f"Mapping named {payload.name!r} already exists for this " "source/target pair"
             ),
         ) from e
     mapping.status = _compute_mapping_status(mapping, db)
@@ -434,9 +418,7 @@ def get_mapping(mapping_id: int, db: Session = Depends(get_db)) -> ResourceMappi
     return mapping
 
 
-@mappings_router.patch(
-    "/{mapping_id}", response_model=ResourceMappingRead
-)
+@mappings_router.patch("/{mapping_id}", response_model=ResourceMappingRead)
 def update_mapping(
     request: Request,
     mapping_id: int,
@@ -460,9 +442,7 @@ def update_mapping(
                 ResourceMapping.vcenter_source_id == mapping.vcenter_source_id,
                 ResourceMapping.ocp_target_id == mapping.ocp_target_id,
                 ResourceMapping.id != mapping.id,
-            ).update(
-                {ResourceMapping.is_active: False}, synchronize_session=False
-            )
+            ).update({ResourceMapping.is_active: False}, synchronize_session=False)
     mapping.status = _compute_mapping_status(mapping, db)
     db.commit()
     db.refresh(mapping)
@@ -470,9 +450,7 @@ def update_mapping(
     return mapping
 
 
-@mappings_router.delete(
-    "/{mapping_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@mappings_router.delete("/{mapping_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_mapping(
     request: Request,
     mapping_id: int,
@@ -495,15 +473,11 @@ def delete_mapping(
 # ---------------------------------------------------------------------------
 # LLM suggestions
 # ---------------------------------------------------------------------------
-def _vcenter_source_signals(
-    db: Session, mapping: ResourceMapping
-) -> tuple[list[dict], list[dict]]:
+def _vcenter_source_signals(db: Session, mapping: ResourceMapping) -> tuple[list[dict], list[dict]]:
     """Aggregate source networks/datastores in the mapping's vCenter
     scope. Returns lists shaped for the suggestion prompts."""
     vms = list(
-        db.scalars(
-            select(VM).where(VM.source_vcenter_id == mapping.vcenter_source_id)
-        ).all()
+        db.scalars(select(VM).where(VM.source_vcenter_id == mapping.vcenter_source_id)).all()
     )
     net_counts: Counter[str] = Counter()
     ds_counts: Counter[str] = Counter()
@@ -523,12 +497,8 @@ def _vcenter_source_signals(
     return networks, datastores
 
 
-@mappings_router.post(
-    "/{mapping_id}/suggest-network", response_model=MappingSuggestionResponse
-)
-def suggest_networks(
-    mapping_id: int, db: Session = Depends(get_db)
-) -> dict:
+@mappings_router.post("/{mapping_id}/suggest-network", response_model=MappingSuggestionResponse)
+def suggest_networks(mapping_id: int, db: Session = Depends(get_db)) -> dict:
     mapping = _get_mapping_or_404(db, mapping_id)
     target = db.get(OCPTarget, mapping.ocp_target_id)
     if target is None or not target.network_attachments:
@@ -552,12 +522,8 @@ def suggest_networks(
     return result
 
 
-@mappings_router.post(
-    "/{mapping_id}/suggest-storage", response_model=MappingSuggestionResponse
-)
-def suggest_storage(
-    mapping_id: int, db: Session = Depends(get_db)
-) -> dict:
+@mappings_router.post("/{mapping_id}/suggest-storage", response_model=MappingSuggestionResponse)
+def suggest_storage(mapping_id: int, db: Session = Depends(get_db)) -> dict:
     mapping = _get_mapping_or_404(db, mapping_id)
     target = db.get(OCPTarget, mapping.ocp_target_id)
     if target is None or not target.storage_classes:
@@ -585,9 +551,7 @@ def suggest_storage(
 # ---------------------------------------------------------------------------
 # Pre-flight check
 # ---------------------------------------------------------------------------
-@mappings_router.post(
-    "/{mapping_id}/preflight", response_model=PreflightCheckResponse
-)
+@mappings_router.post("/{mapping_id}/preflight", response_model=PreflightCheckResponse)
 def preflight(mapping_id: int, db: Session = Depends(get_db)) -> dict:
     """Validate a mapping is ready to drive plan generation.
 
@@ -614,12 +578,8 @@ def preflight(mapping_id: int, db: Session = Depends(get_db)) -> dict:
         for m in (mapping.storage_mappings or [])
         if (m.get("target_storage_class") or "").strip()
     }
-    unmapped_networks = sorted(
-        {n["name"] for n in source_networks} - mapped_networks
-    )
-    unmapped_datastores = sorted(
-        {d["name"] for d in source_datastores} - mapped_datastores
-    )
+    unmapped_networks = sorted({n["name"] for n in source_networks} - mapped_networks)
+    unmapped_datastores = sorted({d["name"] for d in source_datastores} - mapped_datastores)
 
     target_status = "unknown"
     missing_storage_classes_on_target: list[str] = []
@@ -628,17 +588,13 @@ def preflight(mapping_id: int, db: Session = Depends(get_db)) -> dict:
 
     if target is not None:
         target_status = target.status.value
-        if target.status != OCPTargetStatus.active:
-            warnings.append(
-                f"OCP target '{target.name}' is {target.status.value} — "
-                "discovery may be stale or auth has expired."
-            )
-        sc_names = {
-            sc.get("name") for sc in (target.storage_classes or [])
-        }
-        net_names = {
-            n.get("name") for n in (target.network_attachments or [])
-        }
+        # The "discovery may be stale" warning was removed: target
+        # entities (TargetNetwork / TargetStorageClass) are now
+        # operator-declared and don't depend on the auth-based
+        # discovery lifecycle. A non-active status no longer implies
+        # a broken mapping.
+        sc_names = {sc.get("name") for sc in (target.storage_classes or [])}
+        net_names = {n.get("name") for n in (target.network_attachments or [])}
         for m in mapping.storage_mappings or []:
             ref = m.get("target_storage_class")
             if ref and ref not in sc_names:
@@ -648,9 +604,7 @@ def preflight(mapping_id: int, db: Session = Depends(get_db)) -> dict:
             if ref and ref not in net_names:
                 missing_networks_on_target.append(ref)
     else:
-        warnings.append(
-            "OCP target row not found — re-create the mapping or fix the target."
-        )
+        warnings.append("OCP target row not found — re-create the mapping or fix the target.")
 
     if not (mapping.namespace_mappings or []):
         warnings.append(

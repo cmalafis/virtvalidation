@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import BulkOperations from "./components/BulkOperations";
 import NetworkReviewDetail from "./components/NetworkReviewDetail";
 import NetworkReviewNew from "./components/NetworkReviewNew";
+import OCPTargetDetail from "./components/OCPTargetDetail";
 import OCPTargets from "./components/OCPTargets";
 import PlanView from "./components/PlanView";
 import PlanWizard from "./components/PlanWizard";
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/plans/:id" element={<PlanView />} />
         <Route path="/sources/vcenters" element={<VCenterSources />} />
         <Route path="/sources/targets" element={<OCPTargets />} />
+        <Route path="/sources/targets/:id" element={<OCPTargetDetail />} />
         <Route path="/mappings" element={<ResourceMappings />} />
         <Route path="/mappings/:id" element={<ResourceMappingDetail />} />
         <Route path="/operations" element={<BulkOperations />} />

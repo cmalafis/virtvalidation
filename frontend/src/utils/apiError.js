@@ -24,6 +24,24 @@ export function formatApiErrorDetail(body) {
     if (detail.length > 5) out += ` (and ${detail.length - 5} more)`;
     return out;
   }
+  // Object-shaped detail (e.g. {"detail": "...", "referenced_by": [...]})
+  // emitted by 409 delete-protection endpoints. Surface the inner message
+  // plus the first few referencing-item names so the operator sees
+  // exactly what is blocking the action.
+  if (detail && typeof detail === "object") {
+    const inner = detail.detail || detail.error || detail.message;
+    const refs = Array.isArray(detail.referenced_by) ? detail.referenced_by : null;
+    if (inner && refs && refs.length) {
+      const names = refs
+        .slice(0, 3)
+        .map((r) => r.mapping_name || r.name || r.id)
+        .filter(Boolean)
+        .join(", ");
+      return names ? `${inner} (${names})` : String(inner);
+    }
+    if (inner) return String(inner);
+    return JSON.stringify(detail).slice(0, 200);
+  }
   return String(detail);
 }
 
