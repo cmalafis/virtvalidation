@@ -21,6 +21,18 @@ What this module owns:
       * ``MAX_HA_PEERS_PER_WAVE`` — never lose quorum on an
         infrastructure service mid-wave. Two AD-DC primaries
         moving together is allowed; three at once is not.
+      * **Partition coherence** — every wave maps 1:1 to a single
+        MTV ``Plan`` CR, which can only point at one source provider
+        (one source vCenter) and one ``spec.targetNamespace``.
+        Co-packing groups across either boundary would emit YAML
+        that fails at ``oc apply``. The preclassifier already keys
+        groups by ``(vcenter_id, target_namespace)``; the wave
+        packer enforces the boundary by refusing to place a group
+        into a wave whose existing groups disagree on either field.
+        Multiple network / storage mapping rows per wave ARE
+        expected (one ``Plan`` typically maps many vSphere
+        portgroups onto target NADs) — those live inside the single
+        NetworkMap / StorageMap CR the emitter builds.
   - **Group splitting** when a single group exceeds
     ``MAX_VMS_PER_WAVE``. The oversized group becomes ``/batch-1``,
     ``/batch-2``, … sub-groups, each ≤ the limit, slotted into
@@ -47,7 +59,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from app.core.config import settings as _module_settings
-from app.core.preclassifier import GroupKey, HAMember, VMGroup
+from app.core.preclassifier import GroupKey, VMGroup
 
 logger = logging.getLogger(__name__)
 
@@ -212,9 +224,7 @@ class MechanicalWaveAssigner:
 
         # 3. Detect HA families so we can spread peers across waves.
         family_to_group_ids = self._detect_ha_families(ordered)
-        group_to_family = {
-            gid: fam for fam, gids in family_to_group_ids.items() for gid in gids
-        }
+        group_to_family = {gid: fam for fam, gids in family_to_group_ids.items() for gid in gids}
 
         # 4. Greedy wave packing: walk groups in dependency order +
         #    role priority, packing each into the earliest wave that
@@ -229,15 +239,17 @@ class MechanicalWaveAssigner:
             min_wave_from_deps = self._min_wave_from_deps(group, wave_for_group)
             family = group_to_family.get(group.id)
             target = self._find_target_wave(
-                group, waves, family_per_wave, min_wave_from_deps, family,
+                group,
+                waves,
+                family_per_wave,
+                min_wave_from_deps,
+                family,
             )
             wave_for_group[group.id] = target
             wave = waves.setdefault(target, Wave(wave_number=target))
             wave.groups.append(group)
             if family is not None:
-                ha_count = sum(
-                    1 for m in group.ha_members if m.ha_role != "standalone"
-                )
+                ha_count = sum(1 for m in group.ha_members if m.ha_role != "standalone")
                 # When the placed group is a primary, lock out every
                 # other peer from this wave by bumping the family
                 # counter to the per-wave cap. Replicas + members
@@ -277,12 +289,11 @@ class MechanicalWaveAssigner:
         id_to_member = {m.vm_id: m for m in group.ha_members}
         batches: list[VMGroup] = []
         for batch_num, start in enumerate(
-            range(0, len(sorted_ids), self.max_vms_per_wave), start=1,
+            range(0, len(sorted_ids), self.max_vms_per_wave),
+            start=1,
         ):
             batch_ids = sorted_ids[start : start + self.max_vms_per_wave]
-            batch_members = [
-                id_to_member[i] for i in batch_ids if i in id_to_member
-            ]
+            batch_members = [id_to_member[i] for i in batch_ids if i in id_to_member]
             sub = VMGroup(
                 key=GroupKey(
                     vcenter_id=group.key.vcenter_id,
@@ -370,7 +381,8 @@ class MechanicalWaveAssigner:
     # ------------------------------------------------------------------
     @staticmethod
     def _min_wave_from_deps(
-        group: VMGroup, wave_for_group: dict[str, int],
+        group: VMGroup,
+        wave_for_group: dict[str, int],
     ) -> int:
         """Earliest wave that comes after every dependency."""
         min_wave = 1
@@ -393,20 +405,14 @@ class MechanicalWaveAssigner:
         ``max_ha_peers_per_wave`` peers of its HA family already
         placed. Creates a new wave if none of the existing waves fit.
         """
-        ha_in_group = sum(
-            1 for m in group.ha_members if m.ha_role != "standalone"
-        )
+        ha_in_group = sum(1 for m in group.ha_members if m.ha_role != "standalone")
         # A primary's wave gets a tighter cap of 1 — primaries
         # never share a wave with another peer from their family.
         # This honors the spec's "Primary first, then replicas
         # later" ordering: primary alone in wave N, replicas
         # follow in N+1, N+2.
-        is_primary_group = any(
-            m.ha_role == "primary" for m in group.ha_members
-        )
-        effective_family_cap = (
-            1 if is_primary_group else self.max_ha_peers_per_wave
-        )
+        is_primary_group = any(m.ha_role == "primary" for m in group.ha_members)
+        effective_family_cap = 1 if is_primary_group else self.max_ha_peers_per_wave
         # Defensive: when a single group's intrinsic HA peer count
         # exceeds the per-wave family cap, no wave will ever satisfy
         # the family constraint and the search would loop forever.
@@ -418,10 +424,7 @@ class MechanicalWaveAssigner:
         # for the group's own first placement when its HA count
         # already exceeds the cap — the spread guarantee is the
         # caller's responsibility, not the assigner's.
-        enforce_family = (
-            family is not None
-            and ha_in_group <= effective_family_cap
-        )
+        enforce_family = family is not None and ha_in_group <= effective_family_cap
         candidate = min_wave
         # Iteration upper bound — fresh waves always succeed, so the
         # cap is "however many existing waves + 1". Anything above
@@ -430,17 +433,27 @@ class MechanicalWaveAssigner:
         max_waves = max(min_wave + len(waves) + 2, 1024)
         while candidate <= max_waves:
             existing = waves.get(candidate)
+            # Partition coherence: each wave emits exactly one MTV
+            # ``Plan`` CR, which can carry only one source provider
+            # + one target namespace. The preclassifier already keys
+            # groups by ``(vcenter_id, target_namespace)``, so we
+            # just refuse to place this group into a non-empty wave
+            # whose first group disagrees on either dimension. A
+            # fresh wave (no ``existing`` yet) seeds whichever
+            # partition this group declares.
+            if existing and existing.groups:
+                seed_key = existing.groups[0].key
+                if (
+                    seed_key.vcenter_id != group.key.vcenter_id
+                    or seed_key.target_namespace != group.key.target_namespace
+                ):
+                    candidate += 1
+                    continue
             current_vms = existing.vm_count if existing else 0
-            current_family = (
-                family_per_wave[candidate].get(family, 0)
-                if enforce_family
-                else 0
-            )
+            current_family = family_per_wave[candidate].get(family, 0) if enforce_family else 0
             fits_vms = current_vms + len(group.vm_ids) <= self.max_vms_per_wave
             fits_family = (
-                current_family + ha_in_group <= effective_family_cap
-                if enforce_family
-                else True
+                current_family + ha_in_group <= effective_family_cap if enforce_family else True
             )
             if fits_vms and fits_family:
                 return candidate

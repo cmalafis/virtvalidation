@@ -161,71 +161,113 @@ No markdown fences, no commentary."""
 _DEFAULT_MAX_LLM_ATTEMPTS = 3
 
 
-_WAVE_RATIONALE_SYSTEM_PROMPT = """You are writing the rationale paragraph
-for ONE wave in a VM migration plan. The wave structure has already been
-decided by deterministic Python rules — you do NOT reassign groups,
-renumber waves, or reorder anything.
+_BATCH_WAVE_RATIONALE_SYSTEM_PROMPT = """You are writing operator-readable
+rationale paragraphs for a VM migration plan's waves. The wave structure
+has already been decided by deterministic Python rules — you do NOT
+reassign groups, renumber waves, or reorder anything.
 
-Your job is to write a brief, operator-readable rationale (3-5 sentences)
-explaining why these groups belong together in this wave at this position.
-
-Focus on:
+You will receive a small list of waves with their member groups. For
+EACH wave, write a brief rationale (3-5 sentences) explaining:
   - Why these groups make sense together (shared cohesion signals — same
     role tier, same vCenter, same application).
-  - Why this wave position relative to the others (dependencies satisfied,
-    risk progression, HA spread).
+  - Why this wave position relative to the others (dependencies
+    satisfied, risk progression, HA spread).
   - Key risks operators should watch during cutover.
   - Any HA considerations (primary first, replica spread).
 
-Plain English text only. No JSON, no markdown, no bullet lists, no
-front matter, no commentary about the task itself. Just the paragraph."""
+Respond with a SINGLE JSON object and nothing else, matching this schema:
+{
+  "rationales": [
+    {"wave_number": 1, "rationale": "..."},
+    {"wave_number": 2, "rationale": "..."}
+  ]
+}
+
+Every wave_number from the input MUST appear EXACTLY ONCE in your
+output. No markdown fences, no commentary."""
 
 
-def _render_wave_rationale_prompt(wave) -> str:
-    """Format one wave's groups for the rationale LLM call.
+# Per CLAUDE.md "LLM Input Discipline": at most 10 items per LLM call.
+# Plans with more than 10 waves split into multiple batches.
+_RATIONALE_BATCH_SIZE = 10
 
-    Bounded by ``MAX_VMS_PER_WAVE`` — the wave skeleton never lets a
-    wave grow beyond that, so this prompt is always small.
+
+def _render_batch_wave_rationale_prompt(waves) -> str:
+    """Format a batch of waves' groups for one rationale LLM call.
+
+    Each wave carries at most ``MAX_VMS_PER_WAVE`` groups (the wave
+    skeleton enforces this), and a batch carries at most
+    ``_RATIONALE_BATCH_SIZE`` waves, so the prompt stays comfortably
+    within an 8K context budget.
     """
+    expected = sorted(w.wave_number for w in waves)
     lines = [
-        f"Wave {wave.wave_number} contains the following "
-        f"{len(wave.groups)} group(s):",
+        f"Generate rationale text for the following {len(waves)} wave(s).",
+        f"Expected wave_numbers in your output: {expected}.",
         "",
     ]
-    for i, g in enumerate(wave.groups, start=1):
-        lines.extend([
-            f"GROUP {i}: id={g.id!r}",
-            f"  - {len(g.vm_ids)} VMs",
-            f"  - role={g.estimated_role} state={g.estimated_state} "
-            f"risk={g.migration_risk}",
-            f"  - notes: {g.notes}",
-            "",
-        ])
-    lines.append(
-        "Write the rationale paragraph for THIS wave. Do not reassign "
-        "groups or renumber waves."
-    )
+    for wave in waves:
+        lines.append(
+            f"=== Wave {wave.wave_number} "
+            f"({len(wave.groups)} group(s), risk={wave.estimated_risk}) ==="
+        )
+        for i, g in enumerate(wave.groups, start=1):
+            lines.extend(
+                [
+                    f"  GROUP {i}: id={g.id!r}",
+                    f"    - {len(g.vm_ids)} VMs",
+                    f"    - role={g.estimated_role} "
+                    f"state={g.estimated_state} risk={g.migration_risk}",
+                    f"    - notes: {g.notes}",
+                ]
+            )
+        lines.append("")
+    lines.append("Produce the JSON object specified in the system prompt now.")
     return "\n".join(lines)
 
 
-def _parse_rationale_text(raw: str) -> str:
-    """LLM returns plain prose (in either JSON envelope or raw)."""
+def _parse_batch_wave_rationale(
+    raw: str,
+    expected_wave_numbers: set[int],
+) -> dict[int, str]:
+    """Parse a batched rationale response into wave_number → text.
+
+    Permissive: strips optional markdown fences, ignores unknown
+    wave_numbers, drops empty strings. Missing wave_numbers are
+    simply absent from the result — the caller falls back to the
+    deterministic template for those waves.
+    """
     raw = raw.strip()
-    if raw.startswith("{"):
-        # MockBackend always emits JSON; pull "summary" or "rationale"
-        # out of whatever shape it returned so we don't crash on
-        # generic fallback responses.
-        try:
-            blob = json.loads(raw)
-        except json.JSONDecodeError:
-            return raw
-        if isinstance(blob, dict):
-            for key in ("rationale", "summary", "text"):
-                value = blob.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-            return ""
-    return raw
+    if raw.startswith("```"):
+        # Some models still wrap JSON in fences despite the system
+        # prompt's instructions; strip them defensively.
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    try:
+        blob = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(blob, dict):
+        return {}
+    items = blob.get("rationales")
+    if not isinstance(items, list):
+        return {}
+    out: dict[int, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        wn = item.get("wave_number")
+        text = item.get("rationale")
+        if (
+            isinstance(wn, int)
+            and wn in expected_wave_numbers
+            and isinstance(text, str)
+            and text.strip()
+        ):
+            out[wn] = text.strip()
+    return out
 
 
 def _template_rationale(wave) -> str:
@@ -320,9 +362,7 @@ class MigrationPlanner:
             expanded: list = []
             for g in groups:
                 if ha_strategy == "auto":
-                    ha_count = sum(
-                        1 for m in g.ha_members if m.ha_role != "standalone"
-                    )
+                    ha_count = sum(1 for m in g.ha_members if m.ha_role != "standalone")
                     if ha_count < 3:
                         expanded.append(g)
                         continue
@@ -345,6 +385,7 @@ class MigrationPlanner:
         # avoid a circular import (preclassifier ← wave_skeleton ←
         # planner ← preclassifier).
         from app.core.wave_skeleton import MechanicalWaveAssigner
+
         assigner = MechanicalWaveAssigner()
         waves_struct = assigner.assign_waves(groups)
         if not waves_struct:
@@ -357,7 +398,8 @@ class MigrationPlanner:
         rationale_calls = 0
         if generate_rationale:
             rationale_method, rationale_calls = self._fill_wave_rationale(
-                waves_struct, max_attempts=max_llm_attempts,
+                waves_struct,
+                max_attempts=max_llm_attempts,
             )
 
         # Stage 5: expand to API shape + integrity check.
@@ -367,19 +409,19 @@ class MigrationPlanner:
             wave_vm_ids: list[int] = []
             for g in wave.groups:
                 wave_vm_ids.extend(groups_by_id[g.id].vm_ids)
-            expanded_waves.append({
-                "wave_number": wave.wave_number,
-                "vm_ids": sorted(set(wave_vm_ids)),
-                "group_ids": [g.id for g in wave.groups],
-                "rationale": "\n\n".join(wave.notes) if wave.notes else "",
-                "estimated_risk": wave.estimated_risk,
-            })
+            expanded_waves.append(
+                {
+                    "wave_number": wave.wave_number,
+                    "vm_ids": sorted(set(wave_vm_ids)),
+                    "group_ids": [g.id for g in wave.groups],
+                    "rationale": "\n\n".join(wave.notes) if wave.notes else "",
+                    "estimated_risk": wave.estimated_risk,
+                }
+            )
 
         self._verify_expanded_plan(expanded_waves, provided_vm_ids)
 
-        group_to_wave = {
-            g.id: w.wave_number for w in waves_struct for g in w.groups
-        }
+        group_to_wave = {g.id: w.wave_number for w in waves_struct for g in w.groups}
         groups_api = []
         for g in groups:
             row = g.to_api_dict()
@@ -391,7 +433,8 @@ class MigrationPlanner:
         # at least one wave; "mechanical+template_rationale" when
         # every rationale used the template fallback.
         method = (
-            "mechanical+llm_rationale" if rationale_method == "llm"
+            "mechanical+llm_rationale"
+            if rationale_method == "llm"
             else "mechanical+template_rationale"
         )
 
@@ -410,44 +453,57 @@ class MigrationPlanner:
         }
 
     def _fill_wave_rationale(
-        self, waves_struct: list, *, max_attempts: int,
+        self,
+        waves_struct: list,
+        *,
+        max_attempts: int,
     ) -> tuple[str, int]:
-        """Generate per-wave rationale text via the LLM, with template
-        fallback. Returns ``(method, total_llm_calls)``.
+        """Generate per-wave rationale text in batched LLM calls.
 
-        Each wave is a separate, small LLM call — well under the
-        per-call ceiling regardless of overall plan size. Sequential
-        for now (parallelization is straightforward via asyncio but
-        deferred; the LLM time-per-wave is bounded so total time
-        scales linearly with wave count).
+        Returns ``(method, total_llm_calls)``.
+
+        Each LLM call covers up to ``_RATIONALE_BATCH_SIZE`` waves and
+        returns a JSON map of wave_number → rationale. For typical
+        plans (≤10 waves) this is a single call, replacing the prior
+        loop of N sequential per-wave calls. ``max_attempts`` is
+        accepted for caller back-compat but no longer used — a
+        per-batch failure falls back to the deterministic template
+        for every wave in that batch.
         """
+        del max_attempts  # accepted for back-compat; no longer used
         import logging
+
         logger = logging.getLogger(__name__)
+        if not waves_struct:
+            return "template", 0
         any_llm = False
         calls = 0
-        for wave in waves_struct:
-            template = _template_rationale(wave)
+        for start in range(0, len(waves_struct), _RATIONALE_BATCH_SIZE):
+            batch = waves_struct[start : start + _RATIONALE_BATCH_SIZE]
+            expected = {w.wave_number for w in batch}
+            rationales_by_wn: dict[int, str] = {}
             try:
-                user_prompt = _render_wave_rationale_prompt(wave)
-                # One LLM call per wave. ≤ MAX_VMS_PER_WAVE groups.
-                raw = self._chat(_WAVE_RATIONALE_SYSTEM_PROMPT, user_prompt)
+                user_prompt = _render_batch_wave_rationale_prompt(batch)
+                raw = self._chat(
+                    _BATCH_WAVE_RATIONALE_SYSTEM_PROMPT,
+                    user_prompt,
+                )
                 calls += 1
-                text = _parse_rationale_text(raw)
+                rationales_by_wn = _parse_batch_wave_rationale(raw, expected)
+            except (PlannerError, LLMBackendError) as e:
+                logger.warning(
+                    "Batched rationale LLM call failed for waves %s "
+                    "(%s); using template fallback for the batch.",
+                    sorted(expected),
+                    e,
+                )
+            for wave in batch:
+                text = rationales_by_wn.get(wave.wave_number)
                 if text:
                     wave.notes.append(text)
                     any_llm = True
                 else:
-                    wave.notes.append(template)
-            except (PlannerError, LLMBackendError) as e:
-                logger.warning(
-                    "Wave %d rationale LLM call failed (%s); using template.",
-                    wave.wave_number, e,
-                )
-                wave.notes.append(template)
-            if calls >= max_attempts * len(waves_struct):
-                # Defensive — never call the LLM more than once per
-                # wave even if a future refactor introduces retries.
-                break
+                    wave.notes.append(_template_rationale(wave))
         method = "llm" if any_llm else "template"
         return method, calls
 
@@ -468,13 +524,15 @@ class MigrationPlanner:
         which path produced their plan.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         provided_ids = {g.id: g for g in groups}
         last_error: str | None = None
         for attempt in range(1, max_attempts + 1):
             user_prompt = self._render_groups_prompt(
-                groups, previous_error=last_error,
+                groups,
+                previous_error=last_error,
             )
             try:
                 raw = self._chat(GROUP_PLANNER_SYSTEM_PROMPT, user_prompt)
@@ -486,7 +544,9 @@ class MigrationPlanner:
                 logger.warning(
                     "Wave assignment attempt %d/%d failed: %s. "
                     "Retrying with corrective context.",
-                    attempt, max_attempts, last_error,
+                    attempt,
+                    max_attempts,
+                    last_error,
                 )
                 continue
 
@@ -497,14 +557,17 @@ class MigrationPlanner:
         logger.error(
             "LLM wave assignment failed after %d attempts. Last error: %s. "
             "Falling back to mechanical assignment.",
-            max_attempts, last_error,
+            max_attempts,
+            last_error,
         )
         wave_assignment = self._mechanical_assign_waves(groups, last_error=last_error)
         return wave_assignment, "mechanical_fallback", max_attempts
 
     @staticmethod
     def _render_groups_prompt(
-        groups: list[VMGroup], *, previous_error: str | None = None,
+        groups: list[VMGroup],
+        *,
+        previous_error: str | None = None,
     ) -> str:
         # The numbered + named format below makes it easier for smaller
         # models to track which groups they've placed — the LLM-prompt-
@@ -513,28 +576,30 @@ class MigrationPlanner:
         # tasks.
         lines: list[str] = []
         if previous_error:
-            lines.extend([
-                "PREVIOUS ATTEMPT FAILED with this error:",
-                f"  {previous_error}",
-                "",
-                "Your previous output violated the hard constraints listed in",
-                "the system prompt. Re-read the input list below, place every",
-                "group_id in EXACTLY ONE wave, and verify before responding.",
-                "",
-            ])
-        lines.append(
-            f"Assign the following {len(groups)} groups to migration waves:"
-        )
+            lines.extend(
+                [
+                    "PREVIOUS ATTEMPT FAILED with this error:",
+                    f"  {previous_error}",
+                    "",
+                    "Your previous output violated the hard constraints listed in",
+                    "the system prompt. Re-read the input list below, place every",
+                    "group_id in EXACTLY ONE wave, and verify before responding.",
+                    "",
+                ]
+            )
+        lines.append(f"Assign the following {len(groups)} groups to migration waves:")
         lines.append("")
         for i, g in enumerate(groups, start=1):
-            lines.extend([
-                f"GROUP {i}: id={g.id!r}",
-                f"  - {len(g.vm_ids)} VMs",
-                f"  - role={g.estimated_role} state={g.estimated_state} risk={g.migration_risk}",
-                f"  - depends_on: {list(g.dependency_hints) or '(none)'}",
-                f"  - notes: {g.notes}",
-                "",
-            ])
+            lines.extend(
+                [
+                    f"GROUP {i}: id={g.id!r}",
+                    f"  - {len(g.vm_ids)} VMs",
+                    f"  - role={g.estimated_role} state={g.estimated_state} risk={g.migration_risk}",
+                    f"  - depends_on: {list(g.dependency_hints) or '(none)'}",
+                    f"  - notes: {g.notes}",
+                    "",
+                ]
+            )
         lines.append(
             "REMEMBER: each group_id appears in EXACTLY ONE wave. "
             f"Verify your output contains exactly {len(groups)} group_ids "
@@ -554,7 +619,9 @@ class MigrationPlanner:
     # ------------------------------------------------------------------
     @staticmethod
     def _mechanical_assign_waves(
-        groups: list[VMGroup], *, last_error: str | None = None,
+        groups: list[VMGroup],
+        *,
+        last_error: str | None = None,
     ) -> dict:
         """Topological-sort + role priority → deterministic waves.
 
@@ -603,14 +670,17 @@ class MigrationPlanner:
                     g.id,
                 ),
             )
-            waves.append({
-                "wave_number": wave_number,
-                "group_ids": [g.id for g in members],
-                "rationale": MigrationPlanner._describe_wave(
-                    wave_number, members,
-                ),
-                "estimated_risk": MigrationPlanner._wave_risk(members),
-            })
+            waves.append(
+                {
+                    "wave_number": wave_number,
+                    "group_ids": [g.id for g in members],
+                    "rationale": MigrationPlanner._describe_wave(
+                        wave_number,
+                        members,
+                    ),
+                    "estimated_risk": MigrationPlanner._wave_risk(members),
+                }
+            )
 
         summary = (
             "Mechanical fallback plan: LLM wave assignment unavailable, "
@@ -683,8 +753,7 @@ class MigrationPlanner:
             )
         if "web" in roles:
             return (
-                f"Wave {wave_number}: Web tier ({vm_count} VMs). "
-                f"Stateless front-end services."
+                f"Wave {wave_number}: Web tier ({vm_count} VMs). " f"Stateless front-end services."
             )
         if "app" in roles:
             return (
@@ -696,8 +765,10 @@ class MigrationPlanner:
                 f"Wave {wave_number}: Edge tier ({vm_count} VMs). "
                 f"Load balancers, ingress, and edge services."
             )
-        state_desc = "stateful" if "stateful" in states else (
-            "stateless" if "stateless" in states else "mixed"
+        state_desc = (
+            "stateful"
+            if "stateful" in states
+            else ("stateless" if "stateless" in states else "mixed")
         )
         return (
             f"Wave {wave_number}: {vm_count} VMs across {group_count} "
@@ -757,12 +828,14 @@ class MigrationPlanner:
             rationale = wave.get("rationale", "")
             if not isinstance(rationale, str):
                 raise PlannerError(f"wave {wave_number}: rationale must be a string")
-            normalized.append({
-                "wave_number": wave_number,
-                "group_ids": list(group_ids),
-                "rationale": rationale,
-                "estimated_risk": risk,
-            })
+            normalized.append(
+                {
+                    "wave_number": wave_number,
+                    "group_ids": list(group_ids),
+                    "rationale": rationale,
+                    "estimated_risk": risk,
+                }
+            )
 
         missing = provided_group_ids - seen
         if missing:

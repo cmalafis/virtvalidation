@@ -39,49 +39,68 @@ logger = logging.getLogger(__name__)
 # "group" repeatedly but is the categorization intent, not planning.
 # The first match wins; place more-specific tokens earlier.
 _INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
-    ("categorize", [
-        "level 1 categorizer",
-        "application group",
-        "business_unit",
-        "kind\": \"application",
+    (
         "categorize",
-    ]),
-    ("wave_rationale", [
-        # Per-wave rationale prompt is a small focused ask — must
-        # come BEFORE the broader plan/plan_groups intents so it
-        # doesn't get swallowed by either.
-        "write the rationale paragraph",
-        "rationale paragraph for one wave",
-    ]),
-    ("plan_groups", [
-        # The group-based planner emits group_ids in both prompt + schema,
-        # which the raw-VM planner does NOT — so this is a reliable
-        # discriminator. Must come BEFORE "plan" so the latter doesn't
-        # eat the match.
-        "group_ids",
-        "pre-formed groups to assign",
-        "pre-formed vm groups",
-    ]),
-    ("plan", [
-        "wave_number",
-        "wave plan",
-        "migration plan",
-        "planner",
-        "waves to migrate",
-    ]),
-    ("topology", [
+        [
+            "level 1 categorizer",
+            "application group",
+            "business_unit",
+            'kind": "application',
+            "categorize",
+        ],
+    ),
+    (
+        "wave_rationale",
+        [
+            # Batched per-wave rationale prompt covers up to 10 waves per
+            # call and asks for a JSON map of wave_number → rationale.
+            # Must come BEFORE the broader plan/plan_groups intents so it
+            # doesn't get swallowed by either.
+            "generate rationale text for the following",
+            "expected wave_numbers in your output",
+        ],
+    ),
+    (
+        "plan_groups",
+        [
+            # The group-based planner emits group_ids in both prompt + schema,
+            # which the raw-VM planner does NOT — so this is a reliable
+            # discriminator. Must come BEFORE "plan" so the latter doesn't
+            # eat the match.
+            "group_ids",
+            "pre-formed groups to assign",
+            "pre-formed vm groups",
+        ],
+    ),
+    (
+        "plan",
+        [
+            "wave_number",
+            "wave plan",
+            "migration plan",
+            "planner",
+            "waves to migrate",
+        ],
+    ),
+    (
         "topology",
-        "load_balanced",
-        "ha pair",
-        "cluster pattern",
-    ]),
-    ("validate", [
-        "post-migration",
-        "verdict",
-        "diff vs baseline",
+        [
+            "topology",
+            "load_balanced",
+            "ha pair",
+            "cluster pattern",
+        ],
+    ),
+    (
         "validate",
-        "findings",
-    ]),
+        [
+            "post-migration",
+            "verdict",
+            "diff vs baseline",
+            "validate",
+            "findings",
+        ],
+    ),
 ]
 
 
@@ -214,9 +233,7 @@ class MockBackend(LLMBackend):
 
     def info(self) -> dict:
         base = super().info()
-        base["warning"] = (
-            "Mock backend: canned responses, not real LLM reasoning."
-        )
+        base["warning"] = "Mock backend: canned responses, not real LLM reasoning."
         return base
 
     # ------------------------------------------------------------------
@@ -247,8 +264,7 @@ class MockBackend(LLMBackend):
     @staticmethod
     def _concat(messages: list[dict]) -> str:
         return "\n".join(
-            (m.get("content") or "") if isinstance(m.get("content"), str) else ""
-            for m in messages
+            (m.get("content") or "") if isinstance(m.get("content"), str) else "" for m in messages
         )
 
     # ------------------------------------------------------------------
@@ -292,26 +308,41 @@ class MockBackend(LLMBackend):
         }
 
     def _wave_rationale_response(self, prompt: str) -> dict:
-        """Per-wave rationale — small focused prompt.
+        """Batched per-wave rationale.
 
-        Returns a ``{rationale: "..."}`` dict; the planner's parser
-        extracts the string. Mock rationale references the wave
-        number visible in the prompt so the planner sees a different
-        string for each call (lets tests assert the LLM path
-        actually ran per-wave).
+        Returns a ``{rationales: [{wave_number, rationale}, ...]}`` dict
+        whose entries match every wave_number the prompt declares. The
+        planner's batched parser keys responses back to waves by
+        wave_number, so tests can pin both single-batch and
+        multi-batch behavior.
         """
         import re as _re
-        m = _re.search(r"Wave\s+(\d+)\s+contains", prompt)
-        wave_no = m.group(1) if m else "?"
+
+        expected_match = _re.search(
+            r"Expected wave_numbers in your output:\s*\[([0-9,\s]+)\]",
+            prompt,
+        )
+        if expected_match:
+            wave_numbers = [int(x) for x in expected_match.group(1).split(",") if x.strip()]
+        else:
+            wave_numbers = sorted({int(m) for m in _re.findall(r"Wave\s+(\d+)\b", prompt)})
+        if not wave_numbers:
+            wave_numbers = [1]
         return {
-            "rationale": (
-                f"Mock rationale for wave {wave_no}: groups are placed "
-                "here by deterministic role + dependency ordering. "
-                "Stateful tiers migrate before dependent stateless "
-                "tiers; HA peers are spread across consecutive waves "
-                "to preserve quorum. Watch for connection drain timing "
-                "during cutover."
-            ),
+            "rationales": [
+                {
+                    "wave_number": wn,
+                    "rationale": (
+                        f"Mock rationale for wave {wn}: groups are placed "
+                        "here by deterministic role + dependency ordering. "
+                        "Stateful tiers migrate before dependent stateless "
+                        "tiers; HA peers are spread across consecutive "
+                        "waves to preserve quorum. Watch for connection "
+                        "drain timing during cutover."
+                    ),
+                }
+                for wn in wave_numbers
+            ],
         }
 
     def _planning_groups_response(self, prompt: str) -> dict:
@@ -330,6 +361,7 @@ class MockBackend(LLMBackend):
         # Extract group_ids from the prompt. They look like
         # "id": "vc1/prod/web/stateless/hint:foo:web" in the JSON.
         import re as _re
+
         ids = _re.findall(r'"id"\s*:\s*"([^"]+)"', prompt)
         # Dedup preserving order so identical inputs produce identical
         # outputs.
@@ -342,12 +374,14 @@ class MockBackend(LLMBackend):
         if not unique:
             return {
                 "summary": "Mock plan: no group ids visible in prompt.",
-                "waves": [{
-                    "wave_number": 1,
-                    "group_ids": [],
-                    "rationale": "mock: empty input",
-                    "estimated_risk": "low",
-                }],
+                "waves": [
+                    {
+                        "wave_number": 1,
+                        "group_ids": [],
+                        "rationale": "mock: empty input",
+                        "estimated_risk": "low",
+                    }
+                ],
             }
         # Two-wave bucket: foundations (data + infrastructure) first,
         # everything else second. Falls back to single wave when only
@@ -356,25 +390,31 @@ class MockBackend(LLMBackend):
         rest = [g for g in unique if g not in foundations]
         waves: list[dict] = []
         if foundations and rest:
-            waves.append({
-                "wave_number": 1,
-                "group_ids": foundations,
-                "rationale": "mock: stateful + infrastructure groups migrate first",
-                "estimated_risk": "high",
-            })
-            waves.append({
-                "wave_number": 2,
-                "group_ids": rest,
-                "rationale": "mock: stateless dependents follow foundations",
-                "estimated_risk": "low",
-            })
+            waves.append(
+                {
+                    "wave_number": 1,
+                    "group_ids": foundations,
+                    "rationale": "mock: stateful + infrastructure groups migrate first",
+                    "estimated_risk": "high",
+                }
+            )
+            waves.append(
+                {
+                    "wave_number": 2,
+                    "group_ids": rest,
+                    "rationale": "mock: stateless dependents follow foundations",
+                    "estimated_risk": "low",
+                }
+            )
         else:
-            waves.append({
-                "wave_number": 1,
-                "group_ids": unique,
-                "rationale": "mock: single-wave migration (no stateful/stateless split detected)",
-                "estimated_risk": "medium",
-            })
+            waves.append(
+                {
+                    "wave_number": 1,
+                    "group_ids": unique,
+                    "rationale": "mock: single-wave migration (no stateful/stateless split detected)",
+                    "estimated_risk": "medium",
+                }
+            )
         return {
             "summary": "Mock plan generated by test backend (group-based path).",
             "waves": waves,
@@ -394,22 +434,26 @@ class MockBackend(LLMBackend):
             # at least one VM.
             return {
                 "summary": "Mock plan: no VM ids visible in prompt.",
-                "waves": [{
-                    "wave_number": 1,
-                    "vm_ids": [],
-                    "rationale": "mock: empty input",
-                    "estimated_risk": "low",
-                }],
+                "waves": [
+                    {
+                        "wave_number": 1,
+                        "vm_ids": [],
+                        "rationale": "mock: empty input",
+                        "estimated_risk": "low",
+                    }
+                ],
             }
         if len(vm_ids) == 1:
             return {
                 "summary": "Mock plan: single-VM cutover.",
-                "waves": [{
-                    "wave_number": 1,
-                    "vm_ids": list(vm_ids),
-                    "rationale": "mock: foundational VM migrates first",
-                    "estimated_risk": "low",
-                }],
+                "waves": [
+                    {
+                        "wave_number": 1,
+                        "vm_ids": list(vm_ids),
+                        "rationale": "mock: foundational VM migrates first",
+                        "estimated_risk": "low",
+                    }
+                ],
             }
         # Split: first VM in wave 1 ("foundation"), rest in wave 2.
         return {
@@ -460,9 +504,7 @@ class MockBackend(LLMBackend):
             "detected_patterns": [
                 {
                     "type": "load_balanced",
-                    "members": [
-                        {"vm_id": vid, "role": "instance"} for vid in vm_ids
-                    ],
+                    "members": [{"vm_id": vid, "role": "instance"} for vid in vm_ids],
                     "confidence": 0.85,
                     "reasoning": "mock: deterministic canned topology",
                 }

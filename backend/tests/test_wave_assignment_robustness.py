@@ -2,19 +2,22 @@
 
 Post-M refactor, wave structure is decided mechanically — the LLM no
 longer assigns groups to waves. The only LLM involvement on the
-``POST /api/plans`` path is generating per-wave rationale text. The
+``POST /api/plans`` path is generating per-wave rationale text. Since
+the batched-rationale refactor that text is produced by a single LLM
+call covering up to ``_RATIONALE_BATCH_SIZE`` waves at a time. The
 contracts these tests pin:
 
   1. When the LLM returns valid rationale for every wave →
-     ``method="mechanical+llm_rationale"``.
-  2. When the LLM raises on every wave → wave-level template
+     ``method="mechanical+llm_rationale"`` and exactly one LLM call
+     was made for a fleet that fits in a single batch.
+  2. When the LLM raises on the batched call → wave-level template
      rationale is used, ``method="mechanical+template_rationale"``,
      and the plan is still valid (every vm_id placed, every wave
      within MAX_VMS_PER_WAVE).
-  3. Mixed (LLM returns text for some waves, raises on others) →
-     ``method="mechanical+llm_rationale"`` because at least one
-     wave got real rationale; the failed waves quietly use the
-     template.
+  3. Mixed (LLM returns text for some wave_numbers but omits others
+     from its JSON response) → ``method="mechanical+llm_rationale"``
+     because at least one wave got real rationale; the missing
+     wave_numbers quietly use the template.
 
 Mechanical-wave-structure invariants (always hold regardless of
 LLM behavior) are pinned in ``tests/test_wave_skeleton.py``.
@@ -27,7 +30,6 @@ from typing import AsyncIterator
 
 from app.core.llm.base import LLMBackend, LLMBackendError
 from app.core.planner import MigrationPlanner
-from app.core.preclassifier import PreClassifier
 from app.models.vm import VM
 
 
@@ -87,7 +89,10 @@ class _RationaleBackend(LLMBackend):
         return self.chat_sync(messages, model, temperature, max_tokens)
 
     async def chat_stream(
-        self, messages, model=None, temperature=0.1,
+        self,
+        messages,
+        model=None,
+        temperature=0.1,
     ) -> AsyncIterator[str]:
         if False:
             yield ""
@@ -119,16 +124,24 @@ def _two_group_fleet() -> list[VM]:
 # ---------------------------------------------------------------------------
 def test_llm_valid_rationale_for_every_wave_sets_llm_method():
     vms = _two_group_fleet()
-    backend = _RationaleBackend([
-        # Plain-text rationale — the parser strips it directly.
-        "Mock rationale: data tier first, web tier follows.",
-    ])
+    backend = _RationaleBackend(
+        [
+            {
+                "rationales": [
+                    {"wave_number": 1, "rationale": "Mock rationale: data tier first."},
+                    {"wave_number": 2, "rationale": "Mock rationale: web tier follows."},
+                ],
+            },
+        ]
+    )
     result = MigrationPlanner(backend=backend).plan_with_groups(
-        vms, ha_strategy="together",
+        vms,
+        ha_strategy="together",
     )
     assert result["method"] == "mechanical+llm_rationale"
-    # One LLM call per wave.
-    assert len(backend.prompts_received) == len(result["waves"])
+    # ``_two_group_fleet`` fits in a single rationale batch, so the
+    # planner issues exactly one LLM call regardless of wave count.
+    assert len(backend.prompts_received) == 1
     # Every wave's rationale is the LLM text.
     for wave in result["waves"]:
         assert "Mock rationale" in wave["rationale"]
@@ -141,7 +154,8 @@ def test_llm_always_raises_falls_back_to_template_rationale():
     vms = _two_group_fleet()
     backend = _RationaleBackend([LLMBackendError("simulated outage")])
     result = MigrationPlanner(backend=backend).plan_with_groups(
-        vms, ha_strategy="together",
+        vms,
+        ha_strategy="together",
     )
     assert result["method"] == "mechanical+template_rationale"
     # Plan is still valid — wave structure was decided
@@ -149,25 +163,34 @@ def test_llm_always_raises_falls_back_to_template_rationale():
     placed = sorted(vid for wave in result["waves"] for vid in wave["vm_ids"])
     assert placed == sorted(vm.id for vm in vms)
     # Template rationale references the wave number + risk.
-    assert all(
-        f"Wave {wave['wave_number']}" in wave["rationale"]
-        for wave in result["waves"]
-    )
+    assert all(f"Wave {wave['wave_number']}" in wave["rationale"] for wave in result["waves"])
 
 
 # ---------------------------------------------------------------------------
-# Scenario 3 — mixed (some LLM, some raise)
+# Scenario 3 — partial LLM output (some wave_numbers omitted)
 # ---------------------------------------------------------------------------
-def test_llm_mixed_success_failure_still_marks_llm_method():
+def test_llm_partial_rationale_output_still_marks_llm_method():
+    """When the batched LLM call returns rationale for wave 1 but
+    omits wave 2 from its JSON, wave 2 quietly uses the template and
+    the overall method stays ``mechanical+llm_rationale``."""
     vms = _two_group_fleet()
-    backend = _RationaleBackend([
-        "Wave-1 LLM rationale.",      # wave 1 succeeds
-        LLMBackendError("hiccup"),    # wave 2 fails → template
-    ])
+    backend = _RationaleBackend(
+        [
+            {
+                "rationales": [
+                    {"wave_number": 1, "rationale": "Wave-1 LLM rationale."},
+                    # wave 2 deliberately missing → falls back to template
+                ],
+            },
+        ]
+    )
     result = MigrationPlanner(backend=backend).plan_with_groups(
-        vms, ha_strategy="together",
+        vms,
+        ha_strategy="together",
     )
     assert result["method"] == "mechanical+llm_rationale"
+    # Exactly one batched call (not one per wave).
+    assert len(backend.prompts_received) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +200,9 @@ def test_generate_rationale_false_skips_llm_entirely():
     vms = _two_group_fleet()
     backend = _RationaleBackend([])  # never called
     result = MigrationPlanner(backend=backend).plan_with_groups(
-        vms, ha_strategy="together", generate_rationale=False,
+        vms,
+        ha_strategy="together",
+        generate_rationale=False,
     )
     assert result["method"] == "mechanical+template_rationale"
     assert backend.prompts_received == []
@@ -197,17 +222,18 @@ def test_wave_structure_identical_across_llm_outcomes():
 
     def _structure(result):
         return [
-            (w["wave_number"], tuple(w["group_ids"]), tuple(w["vm_ids"]))
-            for w in result["waves"]
+            (w["wave_number"], tuple(w["group_ids"]), tuple(w["vm_ids"])) for w in result["waves"]
         ]
 
     backend_ok = _RationaleBackend(["text"])
     backend_fail = _RationaleBackend([LLMBackendError("nope")])
     result_ok = MigrationPlanner(backend=backend_ok).plan_with_groups(
-        vms, ha_strategy="together",
+        vms,
+        ha_strategy="together",
     )
     result_fail = MigrationPlanner(backend=backend_fail).plan_with_groups(
-        vms, ha_strategy="together",
+        vms,
+        ha_strategy="together",
     )
     assert _structure(result_ok) == _structure(result_fail)
 
@@ -221,8 +247,13 @@ def test_topological_sort_handles_cycles_gracefully():
     from app.core.wave_skeleton import MechanicalWaveAssigner
 
     a = VMGroup(
-        key=GroupKey(vcenter_id=1, target_namespace="prod", role="app",
-                     state="stateless", discriminator="x:a"),
+        key=GroupKey(
+            vcenter_id=1,
+            target_namespace="prod",
+            role="app",
+            state="stateless",
+            discriminator="x:a",
+        ),
         vm_ids=[1],
         shared_attributes={},
         estimated_role="app",
@@ -232,8 +263,13 @@ def test_topological_sort_handles_cycles_gracefully():
         notes="A",
     )
     b = VMGroup(
-        key=GroupKey(vcenter_id=1, target_namespace="prod", role="app",
-                     state="stateless", discriminator="x:b"),
+        key=GroupKey(
+            vcenter_id=1,
+            target_namespace="prod",
+            role="app",
+            state="stateless",
+            discriminator="x:b",
+        ),
         vm_ids=[2],
         shared_attributes={},
         estimated_role="app",
