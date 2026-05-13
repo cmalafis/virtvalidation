@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { throwForResponse } from "../utils/apiError";
 
 import { parseCSV, parseXLSXRows, rowToPayload } from "../utils/parseRVTools";
@@ -1520,201 +1520,21 @@ function BulkDeleteVMsModal({ open, vms, onClose, onConfirmed }) {
   );
 }
 
-// ---------- Generate Plan modal ----------
-
-function GeneratePlanModal({ open, onClose, vms, onCreated }) {
-  const [selected, setSelected] = useState(new Set());
-  const [submitting, setSubmitting] = useState(false);
-  // Live status surfaced by polling GET /api/plans/{id} every 2s.
-  // Visible to the operator so a 5-10 minute LLM call doesn't look
-  // like the modal is frozen.
-  const [progress, setProgress] = useState(null);
-
-  useEffect(() => {
-    if (open) {
-      setSelected(new Set(vms.map((v) => v.id)));
-      setSubmitting(false);
-      setProgress(null);
-    }
-  }, [open, vms]);
-
-  const toggle = (id) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-
-  const onSubmit = async (e) => {
-    e.preventDefault();
-    if (selected.size === 0) return;
-    setSubmitting(true);
-    setProgress({ status: "pending", progress_message: "Submitting…", progress_percent: 0 });
-
-    let spawn;
-    try {
-      // The POST returns 202 + plan body with status=pending. The
-      // backend's BackgroundTask runs the planner asynchronously and
-      // writes status/progress to the plan row as it advances.
-      spawn = await fetchJSON("/api/plans", {
-        method: "POST",
-        body: { vm_ids: Array.from(selected) },
-      });
-    } catch (err) {
-      toast.error(err.message || "Plan generation failed to start", TOAST_OPTS);
-      setSubmitting(false);
-      setProgress(null);
-      return;
-    }
-
-    const planId = spawn.data?.id;
-    if (!planId) {
-      toast.error("Backend returned no plan_id", TOAST_OPTS);
-      setSubmitting(false);
-      setProgress(null);
-      return;
-    }
-
-    // Poll every 2 seconds. Bound the poll loop at 30 minutes —
-    // anything beyond that is almost certainly a stuck job. The
-    // backend's own LLM timeout will mark the plan failed before
-    // we reach the ceiling under normal operation.
-    const maxPolls = 900; // 30 minutes / 2s
-    let lastPlan = spawn.data;
-    try {
-      for (let i = 0; i < maxPolls; i += 1) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const poll = await fetchJSON(`/api/plans/${planId}`);
-        lastPlan = poll.data;
-        setProgress(lastPlan);
-        if (lastPlan.status === "complete") {
-          toast.success(
-            `Plan #${planId} generated (${(lastPlan.waves || []).length} waves)`,
-            TOAST_OPTS,
-          );
-          onCreated();
-          onClose();
-          return;
-        }
-        if (lastPlan.status === "failed") {
-          // The verbatim typed-exception message lives in
-          // error_message — surface it directly so the operator
-          // sees the same string the pod log shows.
-          toast.error(
-            lastPlan.error_message || "Plan generation failed",
-            TOAST_OPTS,
-          );
-          setSubmitting(false);
-          return;
-        }
-      }
-      toast.error(
-        `Plan #${planId} still ${lastPlan.status} after 30 minutes — check pod logs`,
-        TOAST_OPTS,
-      );
-    } catch (err) {
-      toast.error(err.message || "Polling plan status failed", TOAST_OPTS);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={open}
-      onClose={submitting ? () => {} : onClose}
-      title="Generate Migration Plan"
-      footer={
-        <>
-          <SecondaryButton onClick={onClose} disabled={submitting}>Cancel</SecondaryButton>
-          <PrimaryButton onClick={onSubmit} disabled={submitting || selected.size === 0}>
-            {submitting && <Spinner size={12}/>}
-            {submitting ? "Generating…" : `Generate (${selected.size})`}
-          </PrimaryButton>
-        </>
-      }
-    >
-      <div style={{
-        fontSize: 14, color: "#aaaacc", fontFamily: "'Barlow', sans-serif",
-        lineHeight: 1.6, marginBottom: 18,
-      }}>
-        Select the VMs to include. The configured LLM will analyze VM metadata and group them into dependency-ordered migration waves. Plan generation typically takes 1-3 minutes depending on VM count and the configured model.
-      </div>
-      {submitting && progress && (
-        <div style={{
-          padding: "12px 16px", marginBottom: 16,
-          border: "1px solid #1a1a2e", background: "#07070f",
-          fontFamily: "'Share Tech Mono', monospace",
-        }}>
-          <div style={{ fontSize: 13, color: "#eeeeff", marginBottom: 6 }}>
-            {`status: ${progress.status || "pending"}`}
-          </div>
-          {progress.progress_message && (
-            <div style={{ fontSize: 12, color: "#aaaacc", marginBottom: 8 }}>
-              {progress.progress_message}
-            </div>
-          )}
-          <div style={{
-            height: 4, background: "#1a1a2e", overflow: "hidden",
-          }}>
-            <div style={{
-              height: "100%",
-              width: `${progress.progress_percent || 0}%`,
-              background: "#4488ff",
-              transition: "width 0.4s ease",
-            }}/>
-          </div>
-        </div>
-      )}
-      {vms.length === 0 ? (
-        <Notice tone="warn">No VMs available. Enroll at least one before generating a plan.</Notice>
-      ) : (
-        <div style={{ border: "1px solid #1a1a2e", maxHeight: 380, overflowY: "auto" }}>
-          {vms.map((vm) => {
-            const checked = selected.has(vm.id);
-            return (
-              <label key={vm.id} style={{
-                display: "flex", alignItems: "center", gap: 14,
-                padding: "14px 18px", borderBottom: "1px solid #0f0f1e",
-                cursor: "pointer",
-                background: checked ? "rgba(68,136,255,0.06)" : "transparent",
-              }}>
-                <input type="checkbox" checked={checked} onChange={() => toggle(vm.id)}
-                  style={{ accentColor: "#4488ff", width: 16, height: 16 }}/>
-                <div style={{ flex: 1 }}>
-                  <div style={{
-                    fontSize: 14, color: "#eeeeff", fontFamily: "'Barlow', sans-serif",
-                    fontWeight: 600,
-                  }}>{vm.name}</div>
-                  <div style={{
-                    fontSize: 12, color: "#aaaacc", marginTop: 4,
-                    fontFamily: "'Barlow', sans-serif",
-                  }}>
-                    {vm.role} ·{" "}
-                    <span style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>{vm.os}</span> ·{" "}
-                    <span style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>{vm.ip}</span>
-                  </div>
-                </div>
-                <StatusBadge status={vm.postStatus}/>
-              </label>
-            );
-          })}
-        </div>
-      )}
-    </Modal>
-  );
-}
-
 // ---------- Main component ----------
 
 export default function VirtValidate() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("validation");
   const [selectedVMId, setSelectedVMId] = useState(null);
   const [addVMOpen, setAddVMOpen] = useState(false);
-  const [planModalOpen, setPlanModalOpen] = useState(false);
   const [editingVM, setEditingVM] = useState(null);
   const [vmToDelete, setVMToDelete] = useState(null);
+  // Lifecycle revert affordances. Two-step on migrated → rolled_back →
+  // available so an operator can't accidentally re-open a half-rolled-
+  // back VM for fresh plans. ``revertingVM`` carries the VM + a refresh
+  // callback the InventoryTable supplies so we can re-fetch on success.
+  const [revertingVM, setRevertingVM] = useState(null);
+  const [makingAvailable, setMakingAvailable] = useState(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // Inventory multi-select. The Set is keyed by VM id.
@@ -2784,7 +2604,7 @@ export default function VirtValidate() {
                   title="No migration plans yet"
                   description="The configured LLM groups your enrolled VMs into dependency-ordered migration waves — stateful services first, edge tier last. Generate your first plan to see the recommended sequence."
                   ctaLabel={vms.length === 0 ? "Add a VM First" : "Generate First Plan"}
-                  onCta={() => vms.length === 0 ? setAddVMOpen(true) : setPlanModalOpen(true)}
+                  onCta={() => vms.length === 0 ? setAddVMOpen(true) : navigate("/plans/new")}
                 />
               ) : (
                 <>
@@ -2808,7 +2628,7 @@ export default function VirtValidate() {
                         }}>
                           {new Date(plan.created_at).toLocaleString()} · {plan.model}
                         </span>
-                        <SecondaryButton onClick={() => setPlanModalOpen(true)}>+ New Plan</SecondaryButton>
+                        <SecondaryButton onClick={() => navigate("/plans/new")}>+ New Plan</SecondaryButton>
                       </div>
                     </div>
                     {plan.summary && (
@@ -2905,6 +2725,8 @@ export default function VirtValidate() {
               onCapture={(vm) => onCaptureSingle(vm)}
               onEdit={(vm) => setEditingVM(vm)}
               onDelete={(vm) => setVMToDelete(vm)}
+              onRevertToVMware={(vm, refresh) => setRevertingVM({ vm, refresh })}
+              onMakeAvailable={(vm, refresh) => setMakingAvailable({ vm, refresh })}
               onBulkDelete={(targets) => {
                 // Stash the bulk target list so BulkDeleteVMsModal can
                 // render the same confirmation UX it already supports.
@@ -3292,7 +3114,7 @@ export default function VirtValidate() {
             </button>
 
             <button className="quick-action"
-              onClick={() => setPlanModalOpen(true)}
+              onClick={() => navigate("/plans/new")}
               disabled={vmsLoading}
               style={{
                 display: "block", width: "100%", marginBottom: 10,
@@ -3344,12 +3166,6 @@ export default function VirtValidate() {
         onClose={() => setEditingVM(null)}
         onCreated={() => { loadVMs(); bumpInventoryRefresh(); }}
       />
-      <GeneratePlanModal
-        open={planModalOpen}
-        onClose={() => setPlanModalOpen(false)}
-        vms={vms}
-        onCreated={() => loadPlan()}
-      />
       <DeleteVMModal
         open={Boolean(vmToDelete)}
         vm={vmToDelete}
@@ -3362,6 +3178,180 @@ export default function VirtValidate() {
         onClose={() => setBulkDeleteOpen(false)}
         onConfirmed={onBulkDeleteConfirmed}
       />
+      <RevertToVmwareModal
+        open={Boolean(revertingVM)}
+        vm={revertingVM?.vm}
+        onClose={() => setRevertingVM(null)}
+        onConfirmed={() => {
+          revertingVM?.refresh?.();
+          setRevertingVM(null);
+        }}
+      />
+      <MakeAvailableModal
+        open={Boolean(makingAvailable)}
+        vm={makingAvailable?.vm}
+        onClose={() => setMakingAvailable(null)}
+        onConfirmed={() => {
+          makingAvailable?.refresh?.();
+          setMakingAvailable(null);
+        }}
+      />
     </div>
+  );
+}
+
+
+function RevertToVmwareModal({ open, vm, onClose, onConfirmed }) {
+  // Two-step revert: migrated → rolled_back, then operator can choose
+  // to also re-open the VM for new plans (rolled_back → available).
+  // Splitting the action across two confirmations keeps the destructive
+  // re-open path deliberate.
+  const [step, setStep] = useState(1);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { setStep(1); }, [vm?.id]);
+
+  if (!open || !vm) return null;
+
+  const submitRollback = async () => {
+    setBusy(true);
+    try {
+      await toast.promise(
+        fetchJSON(`/api/vms/${vm.id}`, {
+          method: "PATCH",
+          body: { lifecycle_state: "rolled_back" },
+        }),
+        {
+          loading: `Marking ${vm.name} as rolled back…`,
+          success: `${vm.name} → rolled_back`,
+          error: (e) => e.message || "Revert failed",
+        },
+        TOAST_OPTS,
+      );
+      setStep(2);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitAvailable = async () => {
+    setBusy(true);
+    try {
+      await toast.promise(
+        fetchJSON(`/api/vms/${vm.id}`, {
+          method: "PATCH",
+          body: { lifecycle_state: "available" },
+        }),
+        {
+          loading: `Re-opening ${vm.name} for plans…`,
+          success: `${vm.name} → available`,
+          error: (e) => e.message || "Make available failed",
+        },
+        TOAST_OPTS,
+      );
+      onConfirmed?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (step === 1) {
+    return (
+      <Modal
+        open={open}
+        onClose={onClose}
+        title="Revert to VMware"
+        footer={
+          <>
+            <SecondaryButton onClick={onClose} disabled={busy}>Cancel</SecondaryButton>
+            <PrimaryButton onClick={submitRollback} disabled={busy}>
+              Mark rolled back
+            </PrimaryButton>
+          </>
+        }
+      >
+        <p style={{ marginBottom: 10 }}>
+          Mark <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>{vm.name}</code> as rolled back?
+        </p>
+        <p style={{ color: "#aaaacc", fontSize: 13 }}>
+          Use this when the VM has been restored on VMware (the OCP-Virt
+          migration was reverted). The VM moves out of <code>migrated</code>
+          but stays out of the plan selector until the second confirmation.
+        </p>
+      </Modal>
+    );
+  }
+  return (
+    <Modal
+      open={open}
+      onClose={() => { onConfirmed?.(); }}
+      title="VM is now rolled_back"
+      footer={
+        <>
+          <SecondaryButton onClick={() => { onConfirmed?.(); }} disabled={busy}>
+            Leave as rolled_back
+          </SecondaryButton>
+          <PrimaryButton onClick={submitAvailable} disabled={busy}>
+            Make available
+          </PrimaryButton>
+        </>
+      }
+    >
+      <p style={{ marginBottom: 10 }}>
+        <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>{vm.name}</code> has been marked rolled
+        back. Make it available for new plans?
+      </p>
+      <p style={{ color: "#aaaacc", fontSize: 13 }}>
+        Two-step on purpose — once a VM is <code>available</code> it can
+        be picked into a new migration plan immediately.
+      </p>
+    </Modal>
+  );
+}
+
+
+function MakeAvailableModal({ open, vm, onClose, onConfirmed }) {
+  const [busy, setBusy] = useState(false);
+  if (!open || !vm) return null;
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await toast.promise(
+        fetchJSON(`/api/vms/${vm.id}`, {
+          method: "PATCH",
+          body: { lifecycle_state: "available" },
+        }),
+        {
+          loading: `Re-opening ${vm.name} for plans…`,
+          success: `${vm.name} → available`,
+          error: (e) => e.message || "Make available failed",
+        },
+        TOAST_OPTS,
+      );
+      onConfirmed?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Make available"
+      footer={
+        <>
+          <SecondaryButton onClick={onClose} disabled={busy}>Cancel</SecondaryButton>
+          <PrimaryButton onClick={submit} disabled={busy}>Make available</PrimaryButton>
+        </>
+      }
+    >
+      <p style={{ marginBottom: 10 }}>
+        Mark <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>{vm.name}</code> as available?
+      </p>
+      <p style={{ color: "#aaaacc", fontSize: 13 }}>
+        The VM will appear in the plan selector again and is eligible for
+        new migration plans.
+      </p>
+    </Modal>
   );
 }

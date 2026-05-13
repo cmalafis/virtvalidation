@@ -226,6 +226,82 @@ See `docs/DATABASE_MIGRATIONS.md` for the full workflow including
 data migrations, rollback recovery, and the legacy-`create_all`
 bridge for v0.1.x deployments.
 
+## Enum I/O rules (names vs. values on both sides)
+
+Whenever a Python `str` enum has member NAMES that differ from member
+VALUES (e.g. `rwx = "ReadWriteMany"`), the codebase needs explicit
+serialization config on BOTH sides of every I/O boundary — otherwise
+SQLAlchemy / Pydantic default behavior leaks the wrong string and
+something at the other end rejects it.
+
+**Output side (API → frontend):**
+
+```python
+class FooRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+    state: FooState
+```
+
+Without `use_enum_values=True`, FastAPI emits the member NAME instead
+of the VALUE, breaking any frontend filter that uses the value string.
+
+**Input side (SQLAlchemy → Postgres):**
+
+```python
+state: Mapped[FooState] = mapped_column(
+    Enum(FooState, name="foo_state",
+         values_callable=lambda e: [m.value for m in e]),
+    ...
+)
+```
+
+Without `values_callable`, SQLAlchemy `INSERT`s the member NAME, and
+Postgres rejects with `invalid input value for enum foo_state: "rwx"`
+when the Alembic migration created the `CREATE TYPE` with the values
+(`"ReadWriteMany"`). The `values_callable` callback must match what
+the migration's `sa.Enum(...)` literal list contains.
+
+**Skip both** when `member = "member"` style (names == values). The
+default behavior is correct in that case and adding the kwargs is
+noise. Most enums in this codebase fall here — `available =
+"available"`, `discovered = "discovered"` etc.
+
+**Audit shortcut**: grep `app/models/*.py` for `Enum(` to find every
+column. For each, check the surrounding enum class definition: if
+the right-hand-side of any member is not a copy of the left-hand-side
+identifier, the column needs `values_callable`.
+
+Known wart: `ValidationStatus` (`passed = "pass"`, `failed = "fail"`)
+has names ≠ values BUT its migration mistakenly used the NAMES on
+`CREATE TYPE`, so SQLAlchemy's default (send NAME) accidentally
+matches Postgres's type. It works in production but is semantically
+wrong. Don't fix it without a coordinated migration + frontend
+audit — the API output today is the NAME, not the VALUE.
+
+## Frontend orphans (rewrite-without-rewire)
+
+When a session rewrites a frontend component (e.g. PlanWizard,
+GeneratePlanModal) it MUST either delete the old component or rewire
+its call site. A rewritten file alone isn't enough — Vite happily
+bundles unreferenced components and the dashboard keeps importing
+the old one. Two failure modes:
+
+1. **New component is route-mounted only, dashboard still opens old
+   modal.** The new code is in the bundle but unreachable. Operator
+   sees no change.
+2. **Two components with the same title coexist.** The wrong one
+   wins because nothing wires the new one in.
+
+Before declaring "I rewrote X":
+
+1. `grep -rn 'OldComponentName\|<distinctive title string>' frontend/src/`
+   to find every reference. If anything outside the rewritten file
+   matches, decide: delete it, or rewire it.
+2. Verify by clicking through the deployed UI, not by checking that
+   the bundle's hash changed or that a new string is present in the
+   minified output. Bundle changes don't prove the new code is on
+   the operator's screen.
+
 ## Deployment template edits (Helm + Containerfiles)
 
 These traps were caught on the first real OpenShift deployment.
@@ -287,6 +363,80 @@ Auto-detection of `environment` from VM name / folder / cluster
 — wire it into any new VM creation path. See
 `docs/ENVIRONMENT_LABELS.md`.
 
+## Migration plan pipeline (Stages 0-7, deterministic + LLM annotation)
+
+`app.core.plan_pipeline.run_pipeline` is the single entry point for
+plan generation. The stages:
+
+  0. **Validate mapping coverage** (`mapping_validation.py`) —
+     every selected VM must resolve to a target NAD + StorageClass
+     + namespace. Returns 422 with VM-level gap detail.
+  1. **Hard partition** (`preclassifier.classify`) — by
+     `(source_vcenter_id, target_namespace, environment_normalized)`.
+  2. **Sub-partition** — within each primary, by network /
+     datastore / role / application_hint overlap.
+  3. **HA family anti-affinity split** (`family.split_overconcentrated_families`)
+     — any group with more than ceil(family_size/2) members of one
+     family is split into sub-groups. Family detection in
+     `family.detect_family` is name-based; the existing HA-aware
+     wave-skeleton logic refines on top.
+  4. **Wave packing** (`wave_skeleton.MechanicalWaveAssigner`) —
+     greedy, deterministic, ≤10 VMs/wave, ≤2 HA peers/wave,
+     partition coherence (one MTV Plan CR per wave).
+  5. **Concurrency analysis** (`concurrency.assign_concurrency_groups`)
+     — graph-color waves so two waves with the same
+     `concurrency_group_id` are parallel-safe (different vCenters
+     AND disjoint families).
+  6. **Per-wave LLM annotation** (`wave_annotation.annotate_waves`)
+     — one LLM call per wave, ≤10 groups per call, parallel via
+     `asyncio.gather` under `Semaphore(backend.max_concurrent_calls)`.
+     Validate-retry-fallback per the architectural rule above.
+     Each wave's `method` is `"llm"` / `"llm_retry_N"` /
+     `"mechanical_fallback"`.
+  7. **MTV YAML emission** (`plan_pipeline.emit_wave_yaml` wraps
+     `mtv.generate_wave_yaml`) — per-wave NetworkMap + StorageMap
+     + Plan CR. No placeholder names; Stage 0 catches gaps before
+     emission.
+
+Stages 0-5 + 7 are pure Python and run in well under 1s for 250 VMs.
+Stage 6 wall-clock is dominated by the slowest single LLM call,
+not their sum, because of `asyncio.gather`.
+
+Selection cap: `settings.max_vms_per_plan` (default 250). `POST
+/api/plans` returns 422 above the cap so the operator narrows
+filters or splits into multiple plans rather than running one
+huge black-box plan.
+
+When adding a new pipeline stage, extend
+`plan_pipeline._PIPELINE_STAGE_TO_STATUS` so the Plan row's
+`status` field reflects the new step name; the frontend's poll
+loop picks up new stages without further changes.
+
+## VM lifecycle (plan membership, parallel to VM.status)
+
+`VM.lifecycle_state` answers "is this VM available for a new
+plan?". It's server-enforced through `app.core.vm_lifecycle`:
+
+```
+available  → planned          POST /api/plans
+planned    → migrated         POST /api/plans/{id}/mark-succeeded
+planned    → available        DELETE /api/plans/{id}  OR  plan→failed
+migrated   → rolled_back      PATCH /api/vms/{id}
+rolled_back → available       PATCH /api/vms/{id}
+```
+
+`VM.status` (discovered → baseline_captured → migrated → validated
+→ failed) is orthogonal — it tracks the baseline/validation
+lifecycle, NOT plan membership. The "migrated" overlap is a
+naming collision: `status=migrated` means "we observed the VM
+running on OCP-Virt"; `lifecycle_state=migrated` means "operator
+declared this plan succeeded". Both can be set independently.
+
+The plan selector hides anything not `available` by default;
+inventory shows the lifecycle pill on every row and surfaces
+"Revert to VMware" + "Make available" affordances on the
+operator-driven transitions.
+
 ## Paginated list endpoint pattern
 
 Listing endpoints with > a few hundred rows MUST return a wrapped
@@ -332,11 +482,14 @@ virtvalidate/
 
 ## Current status
 - [x] Frontend dashboard (React) — VirtValidate.jsx
-- [ ] Backend API skeleton
-- [ ] SSH collection engine
-- [ ] LLM validation engine
-- [ ] Migration planner
-- [ ] PostgreSQL models
+- [x] Backend API skeleton
+- [x] SSH collection engine
+- [x] LLM validation engine
+- [x] Migration planner (Stages 0-7; see "Migration plan pipeline" above)
+- [x] PostgreSQL models
+- [x] VM plan-membership lifecycle (`VMLifecycleState`)
+- [x] PlanWizard per-VM selector with selection cap + filters
+- [x] Inventory revert affordances (migrated → rolled_back → available)
 
 ## DEFENSIVE CODING REQUIREMENTS
 

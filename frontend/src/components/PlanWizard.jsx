@@ -1,228 +1,235 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useNavigate } from "react-router-dom";
 import { fetchJSON } from "../utils/fetchJSON";
 
-// Strategy-driven migration planning wizard. 8 conceptual steps
-// flattened into a scrollable single-page form so operators don't
-// lose context as they fill out their migration intent. Submission
-// is async — POST /api/plans/generate returns 202 + a task_id, then
-// we poll status every 3s until completion or failure.
+// Per-VM plan creation page. Two steps:
+//
+//   1. Plan name + mapping selection — operator picks the
+//      ResourceMapping that drives target namespace / network /
+//      storage resolution.
+//   2. VM selector — filters + checkbox-per-VM list, capped at
+//      MAX_VMS_PER_PLAN (250). The selector hides VMs that are
+//      already in another active plan by default; toggles expose
+//      planned + migrated rows for auditing (not selectable).
+//
+// Submission POSTs to /api/plans with {name, mapping_id, vm_ids}
+// and polls /api/plans/{id} every 2s until status reaches
+// "complete" or "failed". The new pipeline is deterministic for
+// stages 1-5+7 and LLM-bounded for stage 6 (~25 parallel calls
+// for a 250-VM plan), so total wall-clock is typically <30s.
+
+const MAX_VMS_PER_PLAN = 250;
+const PAGE_SIZE = 50;
 
 const TOAST_OPTS = {
-  style: { background: "#0a0a18", border: "1px solid #2a2a44", color: "#eeeeff",
-           fontFamily: "'Barlow', sans-serif", fontSize: 14, lineHeight: 1.5 },
+  style: {
+    background: "#0a0a18",
+    border: "1px solid #2a2a44",
+    color: "#eeeeff",
+    fontFamily: "'Barlow', sans-serif",
+    fontSize: 14,
+    lineHeight: 1.5,
+  },
   success: { iconTheme: { primary: "#00ff88", secondary: "#0a0a18" } },
   error: { iconTheme: { primary: "#ff3355", secondary: "#0a0a18" } },
 };
 
-// Wave-size estimates surfaced under the radio choice. Backend doesn't
-// constrain these — they're operator hints derived from real migration
-// retros. Adjust if the typical-pace data shifts.
-const WAVE_SIZE_OPTIONS = [
-  { value: "small_5_10", label: "Small", count: "5–10 VMs/wave", flavor: "slow but safe" },
-  { value: "medium_10_20", label: "Medium", count: "10–20 VMs/wave", flavor: "balanced — recommended" },
-  { value: "large_20_50", label: "Large", count: "20–50 VMs/wave", flavor: "aggressive" },
-  { value: "custom", label: "Custom", count: "you choose", flavor: "" },
-];
-
-const GROUPING_OPTIONS = [
-  { value: "application", label: "By application",
-    desc: "Group all VMs of the same application together. Best when applications have clear boundaries and shouldn't be split across waves." },
-  { value: "vcenter_folder", label: "By vCenter folder",
-    desc: "Use VMware folder structure as wave boundaries. Best when folders reflect organizational/operational structure." },
-  { value: "application_owner", label: "By application owner",
-    desc: "Group by who owns the application. Best when minimizing coordination across teams matters more than technical groupings." },
-  { value: "environment", label: "By environment",
-    desc: "Migrate dev → staging → prod in sequence. Classic conservative approach." },
-  { value: "business_unit", label: "By business unit",
-    desc: "Use organizational boundaries. Best for matrix organizations." },
-  { value: "data_classification", label: "By data classification",
-    desc: "Migrate similar classifications together. Required for federal multi-classification environments." },
-  { value: "llm_decides", label: "Let AI decide",
-    desc: "Have the LLM analyze your VM inventory and propose optimal grouping based on patterns it identifies." },
-];
-
-const RISK_OPTIONS = [
-  { value: "low_first", label: "Build confidence (low risk first)",
-    desc: "Migrate easy VMs first, gain experience, then tackle harder ones." },
-  { value: "high_first", label: "Get hard ones over with (high risk first)",
-    desc: "Tackle complex migrations first while team has fresh focus." },
-  { value: "mixed", label: "Mixed per wave (balance)",
-    desc: "Each wave includes a mix of easy and complex for steady progress." },
-];
-
-const PROD_OPTIONS = [
-  { value: "non_prod_first", label: "All non-prod before any prod (recommended)" },
-  { value: "mixed", label: "Mix prod and non-prod in same wave" },
-  { value: "prod_dedicated_waves", label: "Production VMs need dedicated waves (no mixing)" },
-];
-
-const ATOMICITY_OPTIONS = [
-  { value: "all_together", label: "All VMs of one application in same wave",
-    desc: "Simpler coordination, more downtime per app." },
-  { value: "can_split", label: "Application VMs can span multiple waves",
-    desc: "More complex, but enables gradual cutover for redundancy." },
-  { value: "per_app_choice", label: "Per-application choice (LLM analyzes)",
-    desc: "AI looks at each application's architecture and decides." },
-];
-
-
+const LIFECYCLE_COLORS = {
+  available: "#9ca3ff",
+  planned: "#ffaa00",
+  migrated: "#00ff88",
+  rolled_back: "#ff9933",
+  unmanageable: "#666688",
+};
 
 export default function PlanWizard() {
   const navigate = useNavigate();
 
+  // Step 1 state
   const [name, setName] = useState("");
-  const [scopeMode, setScopeMode] = useState("all");
-  const [vcenterId, setVcenterId] = useState("");
-  const [environment, setEnvironment] = useState("");
-  const [appHint, setAppHint] = useState("");
-  const [primaryGrouping, setPrimaryGrouping] = useState("application");
-  const [waveSize, setWaveSize] = useState("medium_10_20");
-  const [waveSizeCustom, setWaveSizeCustom] = useState(15);
-  const [risk, setRisk] = useState("mixed");
-  const [prodHandling, setProdHandling] = useState("non_prod_first");
-  const [atomicity, setAtomicity] = useState("all_together");
-  const [freeform, setFreeform] = useState("");
-
-  const [vcenters, setVcenters] = useState([]);
-  const [mappings, setMappings] = useState([]);
   const [mappingId, setMappingId] = useState("");
-  const [vmCount, setVmCount] = useState(null);
-  const [vmCountLoading, setVmCountLoading] = useState(false);
-  const [chunkPreview, setChunkPreview] = useState(null);
-  const [chunkPreviewLoading, setChunkPreviewLoading] = useState(false);
+  const [mappings, setMappings] = useState([]);
+  const [step, setStep] = useState(1);
 
+  // Step 2 state — filters
+  const [filters, setFilters] = useState({
+    application_hint: [],
+    environment: [],
+    vcenter_source_id: [],
+    search: "",
+  });
+  const [showPlanned, setShowPlanned] = useState(false);
+  const [showMigrated, setShowMigrated] = useState(false);
+
+  // Step 2 — list + facets
+  const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [skip, setSkip] = useState(0);
+  const [facets, setFacets] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  // Per-row selection. Keyed by vm.id → vm (so we keep details
+  // after the row scrolls off the current page).
+  const [selected, setSelected] = useState(new Map());
+
+  // Submission state
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(null);
 
-  // Load vCenters + resource mappings once for the scope/mapping dropdowns.
+  // ---------------------------------------------------------------
+  // Load mappings once. Defensive: empty list on failure so the
+  // dropdown still renders.
+  // ---------------------------------------------------------------
   useEffect(() => {
-    fetchJSON("/api/sources/vcenters")
-      .then(setVcenters)
-      .catch(() => setVcenters([]));
     fetchJSON("/api/mappings")
-      .then(setMappings)
+      .then((data) => setMappings(Array.isArray(data) ? data : []))
       .catch(() => setMappings([]));
   }, []);
 
-  // Estimate matched VM count whenever scope changes. We hit the
-  // VMs listing with the right filter and count rows — small enough
-  // to be fine for inventories under a few thousand.
-  useEffect(() => {
-    setVmCountLoading(true);
+  // ---------------------------------------------------------------
+  // Build the querystring for /api/vms and /api/vms/facets.
+  // ---------------------------------------------------------------
+  const lifecycleStates = useMemo(() => {
+    const out = ["available"];
+    if (showPlanned) out.push("planned");
+    if (showMigrated) out.push("migrated");
+    return out;
+  }, [showPlanned, showMigrated]);
+
+  const buildQs = (extra = {}) => {
     const params = new URLSearchParams();
-    params.set("limit", "500");
-    fetchJSON(`/api/vms?${params.toString()}`)
-      .then((all) => {
-        if (!Array.isArray(all)) return setVmCount(0);
-        let filtered = all;
-        if (scopeMode === "vcenter" && vcenterId) {
-          filtered = all.filter((v) => String(v.source_vcenter_id) === String(vcenterId));
-        } else if (scopeMode === "environment" && environment) {
-          filtered = all.filter((v) => v.environment === environment);
-        } else if (scopeMode === "app_hint" && appHint) {
-          filtered = all.filter((v) => v.application_hint === appHint);
-        }
-        setVmCount(filtered.length);
+    lifecycleStates.forEach((s) => params.append("lifecycle_state", s));
+    (filters.application_hint || []).forEach((v) =>
+      params.append("application_hint", v),
+    );
+    (filters.environment || []).forEach((v) => params.append("environment", v));
+    (filters.vcenter_source_id || []).forEach((v) =>
+      params.append("vcenter_source_id", String(v)),
+    );
+    if (filters.search) params.set("search", filters.search);
+    Object.entries(extra).forEach(([k, v]) => {
+      if (v != null) params.set(k, String(v));
+    });
+    return params.toString();
+  };
+
+  // ---------------------------------------------------------------
+  // Fetch the current page + facets whenever filters / lifecycle
+  // toggles / pagination change. Step 2 only.
+  // ---------------------------------------------------------------
+  useEffect(() => {
+    if (step !== 2) return;
+    setLoading(true);
+    const qs = buildQs({ skip, limit: PAGE_SIZE, sort_by: "name" });
+    Promise.all([
+      fetchJSON(`/api/vms?${qs}`).catch(() => ({ items: [], total: 0 })),
+      fetchJSON(`/api/vms/facets?${buildQs()}`).catch(() => null),
+    ])
+      .then(([list, facetsData]) => {
+        setItems(Array.isArray(list?.items) ? list.items : []);
+        setTotal(list?.total ?? 0);
+        setFacets(facetsData);
       })
-      .catch(() => setVmCount(null))
-      .finally(() => setVmCountLoading(false));
-  }, [scopeMode, vcenterId, environment, appHint]);
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, JSON.stringify(filters), showPlanned, showMigrated, skip]);
 
-  const buildScope = () => {
-    if (scopeMode === "vcenter" && vcenterId) {
-      return { source_vcenter_id: parseInt(vcenterId, 10) };
-    }
-    if (scopeMode === "environment" && environment) {
-      return { environment };
-    }
-    if (scopeMode === "app_hint" && appHint) {
-      return { application_hint: appHint };
-    }
-    return {};
+  // ---------------------------------------------------------------
+  // Selection helpers
+  // ---------------------------------------------------------------
+  const isSelectable = (vm) => vm.lifecycle_state === "available";
+
+  const toggleSelected = (vm) => {
+    if (!isSelectable(vm)) return;
+    setSelected((prev) => {
+      const next = new Map(prev);
+      if (next.has(vm.id)) next.delete(vm.id);
+      else next.set(vm.id, vm);
+      return next;
+    });
   };
 
-  const canGenerate = name.trim().length > 0 && !generating;
+  const clearSelection = () => setSelected(new Map());
 
-  const previewChunks = async () => {
-    setChunkPreviewLoading(true);
-    setChunkPreview(null);
-    try {
-      const inline = {
-        name: name.trim() || "preview",
-        primary_grouping: primaryGrouping,
-        wave_size_target: waveSize,
-        wave_size_custom: waveSize === "custom" ? Number(waveSizeCustom) : null,
-        risk_approach: risk,
-        production_handling: prodHandling,
-        application_atomicity: atomicity,
-        freeform_constraints: freeform,
-      };
-      const body = { name: inline.name, inline_strategy: inline, scope: buildScope() };
-      if (mappingId) body.mapping_id = parseInt(mappingId, 10);
-      const result = await fetchJSON("/api/plans/preview-chunks", {
-        method: "POST",
-        body,
-      });
-      setChunkPreview(result);
-    } catch (err) {
-      toast.error(err.message || "Chunk preview failed", TOAST_OPTS);
-    } finally {
-      setChunkPreviewLoading(false);
-    }
+  const selectAllOnPage = () => {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      for (const vm of items) {
+        if (isSelectable(vm) && next.size < MAX_VMS_PER_PLAN) {
+          next.set(vm.id, vm);
+        }
+      }
+      return next;
+    });
   };
 
-  const submit = async (e) => {
-    e?.preventDefault();
+  const remaining = MAX_VMS_PER_PLAN - selected.size;
+  const overCap = selected.size > MAX_VMS_PER_PLAN;
+  const canGenerate =
+    step === 2 &&
+    selected.size > 0 &&
+    selected.size <= MAX_VMS_PER_PLAN &&
+    name.trim().length > 0 &&
+    !generating;
+
+  // ---------------------------------------------------------------
+  // Suggested narrowing chips — top application_hints in the facet
+  // response (sorted by count descending). Only show when the
+  // filtered total exceeds the cap.
+  // ---------------------------------------------------------------
+  const narrowingChips = useMemo(() => {
+    if (!facets || total <= MAX_VMS_PER_PLAN) return [];
+    const apps = Object.entries(facets.application_hint || {})
+      .filter(([k]) => !(filters.application_hint || []).includes(k))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+    return apps.map(([value, count]) => ({ value, count }));
+  }, [facets, total, filters.application_hint]);
+
+  // ---------------------------------------------------------------
+  // Submit + poll
+  // ---------------------------------------------------------------
+  const submit = async () => {
     if (!canGenerate) return;
-
     setGenerating(true);
-    setProgress({ status: "running", current_step: "queued", progress_percent: 0 });
+    setProgress({ status: "pending", progress_message: "Queued", progress_percent: 0 });
     try {
-      const inline = {
-        name: name.trim(),
-        primary_grouping: primaryGrouping,
-        wave_size_target: waveSize,
-        wave_size_custom: waveSize === "custom" ? Number(waveSizeCustom) : null,
-        risk_approach: risk,
-        production_handling: prodHandling,
-        application_atomicity: atomicity,
-        freeform_constraints: freeform,
-      };
       const body = {
         name: name.trim(),
-        inline_strategy: inline,
-        scope: buildScope(),
+        vm_ids: Array.from(selected.keys()),
       };
       if (mappingId) body.mapping_id = parseInt(mappingId, 10);
-      const spawn = await fetchJSON("/api/plans/generate", {
-        method: "POST",
-        body,
-      });
-      toast(`Generating plan… (estimated 3–5 minutes)`, { ...TOAST_OPTS, icon: "🤖" });
+      const plan = await fetchJSON("/api/plans", { method: "POST", body });
+      toast("Generating plan…", { ...TOAST_OPTS, icon: "🤖" });
 
-      // Poll every 3s until completed or failed. Generous timeout —
-      // 5K-VM plans on the slowest LLM backend (Ollama + Llama 3 8B
-      // CPU-only) can take 10+ minutes.
       const startedAt = Date.now();
       let final = null;
-      while (final == null && Date.now() - startedAt < 30 * 60 * 1000) {
-        await new Promise((r) => setTimeout(r, 3000));
+      while (final == null && Date.now() - startedAt < 5 * 60 * 1000) {
+        await new Promise((r) => setTimeout(r, 2000));
         try {
-          const status = await fetchJSON(`/api/plans/generate/${spawn.task_id}/status`);
+          const status = await fetchJSON(`/api/plans/${plan.id}`);
           setProgress(status);
-          if (status.status === "completed") {
-            final = "completed";
+          if (status.status === "complete") {
+            final = "complete";
             toast.success("Migration plan ready", TOAST_OPTS);
-            navigate(`/plans/${status.plan_id}`);
+            navigate(`/plans/${status.id}`);
           } else if (status.status === "failed") {
             final = "failed";
-            toast.error(`Plan generation failed: ${status.error || "unknown error"}`, { ...TOAST_OPTS, duration: 10000 });
+            toast.error(
+              `Plan generation failed: ${status.error_message || "unknown error"}`,
+              { ...TOAST_OPTS, duration: 10000 },
+            );
           }
-        } catch { /* keep polling */ }
+        } catch {
+          /* keep polling */
+        }
       }
-      if (final == null) toast("Still running — check back in a moment", { ...TOAST_OPTS, icon: "⏱" });
+      if (final == null)
+        toast("Still running — check the plan detail page in a moment", {
+          ...TOAST_OPTS,
+          icon: "⏱",
+        });
     } catch (err) {
       toast.error(err.message || "Failed to start plan generation", TOAST_OPTS);
     } finally {
@@ -230,6 +237,9 @@ export default function PlanWizard() {
     }
   };
 
+  // ---------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------
   return (
     <Shell>
       <Toaster position="bottom-right" toastOptions={TOAST_OPTS} />
@@ -237,17 +247,20 @@ export default function PlanWizard() {
         <div>
           <div style={{ fontSize: 20, fontWeight: 700 }}>New Migration Plan</div>
           <div style={{ fontSize: 13, color: "#aaaacc", marginTop: 4 }}>
-            Capture your migration strategy → AI generates a wave plan with rationale.
+            Pick the mapping, then pick the VMs you want migrated.
           </div>
         </div>
-        <Link to="/" style={btnSecondary}>← Back</Link>
+        <Link to="/" style={btnSecondary}>
+          ← Back
+        </Link>
       </header>
 
-      <main style={{ maxWidth: 920, margin: "0 auto", padding: 32 }}>
-        <form onSubmit={submit}>
+      <main style={{ maxWidth: 1080, margin: "0 auto", padding: 32 }}>
+        <StepBar current={step} />
 
-          {/* Step 1: Name */}
-          <Step n={1} title="Plan name" subtitle="Used in audit logs + the report PDF.">
+        {step === 1 && (
+          <Step n={1} title="Plan name + mapping">
+            <label style={labelStyle}>Plan name</label>
             <input
               style={inputStyle}
               value={name}
@@ -255,375 +268,762 @@ export default function PlanWizard() {
               placeholder="e.g. DHA Q3 2026 — East Coast"
               maxLength={255}
               autoFocus
-              required
             />
-          </Step>
 
-          {/* Step 2: Scope */}
-          <Step n={2} title="Which VMs are we planning for?" subtitle={
-            vmCountLoading
-              ? "Counting matching VMs…"
-              : vmCount === null
-                ? null
-                : `${vmCount} VM${vmCount === 1 ? "" : "s"} selected${vmCount > 1000 ? " — large plans take 10–30 minutes" : ""}${vmCount > 5000 ? " (hierarchical planning coming in v0.5+)" : ""}`
-          }>
-            <Radio name="scope" value="all" checked={scopeMode === "all"} onChange={() => setScopeMode("all")}
-                   label="All VMs in inventory" />
-            <Radio name="scope" value="vcenter" checked={scopeMode === "vcenter"} onChange={() => setScopeMode("vcenter")}
-                   label="Specific vCenter source" />
-            {scopeMode === "vcenter" && (
-              <select style={{ ...inputStyle, marginTop: 8 }} value={vcenterId} onChange={(e) => setVcenterId(e.target.value)}>
-                <option value="">— select vCenter —</option>
-                {vcenters.map((v) => (
-                  <option key={v.id} value={v.id}>{v.name} ({v.vm_count} VMs)</option>
-                ))}
-              </select>
-            )}
-            <Radio name="scope" value="environment" checked={scopeMode === "environment"} onChange={() => setScopeMode("environment")}
-                   label="Specific environment" />
-            {scopeMode === "environment" && (
-              <input style={{ ...inputStyle, marginTop: 8 }} value={environment}
-                     onChange={(e) => setEnvironment(e.target.value)} placeholder="e.g. prod, dev, staging" />
-            )}
-            <Radio name="scope" value="app_hint" checked={scopeMode === "app_hint"} onChange={() => setScopeMode("app_hint")}
-                   label="Specific application hint" />
-            {scopeMode === "app_hint" && (
-              <input style={{ ...inputStyle, marginTop: 8 }} value={appHint}
-                     onChange={(e) => setAppHint(e.target.value)} placeholder="e.g. epic-emr, athena-billing" />
-            )}
-            {vmCount === 0 && (
-              <div style={{ marginTop: 10, color: "#ff8888", fontSize: 13 }}>
-                No VMs match this scope. Adjust the filter before continuing.
-              </div>
-            )}
-
-            <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px dashed #1a1a2e" }}>
-              <label style={{ display: "block", fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em", fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
-                Resource mapping (optional but recommended)
-              </label>
-              <select style={inputStyle} value={mappingId}
-                onChange={(e) => setMappingId(e.target.value)}>
-                <option value="">— No mapping (MTV YAML uses placeholders) —</option>
-                {mappings.map((m) => (
-                  <option key={m.id} value={m.id}
-                    disabled={scopeMode === "vcenter" && vcenterId &&
-                      String(m.vcenter_source_id) !== String(vcenterId)}>
-                    {m.name} · {m.status} {m.is_active ? "· active" : ""}
-                  </option>
-                ))}
-              </select>
-              <div style={{ fontSize: 12, color: "#888899", marginTop: 4 }}>
-                Mapping ties source vSphere networks/datastores to real cluster
-                resources. Without it, MTV YAML export uses placeholder names.
-              </div>
-            </div>
-          </Step>
-
-          {/* Step 3: Primary grouping */}
-          <Step n={3} title="Primary grouping" subtitle="What organizes VMs into waves?">
-            {GROUPING_OPTIONS.map((opt) => (
-              <Radio key={opt.value} name="grouping" value={opt.value}
-                     checked={primaryGrouping === opt.value}
-                     onChange={() => setPrimaryGrouping(opt.value)}
-                     label={opt.label} desc={opt.desc} />
-            ))}
-          </Step>
-
-          {/* Step 4: Wave sizing */}
-          <Step n={4} title="Wave sizing" subtitle="How many VMs per wave?">
-            {WAVE_SIZE_OPTIONS.map((opt) => (
-              <Radio key={opt.value} name="wave-size" value={opt.value}
-                     checked={waveSize === opt.value}
-                     onChange={() => setWaveSize(opt.value)}
-                     label={`${opt.label} — ${opt.count}`}
-                     desc={opt.flavor} />
-            ))}
-            {waveSize === "custom" && (
-              <input type="number" min="1" max="500"
-                     style={{ ...inputStyle, marginTop: 10, maxWidth: 160 }}
-                     value={waveSizeCustom}
-                     onChange={(e) => setWaveSizeCustom(e.target.value)} />
-            )}
-            {vmCount !== null && vmCount > 0 && (
-              <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 8 }}>
-                Estimated waves: <code style={monoStyle}>{estimateWaveCount(vmCount, waveSize, waveSizeCustom)}</code>
-              </div>
-            )}
-          </Step>
-
-          {/* Step 5: Risk */}
-          <Step n={5} title="Risk approach" subtitle="How does the team want to sequence complexity?">
-            {RISK_OPTIONS.map((opt) => (
-              <Radio key={opt.value} name="risk" value={opt.value}
-                     checked={risk === opt.value} onChange={() => setRisk(opt.value)}
-                     label={opt.label} desc={opt.desc} />
-            ))}
-          </Step>
-
-          {/* Step 6: Production handling */}
-          <Step n={6} title="Production handling" subtitle="How should prod and non-prod be sequenced?">
-            {PROD_OPTIONS.map((opt) => (
-              <Radio key={opt.value} name="prod" value={opt.value}
-                     checked={prodHandling === opt.value}
-                     onChange={() => setProdHandling(opt.value)}
-                     label={opt.label} />
-            ))}
-          </Step>
-
-          {/* Step 7: Application atomicity */}
-          <Step n={7} title="Application atomicity" subtitle="Can applications span multiple waves?">
-            {ATOMICITY_OPTIONS.map((opt) => (
-              <Radio key={opt.value} name="atom" value={opt.value}
-                     checked={atomicity === opt.value}
-                     onChange={() => setAtomicity(opt.value)}
-                     label={opt.label} desc={opt.desc} />
-            ))}
-          </Step>
-
-          {/* Step 8: Freeform */}
-          <Step n={8} title="Freeform constraints" subtitle="Anything else the AI should know — change windows, business cycles, hard rules.">
-            <textarea
-              style={{ ...inputStyle, minHeight: 140, fontFamily: "'Share Tech Mono', monospace", resize: "vertical" }}
-              value={freeform}
-              onChange={(e) => setFreeform(e.target.value)}
-              placeholder={[
-                "Examples (one per line):",
-                "- No migrations during March",
-                "- Hospital A maintenance window: weekends only",
-                "- Sarah's team can only handle one wave per week",
-                "- These two applications must NOT migrate in the same wave",
-                "- Database tier needs 2-week soak before app tier migrates",
-              ].join("\n")}
-              maxLength={20000}
-            />
-          </Step>
-
-          {/* Step 9: Review + Generate */}
-          <Step n={9} title="Review and generate" subtitle="Confirm the strategy. Generation runs in the background — you can navigate away and come back.">
-            {/* Chunk preview — shown before submission so the operator
-                sees how the chunker will partition the scope and how
-                long generation should take. */}
-            <div style={{ marginBottom: 14, padding: "12px 14px", border: "1px solid #1a1a2e", background: "#0a0a16" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: 13, color: "#ccccee" }}>
-                  Preview the chunk breakdown before submission. Shows how
-                  the planner will partition your scope.
-                </div>
-                <button type="button" onClick={previewChunks}
-                  disabled={!canGenerate || vmCount === 0 || chunkPreviewLoading}
-                  style={{ ...btnGhost, opacity: chunkPreviewLoading ? 0.5 : 1 }}>
-                  {chunkPreviewLoading ? "Computing…" : "Preview chunks"}
-                </button>
-              </div>
-              {chunkPreview && <ChunkPreview preview={chunkPreview} />}
+            <label style={{ ...labelStyle, marginTop: 18 }}>Resource mapping</label>
+            <select
+              style={inputStyle}
+              value={mappingId}
+              onChange={(e) => setMappingId(e.target.value)}
+            >
+              <option value="">— No mapping (per-VM target fields only) —</option>
+              {mappings.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} · {m.status} {m.is_active ? "· active" : ""}
+                </option>
+              ))}
+            </select>
+            <div style={{ fontSize: 12, color: "#888899", marginTop: 6 }}>
+              Mapping resolves source vSphere resources to target cluster
+              resources. Plan creation refuses VMs with unmapped resources.
             </div>
 
-            {generating && progress && (
-              <ProgressBar progress={progress} />
-            )}
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-              <Link to="/" style={btnSecondary}>Cancel</Link>
-              <button type="submit" disabled={!canGenerate || (vmCount === 0)}
-                      style={{ ...btnPrimary, opacity: (!canGenerate || vmCount === 0) ? 0.5 : 1 }}>
-                {generating ? "Generating…" : "Generate plan"}
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "flex-end",
+                marginTop: 24,
+              }}
+            >
+              <Link to="/" style={btnSecondary}>
+                Cancel
+              </Link>
+              <button
+                type="button"
+                disabled={!name.trim()}
+                onClick={() => setStep(2)}
+                style={{ ...btnPrimary, opacity: !name.trim() ? 0.5 : 1 }}
+              >
+                Next: select VMs
               </button>
             </div>
           </Step>
-        </form>
+        )}
+
+        {step === 2 && (
+          <Step n={2} title="Select VMs">
+            <FilterBar
+              filters={filters}
+              facets={facets}
+              onChange={(next) => {
+                setSkip(0);
+                setFilters(next);
+              }}
+            />
+
+            <div style={toggleRowStyle}>
+              <Toggle
+                checked={showPlanned}
+                onChange={() => setShowPlanned((v) => !v)}
+                label="Show VMs in active plans"
+              />
+              <Toggle
+                checked={showMigrated}
+                onChange={() => setShowMigrated((v) => !v)}
+                label="Show migrated VMs"
+              />
+            </div>
+
+            {narrowingChips.length > 0 && (
+              <NarrowingPanel
+                total={total}
+                cap={MAX_VMS_PER_PLAN}
+                chips={narrowingChips}
+                onAdd={(value) => {
+                  setSkip(0);
+                  setFilters((prev) => ({
+                    ...prev,
+                    application_hint: [
+                      ...(prev.application_hint || []),
+                      value,
+                    ],
+                  }));
+                }}
+              />
+            )}
+
+            <SelectionCounter
+              selected={selected.size}
+              total={total}
+              cap={MAX_VMS_PER_PLAN}
+              loading={loading}
+              onClear={clearSelection}
+              onSelectAllOnPage={selectAllOnPage}
+            />
+
+            <VMTable
+              items={items}
+              selected={selected}
+              onToggle={toggleSelected}
+              isSelectable={isSelectable}
+            />
+
+            <Pager
+              skip={skip}
+              limit={PAGE_SIZE}
+              total={total}
+              onPage={(s) => setSkip(s)}
+            />
+
+            {generating && progress && <ProgressBar progress={progress} />}
+
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "space-between",
+                marginTop: 18,
+                paddingTop: 18,
+                borderTop: "1px solid #1a1a2e",
+              }}
+            >
+              <button
+                type="button"
+                style={btnSecondary}
+                onClick={() => setStep(1)}
+              >
+                ← Back
+              </button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <Link to="/" style={btnSecondary}>
+                  Cancel
+                </Link>
+                <button
+                  type="button"
+                  disabled={!canGenerate || overCap}
+                  onClick={submit}
+                  style={{
+                    ...btnPrimary,
+                    opacity: !canGenerate || overCap ? 0.5 : 1,
+                  }}
+                >
+                  {generating
+                    ? "Generating…"
+                    : overCap
+                      ? `GENERATE (${MAX_VMS_PER_PLAN} max — ${selected.size} selected, narrow filters)`
+                      : `GENERATE (${selected.size}/${MAX_VMS_PER_PLAN})`}
+                </button>
+              </div>
+            </div>
+          </Step>
+        )}
       </main>
     </Shell>
   );
 }
 
-
-function ChunkPreview({ preview }) {
-  if (preview.vm_count === 0) {
-    return (
-      <div style={{ marginTop: 10, color: "#ff8888", fontSize: 13 }}>
-        Scope matched zero VMs — adjust the filter.
-      </div>
-    );
-  }
-  if (preview.single_shot) {
-    return (
-      <div style={{ marginTop: 10, fontSize: 13, color: "#ccccee" }}>
-        <strong>{preview.vm_count}</strong> VMs in scope · single-shot
-        plan (no chunking) · estimated 1-3 minutes.
-      </div>
-    );
-  }
-  const avg = preview.chunk_count
-    ? Math.round(preview.vm_count / preview.chunk_count)
-    : 0;
+// ---------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------
+function StepBar({ current }) {
+  const steps = [
+    { n: 1, label: "Name + mapping" },
+    { n: 2, label: "Select VMs" },
+  ];
   return (
-    <div style={{ marginTop: 10 }}>
-      <div style={{ fontSize: 13, color: "#ccccee" }}>
-        <strong>{preview.vm_count}</strong> VMs · <strong>{preview.chunk_count}</strong> chunks
-        {avg > 0 && <> · avg <strong>{avg}</strong> VMs/chunk</>}
-        {preview.max_chunk_size > 0 && (
-          <> · backend cap <strong>{preview.max_chunk_size}</strong></>
-        )}
-      </div>
-      {(preview.warnings || []).length > 0 && (
-        <ul style={{ marginTop: 6, color: "#ffaa00", fontSize: 12, paddingLeft: 18 }}>
-          {preview.warnings.map((w, i) => <li key={i}>{w}</li>)}
-        </ul>
-      )}
-      <details style={{ marginTop: 8 }}>
-        <summary style={{ fontSize: 12, color: "#aaaacc", cursor: "pointer" }}>
-          Show {preview.chunks?.length ?? 0} planned chunks
-        </summary>
-        <ul style={{ marginTop: 6, color: "#ccccee", fontSize: 12, paddingLeft: 16, lineHeight: 1.6 }}>
-          {(preview.chunks || []).map((c) => (
-            <li key={c.chunk_id}>
-              <strong>{c.label}</strong> ({c.size} VMs)
-              {c.is_foundation && <em style={{ marginLeft: 6, color: "#88aaff" }}>· foundation</em>}
-              <div style={{ color: "#888899", fontSize: 11 }}>{c.reason_for_chunk}</div>
-            </li>
-          ))}
-        </ul>
-      </details>
+    <div
+      style={{
+        display: "flex",
+        gap: 8,
+        marginBottom: 24,
+        fontFamily: "'Share Tech Mono', monospace",
+        fontSize: 11,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+      }}
+    >
+      {steps.map((s) => (
+        <div
+          key={s.n}
+          style={{
+            padding: "6px 12px",
+            border:
+              s.n === current ? "1px solid #4488ff" : "1px solid #2a2a44",
+            color: s.n === current ? "#eef2ff" : "#888899",
+            background: s.n === current ? "#1d3a8a22" : "transparent",
+          }}
+        >
+          {s.n}. {s.label}
+        </div>
+      ))}
     </div>
   );
 }
 
-
-function ProgressBar({ progress }) {
-  const stepLabels = {
-    queued: "Queued",
-    aggregating_data: "Aggregating VM data",
-    chunking: "Partitioning inventory into chunks",
-    planning_chunks: "Planning each chunk with the AI",
-    planning_single_shot: "AI reasoning (single-shot)",
-    assembling: "Assembling chunks into master plan",
-    reviewing: "AI review of cross-chunk concerns",
-    llm_reasoning: "AI reasoning over your strategy",
-    parsing_response: "Parsing AI response",
-    validating: "Validating plan integrity",
-    persisting: "Saving plan",
-    completed: "Done",
-    failed: "Failed",
+function FilterBar({ filters, facets, onChange }) {
+  const setMulti = (key, value) => {
+    const list = filters[key] || [];
+    const next = list.includes(value)
+      ? list.filter((v) => v !== value)
+      : [...list, value];
+    onChange({ ...filters, [key]: next });
   };
-  const step = stepLabels[progress.current_step] || progress.current_step;
-  const pct = Math.max(0, Math.min(100, progress.progress_percent || 0));
+  const setSearch = (value) => onChange({ ...filters, search: value });
+  const appOptions = facets ? Object.keys(facets.application_hint || {}) : [];
+  const envOptions = facets ? Object.keys(facets.environment || {}) : [];
+  const vcOptions = facets
+    ? Object.entries(facets.vcenter_source_id || {}).map(([id, count]) => ({
+        id,
+        count,
+      }))
+    : [];
+
   return (
-    <div style={{
-      padding: "14px 16px", border: "1px solid #4488ff55",
-      background: "rgba(68,136,255,0.06)", marginBottom: 14,
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ fontSize: 11, color: "#88aaff", letterSpacing: "0.08em",
-                       fontWeight: 700, textTransform: "uppercase" }}>
-          {step}
-        </span>
-        <span style={{ fontSize: 12, color: "#88aaff", fontFamily: "'Share Tech Mono', monospace" }}>{pct}%</span>
-      </div>
-      <div style={{ height: 4, background: "#0a0a18", border: "1px solid #1a1a2e" }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: "#4488ff", transition: "width 0.4s ease" }} />
-      </div>
-      {progress.chunks_total != null && progress.chunks_total > 0 && (
-        <div style={{ marginTop: 8, fontSize: 12, color: "#aaaacc" }}>
-          Chunks: <strong>{progress.chunks_complete ?? 0}/{progress.chunks_total}</strong>
-          {progress.current_chunk && <> · current: <em>{progress.current_chunk}</em></>}
-          {progress.elapsed_seconds != null && <> · elapsed {progress.elapsed_seconds}s</>}
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr 1fr 2fr",
+        gap: 10,
+        marginBottom: 14,
+      }}
+    >
+      <FacetDropdown
+        label="Application"
+        options={appOptions}
+        selected={filters.application_hint || []}
+        onToggle={(v) => setMulti("application_hint", v)}
+        facets={facets?.application_hint}
+      />
+      <FacetDropdown
+        label="Environment"
+        options={envOptions}
+        selected={filters.environment || []}
+        onToggle={(v) => setMulti("environment", v)}
+        facets={facets?.environment}
+      />
+      <FacetDropdown
+        label="vCenter"
+        options={vcOptions.map((o) => o.id)}
+        selected={filters.vcenter_source_id?.map(String) || []}
+        onToggle={(v) => setMulti("vcenter_source_id", v)}
+        facets={facets?.vcenter_source_id}
+      />
+      <input
+        style={inputStyle}
+        placeholder="Search name, owner, application…"
+        value={filters.search || ""}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+    </div>
+  );
+}
+
+function FacetDropdown({ label, options, selected, onToggle, facets }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          ...inputStyle,
+          textAlign: "left",
+          cursor: "pointer",
+          paddingTop: 9,
+          paddingBottom: 9,
+        }}
+      >
+        {label}
+        {(selected || []).length > 0 ? ` (${selected.length})` : ""}
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            right: 0,
+            zIndex: 20,
+            background: "#0a0a16",
+            border: "1px solid #2a2a44",
+            maxHeight: 260,
+            overflow: "auto",
+            marginTop: 4,
+          }}
+        >
+          {options.length === 0 ? (
+            <div style={{ padding: 10, color: "#888899", fontSize: 12 }}>
+              No options yet.
+            </div>
+          ) : (
+            options.map((value) => (
+              <label
+                key={value}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  cursor: "pointer",
+                  color: "#ccccee",
+                  fontSize: 13,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={(selected || []).includes(value)}
+                  onChange={() => onToggle(value)}
+                />
+                <span>{value || "—"}</span>
+                {facets && facets[value] != null && (
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      color: "#888899",
+                      fontFamily: "'Share Tech Mono', monospace",
+                      fontSize: 11,
+                    }}
+                  >
+                    {facets[value]}
+                  </span>
+                )}
+              </label>
+            ))
+          )}
         </div>
       )}
     </div>
   );
 }
 
-
-function estimateWaveCount(vmCount, sizeKey, custom) {
-  const sizes = {
-    small_5_10: [5, 10],
-    medium_10_20: [10, 20],
-    large_20_50: [20, 50],
-    custom: [Number(custom) || 15, Number(custom) || 15],
-  };
-  const [lo, hi] = sizes[sizeKey] || sizes.medium_10_20;
-  const upper = Math.ceil(vmCount / lo);
-  const lower = Math.ceil(vmCount / hi);
-  return lower === upper ? `${lower}` : `${lower}–${upper}`;
-}
-
-
-function Radio({ name, value, checked, onChange, label, desc }) {
+function Toggle({ checked, onChange, label }) {
   return (
-    <label style={{
-      display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 4px",
-      cursor: "pointer", color: "#ccccee",
-    }}>
-      <input type="radio" name={name} value={value} checked={checked} onChange={onChange} style={{ marginTop: 4 }} />
-      <span style={{ flex: 1 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "#eeeeff", fontFamily: "'Barlow', sans-serif" }}>{label}</div>
-        {desc && <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 2, lineHeight: 1.5 }}>{desc}</div>}
-      </span>
+    <label
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        cursor: "pointer",
+        color: "#aaaacc",
+        fontSize: 13,
+      }}
+    >
+      <input type="checkbox" checked={checked} onChange={onChange} />
+      {label}
     </label>
   );
 }
 
-
-function Step({ n, title, subtitle, children }) {
+function NarrowingPanel({ total, cap, chips, onAdd }) {
   return (
-    <section style={{ marginBottom: 28, paddingBottom: 24, borderBottom: "1px solid #1a1a2e" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 8 }}>
-        <span style={{
-          fontSize: 11, color: "#88aaff", letterSpacing: "0.08em", fontWeight: 700,
+    <div
+      style={{
+        padding: "12px 14px",
+        border: "1px solid #ffaa0055",
+        background: "rgba(255,170,0,0.04)",
+        marginBottom: 14,
+      }}
+    >
+      <div style={{ fontSize: 13, color: "#ffcc77", marginBottom: 8 }}>
+        Filtered set is <strong>{total}</strong> VMs — over the {cap} cap.
+        Narrow by application:
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {chips.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            onClick={() => onAdd(c.value)}
+            style={{
+              background: "transparent",
+              border: "1px solid #2a2a44",
+              color: "#ccccee",
+              fontSize: 12,
+              fontFamily: "'Share Tech Mono', monospace",
+              padding: "4px 10px",
+              cursor: "pointer",
+            }}
+          >
+            + {c.value} <span style={{ color: "#888899" }}>({c.count})</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SelectionCounter({
+  selected,
+  total,
+  cap,
+  loading,
+  onClear,
+  onSelectAllOnPage,
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "8px 12px",
+        background: "#0a0a16",
+        border: "1px solid #1a1a2e",
+        marginBottom: 8,
+        fontSize: 13,
+      }}
+    >
+      <div style={{ color: "#ccccee" }}>
+        <strong>{selected}</strong> selected · <strong>{total}</strong> match
+        filters · cap {cap}
+        {loading && (
+          <span style={{ marginLeft: 8, color: "#888899" }}>· loading…</span>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button type="button" style={btnGhost} onClick={onSelectAllOnPage}>
+          Select page
+        </button>
+        <button type="button" style={btnGhost} onClick={onClear}>
+          Clear selection
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function VMTable({ items, selected, onToggle, isSelectable }) {
+  if ((items || []).length === 0) {
+    return (
+      <div
+        style={{
+          padding: "32px 16px",
+          textAlign: "center",
+          color: "#888899",
+          border: "1px solid #1a1a2e",
+        }}
+      >
+        No VMs match the current filters.
+      </div>
+    );
+  }
+  return (
+    <table
+      style={{
+        width: "100%",
+        borderCollapse: "collapse",
+        fontSize: 13,
+      }}
+    >
+      <thead>
+        <tr style={{ background: "#0a0a16" }}>
+          <th style={thStyle}></th>
+          <th style={thStyle}>Name</th>
+          <th style={thStyle}>Environment</th>
+          <th style={thStyle}>Application</th>
+          <th style={thStyle}>vCenter</th>
+          <th style={thStyle}>Lifecycle</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((vm) => {
+          const checked = selected.has(vm.id);
+          const selectable = isSelectable(vm);
+          const color = LIFECYCLE_COLORS[vm.lifecycle_state] || "#888899";
+          return (
+            <tr
+              key={vm.id}
+              style={{
+                borderBottom: "1px solid #1a1a2e",
+                color: selectable ? "#eeeeff" : "#666688",
+                background: checked ? "#1d3a8a18" : "transparent",
+                cursor: selectable ? "pointer" : "default",
+              }}
+              onClick={() => onToggle(vm)}
+            >
+              <td style={tdStyle}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={!selectable}
+                  onChange={() => onToggle(vm)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </td>
+              <td style={tdStyle}>
+                <span style={{ fontFamily: "'Share Tech Mono', monospace" }}>
+                  {vm.name}
+                </span>
+              </td>
+              <td style={tdStyle}>{vm.environment ?? "—"}</td>
+              <td style={tdStyle}>{vm.application_hint ?? "—"}</td>
+              <td style={tdStyle}>{vm.source_vcenter_id ?? "—"}</td>
+              <td style={tdStyle}>
+                <span
+                  style={{
+                    fontSize: 11,
+                    padding: "2px 8px",
+                    border: `1px solid ${color}55`,
+                    background: `${color}11`,
+                    color,
+                    fontFamily: "'Share Tech Mono', monospace",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {vm.lifecycle_state}
+                </span>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function Pager({ skip, limit, total, onPage }) {
+  const page = Math.floor((skip || 0) / limit) + 1;
+  const pageCount = Math.max(1, Math.ceil((total || 0) / limit));
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        justifyContent: "center",
+        marginTop: 12,
+        fontFamily: "'Share Tech Mono', monospace",
+        fontSize: 12,
+        color: "#aaaacc",
+      }}
+    >
+      <button
+        type="button"
+        style={btnGhost}
+        disabled={page <= 1}
+        onClick={() => onPage(Math.max(0, skip - limit))}
+      >
+        ‹ Prev
+      </button>
+      <span>
+        Page {page} / {pageCount}
+      </span>
+      <button
+        type="button"
+        style={btnGhost}
+        disabled={page >= pageCount}
+        onClick={() => onPage(skip + limit)}
+      >
+        Next ›
+      </button>
+    </div>
+  );
+}
+
+function ProgressBar({ progress }) {
+  const pct = Math.max(
+    0,
+    Math.min(100, progress?.progress_percent ?? 0),
+  );
+  return (
+    <div
+      style={{
+        marginTop: 18,
+        padding: "14px 16px",
+        border: "1px solid #4488ff55",
+        background: "rgba(68,136,255,0.06)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginBottom: 8,
+          fontSize: 11,
           fontFamily: "'Share Tech Mono', monospace",
-          border: "1px solid #4488ff66", padding: "3px 8px", textTransform: "uppercase",
-        }}>step {n}</span>
-        <span style={{ fontSize: 16, color: "#eeeeff", fontWeight: 700, fontFamily: "'Barlow', sans-serif" }}>
+        }}
+      >
+        <span style={{ color: "#88aaff", textTransform: "uppercase" }}>
+          {progress?.status} · {progress?.progress_message || progress?.status}
+        </span>
+        <span style={{ color: "#88aaff" }}>{pct}%</span>
+      </div>
+      <div
+        style={{
+          height: 4,
+          background: "#0a0a18",
+          border: "1px solid #1a1a2e",
+        }}
+      >
+        <div
+          style={{
+            height: "100%",
+            width: `${pct}%`,
+            background: "#4488ff",
+            transition: "width 0.4s ease",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Step({ n, title, children }) {
+  return (
+    <section
+      style={{
+        marginBottom: 28,
+        padding: "20px 24px",
+        background: "#0a0a16",
+        border: "1px solid #1a1a2e",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 12,
+          marginBottom: 14,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 11,
+            color: "#88aaff",
+            letterSpacing: "0.08em",
+            fontWeight: 700,
+            fontFamily: "'Share Tech Mono', monospace",
+            border: "1px solid #4488ff66",
+            padding: "3px 8px",
+            textTransform: "uppercase",
+          }}
+        >
+          step {n}
+        </span>
+        <span
+          style={{
+            fontSize: 16,
+            color: "#eeeeff",
+            fontWeight: 700,
+            fontFamily: "'Barlow', sans-serif",
+          }}
+        >
           {title}
         </span>
       </div>
-      {subtitle && <div style={{ fontSize: 13, color: "#aaaacc", marginBottom: 12, lineHeight: 1.6 }}>{subtitle}</div>}
       {children}
     </section>
   );
 }
 
-
 function Shell({ children }) {
   return (
-    <div style={{ minHeight: "100vh", background: "#07070f", color: "#eeeeff", fontFamily: "'Barlow', sans-serif" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#07070f",
+        color: "#eeeeff",
+        fontFamily: "'Barlow', sans-serif",
+      }}
+    >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        button:disabled { cursor: not-allowed; }
       `}</style>
       {children}
     </div>
   );
 }
 
-
 // ---------- styles ----------
 const headerStyle = {
-  position: "sticky", top: 0, zIndex: 50,
-  background: "rgba(7,7,15,0.96)", backdropFilter: "blur(8px)",
+  position: "sticky",
+  top: 0,
+  zIndex: 50,
+  background: "rgba(7,7,15,0.96)",
+  backdropFilter: "blur(8px)",
   borderBottom: "1px solid #1a1a2e",
-  display: "flex", alignItems: "center", justifyContent: "space-between",
-  padding: "16px 32px", gap: 24,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  padding: "16px 32px",
+  gap: 24,
 };
 const inputStyle = {
-  background: "#07070f", border: "1px solid #2a2a44", color: "#eeeeff",
-  padding: "10px 12px", fontFamily: "'Barlow', sans-serif", fontSize: 14,
-  width: "100%", outline: "none",
+  background: "#07070f",
+  border: "1px solid #2a2a44",
+  color: "#eeeeff",
+  padding: "10px 12px",
+  fontFamily: "'Barlow', sans-serif",
+  fontSize: 14,
+  width: "100%",
+  outline: "none",
 };
-const monoStyle = { fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" };
+const labelStyle = {
+  display: "block",
+  fontSize: 11,
+  color: "#aaaacc",
+  letterSpacing: "0.08em",
+  fontWeight: 700,
+  textTransform: "uppercase",
+  marginBottom: 6,
+};
+const toggleRowStyle = {
+  display: "flex",
+  gap: 16,
+  marginBottom: 12,
+};
+const thStyle = {
+  textAlign: "left",
+  padding: "8px 10px",
+  borderBottom: "1px solid #2a2a44",
+  fontSize: 11,
+  color: "#888899",
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+  fontFamily: "'Share Tech Mono', monospace",
+};
+const tdStyle = {
+  padding: "8px 10px",
+  fontFamily: "'Barlow', sans-serif",
+};
 const btnPrimary = {
-  background: "#1d3a8a", border: "1px solid #4488ff", color: "#eef2ff",
-  padding: "10px 18px", fontFamily: "'Barlow', sans-serif", fontSize: 12,
-  letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
-  cursor: "pointer", textDecoration: "none",
+  background: "#1d3a8a",
+  border: "1px solid #4488ff",
+  color: "#eef2ff",
+  padding: "10px 18px",
+  fontFamily: "'Barlow', sans-serif",
+  fontSize: 12,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  fontWeight: 700,
+  cursor: "pointer",
+  textDecoration: "none",
 };
 const btnSecondary = {
-  background: "transparent", border: "1px solid #3a3a55", color: "#aaaacc",
-  padding: "10px 18px", fontFamily: "'Barlow', sans-serif", fontSize: 12,
-  letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
-  cursor: "pointer", textDecoration: "none",
+  background: "transparent",
+  border: "1px solid #3a3a55",
+  color: "#aaaacc",
+  padding: "10px 18px",
+  fontFamily: "'Barlow', sans-serif",
+  fontSize: 12,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  fontWeight: 700,
+  cursor: "pointer",
+  textDecoration: "none",
 };
 const btnGhost = {
-  background: "transparent", border: "1px solid #2a2a44", color: "#ccccee",
-  padding: "8px 14px", fontFamily: "'Barlow', sans-serif", fontSize: 11,
-  letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700, cursor: "pointer",
+  background: "transparent",
+  border: "1px solid #2a2a44",
+  color: "#ccccee",
+  padding: "6px 12px",
+  fontFamily: "'Barlow', sans-serif",
+  fontSize: 11,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  fontWeight: 700,
+  cursor: "pointer",
 };

@@ -42,8 +42,18 @@ class TargetStorageClass(Base):
         ForeignKey("ocp_targets.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # values_callable: send Kubernetes access-mode strings ("ReadWriteOnce",
+    # …) — the .value side of the enum, matching what the Alembic migration
+    # used to CREATE TYPE. Without this SQLAlchemy would send the member
+    # NAMES ("rwo"/"rwx"/"rom") which Postgres rejects with
+    # ``invalid input value for enum target_sc_access_mode``. See the
+    # SQLAlchemy enum rule in CLAUDE.md.
     access_mode: Mapped[StorageAccessMode] = mapped_column(
-        Enum(StorageAccessMode, name="target_sc_access_mode"),
+        Enum(
+            StorageAccessMode,
+            name="target_sc_access_mode",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
         default=StorageAccessMode.rwo,
         server_default=StorageAccessMode.rwo.value,

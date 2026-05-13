@@ -321,6 +321,10 @@ def test_post_plans_accepts_ha_strategy_field(client, monkeypatch):
                 "source_hostname": f"db-{i}.local",
                 "application_hint": "app1",
                 "vsphere_networks": ["db-net"],
+                "vsphere_datastores": ["db-ds"],
+                "target_namespace": "prod",
+                "target_network_attachment": "db-nad",
+                "target_storage_class": "ocs-rbd",
             },
         ).raise_for_status()
     vm_ids = [r["id"] for r in client.get("/api/vms").json()["items"]]

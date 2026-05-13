@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import (
@@ -15,82 +16,81 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
-from app.core.baseline import synthesize_profile
-from app.core.chunker import chunk_vms
+from app.core.config import settings as _app_settings
 from app.core.db import get_db
-from app.core.llm.factory import get_llm_backend
+from app.core.mapping_validation import validate_plan_inputs
 from app.core.mtv import (
     MappingResolver,
     MTVGenerationError,
     WaveContext,
     generate_wave_yaml,
 )
-from app.core.plan_generation import (
-    PlanRevisionError,
-    apply_move_vm,
-    resolve_scope,
-    run_plan_generation,
-    run_simple_plan_generation,
-)
-from app.core.plan_generation import task_store as plan_task_store
+from app.core.plan_generation import run_simple_plan_generation
 from app.core.preclassifier import PreClassifier
 from app.core.reporter import ReporterError, WaveReporter, render_pdf
-from app.models.chunk import PlanChunk
+from app.core.vm_lifecycle import (
+    LifecycleTransitionError,
+    transition_to_available_from_deleted_plan,
+    transition_to_migrated,
+    transition_to_planned,
+)
 from app.models.plan import MigrationPlan, PlanningStrategy
 from app.models.target import ResourceMapping
 from app.models.validation import ValidationResult
-from app.models.vcenter import VCenterSource
-from app.models.vm import VM, BaselineSnapshot
+from app.models.vm import VM
 from app.schemas.plan import (
-    PlanChunkRead,
     PlanCreate,
-    PlanGenerateRequest,
-    PlanGenerationTaskRead,
     PlanningStrategyCreate,
     PlanningStrategyRead,
     PlanningStrategyUpdate,
     PlanRead,
     PreviewGroupsResponse,
-    WaveMoveVMRequest,
 )
 from app.schemas.report import WaveReport
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["plans"])
 
 
-def _assemble_vm_profiles(db: Session, vm_ids: list[int]) -> list[dict]:
-    unique_ids = list(dict.fromkeys(vm_ids))
-    vms = {vm.id: vm for vm in db.scalars(select(VM).where(VM.id.in_(unique_ids))).all()}
-    missing = [vid for vid in unique_ids if vid not in vms]
-    if missing:
-        raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
+def _resolve_active_mapping_for_vms(db: Session, vms: list[VM]) -> ResourceMapping | None:
+    """Auto-pick the active ResourceMapping when the operator didn't
+    pass ``mapping_id``.
 
-    profiles: list[dict] = []
-    for vid in unique_ids:
-        vm = vms[vid]
-        snapshots = list(
-            db.scalars(
-                select(BaselineSnapshot)
-                .where(BaselineSnapshot.vm_id == vid)
-                .order_by(BaselineSnapshot.collected_at.asc())
-            ).all()
+    Returns None when:
+      - VMs span multiple ``source_vcenter_id`` values (ambiguous;
+        operator must pick explicitly via the wizard)
+      - no VM has a ``source_vcenter_id``
+      - no active mapping exists for the single shared vCenter
+
+    When more than one active mapping exists for the same
+    (vcenter, ocp_target) pair — a data inconsistency the editor's
+    PATCH normally prevents by flipping siblings off — log and pick
+    the lowest id deterministically. Stage 0 validation will catch
+    coverage gaps regardless.
+    """
+    vcenter_ids = {vm.source_vcenter_id for vm in vms if vm.source_vcenter_id is not None}
+    if len(vcenter_ids) != 1:
+        return None
+    (vc_id,) = vcenter_ids
+    candidates = list(
+        db.scalars(
+            select(ResourceMapping)
+            .where(ResourceMapping.vcenter_source_id == vc_id)
+            .where(ResourceMapping.is_active.is_(True))
+            .order_by(ResourceMapping.id.asc())
+        ).all()
+    )
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        logger.warning(
+            "plan.create.multiple_active_mappings vcenter_id=%d ids=%s picked=%d",
+            vc_id,
+            [m.id for m in candidates],
+            candidates[0].id,
         )
-        profile = synthesize_profile(vid, snapshots)
-        profiles.append(
-            {
-                "vm_id": vid,
-                "name": vm.name,
-                "role": vm.role or "",
-                "os_family": vm.os_family or "",
-                "vsphere_networks": list(vm.vsphere_networks or []),
-                "vsphere_datastores": list(vm.vsphere_datastores or []),
-                "target_namespace": vm.target_namespace or "",
-                "target_storage_class": vm.target_storage_class or "",
-                "target_network_attachment": vm.target_network_attachment or "",
-                "baseline": profile.model_dump(mode="json"),
-            }
-        )
-    return profiles
+    return candidates[0]
 
 
 @router.post("", response_model=PlanRead, status_code=status.HTTP_202_ACCEPTED)
@@ -119,24 +119,76 @@ def create_plan(
     unique_ids = list(dict.fromkeys(payload.vm_ids))
     if not unique_ids:
         raise HTTPException(status_code=422, detail="vm_ids must contain at least one VM")
-    known = {vid for vid in db.scalars(select(VM.id).where(VM.id.in_(unique_ids))).all()}
-    missing = [vid for vid in unique_ids if vid not in known]
+    # Selection cap. Architectural rule, not just a soft hint — the
+    # operator workflow is many small auditable plans, not one giant
+    # black-box plan. See settings.max_vms_per_plan.
+    max_vms = _app_settings.max_vms_per_plan
+    if len(unique_ids) > max_vms:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Plan exceeds selection cap: {len(unique_ids)} VMs requested, "
+                f"max {max_vms} per plan. Narrow filters or split into multiple plans."
+            ),
+        )
+    vms = list(db.scalars(select(VM).where(VM.id.in_(unique_ids))).all())
+    known_ids = {v.id for v in vms}
+    missing = [vid for vid in unique_ids if vid not in known_ids]
     if missing:
         raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
 
+    # Resolve mapping. The new wizard always sends ``mapping_id``; CLI
+    # / script callers can omit it and we'll auto-resolve the active
+    # mapping for the VMs' source vCenter. Stage 0 validation below
+    # runs against whichever mapping we landed on (or None if neither
+    # path produced one), so coverage gaps still surface synchronously.
+    mapping: ResourceMapping | None = None
+    if payload.mapping_id is not None:
+        mapping = db.get(ResourceMapping, payload.mapping_id)
+        if mapping is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Resource mapping {payload.mapping_id} not found",
+            )
+    else:
+        mapping = _resolve_active_mapping_for_vms(db, vms)
+
+    # Persist whichever mapping ID we actually consulted (auto-resolved
+    # or operator-supplied) so the background task + audit trail show
+    # the mapping that drove the plan.
+    mapping_id_used = mapping.id if mapping is not None else None
+
+    coverage = validate_plan_inputs(vms, mapping)
+    if not coverage.ok:
+        raise HTTPException(status_code=422, detail=coverage.render())
+
     plan = MigrationPlan(
+        name=payload.name,
         vm_ids=unique_ids,
         waves=[],
         # ``model`` is non-null on the column; the planner overwrites it
         # when it completes. Empty string is the sentinel for "not yet
         # generated".
         model="",
+        mapping_id=mapping_id_used,
         status="pending",
         progress_message="Queued",
         progress_percent=0,
         started_at=datetime.now(timezone.utc),
     )
     db.add(plan)
+    db.flush()  # need plan.id for the lifecycle audit row
+
+    # Lifecycle precondition: every selected VM must be ``available``.
+    # The lifecycle service raises if any VM is already in a plan; that
+    # surfaces as a 422 so the operator sees exactly which VMs blocked
+    # the request.
+    try:
+        transition_to_planned(unique_ids, plan.id, db)
+    except LifecycleTransitionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     db.commit()
     db.refresh(plan)
 
@@ -210,120 +262,90 @@ def get_plan(plan_id: int, db: Session = Depends(get_db)) -> MigrationPlan:
     return plan
 
 
-@router.get("/{plan_id}/chunks", response_model=list[PlanChunkRead])
-def get_plan_chunks(plan_id: int, db: Session = Depends(get_db)) -> list[PlanChunk]:
-    """Return the chunk breakdown for a hierarchically-planned plan.
+@router.delete("/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_plan(
+    request: Request,
+    plan_id: int,
+    db: Session = Depends(get_db),
+) -> None:
+    """Delete a plan and return its VMs to ``available``.
 
-    Empty list for single-shot plans (the orchestrator persists no
-    chunks for inputs under :data:`SINGLE_SHOT_THRESHOLD`).
+    Permitted for plans in any status. The lifecycle service is
+    idempotent on VMs already moved out of ``planned`` (operator-driven
+    revert flows might have done so) — those rows are skipped silently
+    rather than rolled back from ``migrated``.
     """
     plan = db.get(MigrationPlan, plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
-    return list(
-        db.scalars(
-            select(PlanChunk).where(PlanChunk.plan_id == plan_id).order_by(PlanChunk.sequence_index)
-        ).all()
+
+    actor = request.headers.get("x-actor", "user")
+    record_audit(
+        db,
+        action="plan.delete",
+        actor=actor,
+        resource_type="plan",
+        resource_id=plan.id,
+        details={
+            "name": plan.name,
+            "status": plan.status,
+            "vm_count": len(plan.vm_ids or []),
+        },
     )
+    transition_to_available_from_deleted_plan(plan.id, list(plan.vm_ids or []), db, actor=actor)
+    db.delete(plan)
+    db.commit()
+    request.state.skip_audit_log = True
 
 
-@router.post("/preview-chunks")
-def preview_chunks(payload: PlanGenerateRequest, db: Session = Depends(get_db)) -> dict:
-    """Return what the chunker WOULD produce for a given scope without
-    invoking the LLM. The wizard calls this before submission so the
-    operator sees the planned chunk breakdown ("8 chunks, avg 12 VMs,
-    ~5-10 minutes") and can adjust scope if needed."""
-    matched = resolve_scope(db, payload.scope.model_dump())
-    if not matched:
-        return {
-            "vm_count": 0,
-            "chunk_count": 0,
-            "single_shot": False,
-            "max_chunk_size": 0,
-            "chunks": [],
-            "warnings": ["Scope filter matched zero VMs"],
-        }
+@router.post("/{plan_id}/mark-succeeded", response_model=PlanRead)
+def mark_plan_succeeded(
+    request: Request,
+    plan_id: int,
+    db: Session = Depends(get_db),
+) -> MigrationPlan:
+    """Operator declares the cutover finished; VMs transition to ``migrated``.
 
-    backend = get_llm_backend()
-    vc_rows = list(db.scalars(select(VCenterSource)).all())
-    classification_by_vc = {row.id: row.classification_level.value for row in vc_rows}
-
-    # Inline the strategy if present so the preview matches what the
-    # orchestrator will see.
-    if payload.strategy_id is not None:
-        strategy = db.get(PlanningStrategy, payload.strategy_id)
-        if strategy is None:
-            raise HTTPException(status_code=404, detail=f"Strategy {payload.strategy_id} not found")
-    elif payload.inline_strategy is not None:
-        strategy = PlanningStrategy(**payload.inline_strategy.model_dump())
-    else:
+    Plan must be in status ``complete`` (the new pipeline's terminal
+    success state) — refusing on any other status prevents marking a
+    half-generated plan as done. Idempotent on plans already in
+    ``migrated`` (operator may double-click).
+    """
+    plan = db.get(MigrationPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+    if plan.status not in ("complete", "migrated"):
         raise HTTPException(
-            status_code=422,
-            detail="Provide either strategy_id or inline_strategy",
+            status_code=409,
+            detail=(
+                f"Plan {plan_id} is in status {plan.status!r}; only plans in "
+                "``complete`` may be marked succeeded."
+            ),
         )
 
-    mapping = (
-        db.get(ResourceMapping, payload.mapping_id) if payload.mapping_id is not None else None
+    actor = request.headers.get("x-actor", "user")
+    try:
+        transition_to_migrated(plan.id, list(plan.vm_ids or []), db, actor=actor)
+    except LifecycleTransitionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    plan.status = "migrated"
+    record_audit(
+        db,
+        action="plan.mark_succeeded",
+        actor=actor,
+        resource_type="plan",
+        resource_id=plan.id,
+        details={
+            "vm_count": len(plan.vm_ids or []),
+            "wave_count": len(plan.waves or []),
+        },
     )
-
-    from app.core.chunker import SINGLE_SHOT_THRESHOLD
-
-    if len(matched) < SINGLE_SHOT_THRESHOLD:
-        return {
-            "vm_count": len(matched),
-            "chunk_count": 1,
-            "single_shot": True,
-            "max_chunk_size": backend.max_planning_chunk_size,
-            "chunks": [],
-            "warnings": [
-                f"Scope is below the single-shot threshold "
-                f"({SINGLE_SHOT_THRESHOLD} VMs). Plan will use one LLM call "
-                "instead of the chunked pipeline."
-            ],
-        }
-
-    chunks = chunk_vms(
-        matched,
-        mappings=mapping,
-        strategy=strategy,
-        max_size=backend.max_planning_chunk_size,
-        classification_by_vcenter=classification_by_vc,
-    )
-    warnings: list[str] = []
-    oversized_apps: list[str] = []
-    for c in chunks:
-        # Detect a chunk that hit the cap because of an over-large
-        # application. Surface the application name so the operator
-        # knows which one will be subdivided.
-        if c.size == backend.max_planning_chunk_size and (
-            c.sub_key.get("application_hint") and c.sub_key["application_hint"] != "_unspecified_"
-        ):
-            app = c.sub_key["application_hint"]
-            if app not in oversized_apps:
-                oversized_apps.append(app)
-    if oversized_apps:
-        warnings.append(
-            f"Backend max is {backend.max_planning_chunk_size} VMs per chunk; "
-            f"these applications will be subdivided: {', '.join(oversized_apps)}."
-        )
-
-    return {
-        "vm_count": len(matched),
-        "chunk_count": len(chunks),
-        "single_shot": False,
-        "max_chunk_size": backend.max_planning_chunk_size,
-        "chunks": [
-            {
-                "chunk_id": c.chunk_id,
-                "label": c.sub_key.get("label") or "unlabeled",
-                "size": c.size,
-                "reason_for_chunk": c.reason_for_chunk,
-                "is_foundation": bool(c.sub_key.get("is_foundation")),
-            }
-            for c in chunks
-        ],
-        "warnings": warnings,
-    }
+    db.commit()
+    db.refresh(plan)
+    request.state.skip_audit_log = True
+    return plan
 
 
 def _latest_validations_for(db: Session, vm_ids: list[int]) -> dict[int, ValidationResult]:
@@ -657,180 +679,3 @@ def delete_strategy(
     db.delete(strategy)
     db.commit()
     request.state.skip_audit_log = True
-
-
-# ---------------------------------------------------------------------------
-# Async plan generation
-# ---------------------------------------------------------------------------
-@router.post(
-    "/generate",
-    response_model=PlanGenerationTaskRead,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-def trigger_plan_generation(
-    request: Request,
-    payload: PlanGenerateRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-) -> dict:
-    """Spawn strategy-driven plan generation as a BackgroundTask.
-
-    The wizard either references a saved strategy (``strategy_id``)
-    or embeds an inline one (``inline_strategy``) for one-off
-    generation. Returns 202 with the task handle; poll
-    ``GET /api/plans/generate/{task_id}/status`` for progress.
-    """
-    actor = request.headers.get("x-actor", "user")
-
-    if payload.strategy_id is not None:
-        strategy = db.get(PlanningStrategy, payload.strategy_id)
-        if strategy is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Strategy {payload.strategy_id} not found",
-            )
-    elif payload.inline_strategy is not None:
-        strategy = PlanningStrategy(
-            **payload.inline_strategy.model_dump(),
-            created_by_actor=actor,
-        )
-        db.add(strategy)
-        try:
-            db.commit()
-        except IntegrityError as e:
-            db.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Strategy named {payload.inline_strategy.name!r} "
-                    "already exists — reference it via strategy_id instead"
-                ),
-            ) from e
-        db.refresh(strategy)
-    else:
-        raise HTTPException(
-            status_code=422,
-            detail="Provide either strategy_id or inline_strategy",
-        )
-
-    # Pre-flight mapping check — fail-fast on a bogus mapping_id and on
-    # source/scope mismatches so the operator finds out at trigger time
-    # rather than after the LLM call.
-    mapping_id = payload.mapping_id
-    if mapping_id is not None:
-        mapping = db.get(ResourceMapping, mapping_id)
-        if mapping is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Resource mapping {mapping_id} not found",
-            )
-        scope_vcenter_id = payload.scope.source_vcenter_id
-        if scope_vcenter_id is not None and mapping.vcenter_source_id != scope_vcenter_id:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Mapping {mapping_id} is for vCenter source "
-                    f"{mapping.vcenter_source_id}, but scope filter targets "
-                    f"vCenter {scope_vcenter_id}"
-                ),
-            )
-
-    # Pre-flight scope check — fail fast if the scope filter would
-    # match zero VMs. Saves the operator a 30-second wait to find out
-    # they typo'd the environment filter.
-    scope_dict = payload.scope.model_dump()
-    matched = resolve_scope(db, scope_dict)
-    if not matched:
-        raise HTTPException(
-            status_code=422,
-            detail="Scope filter matched zero VMs — adjust your selection",
-        )
-
-    task = plan_task_store.create()
-    record_audit(
-        db,
-        action="plan.generation_triggered",
-        actor=actor,
-        resource_type="strategy",
-        resource_id=strategy.id,
-        details={
-            "task_id": task.task_id,
-            "plan_name": payload.name,
-            "scope": scope_dict,
-            "vm_count": len(matched),
-            "mapping_id": mapping_id,
-        },
-    )
-    db.commit()
-
-    background_tasks.add_task(
-        run_plan_generation,
-        task.task_id,
-        plan_name=payload.name,
-        strategy_id=strategy.id,
-        scope=scope_dict,
-        actor=actor,
-        mapping_id=mapping_id,
-    )
-    request.state.skip_audit_log = True
-    return task.to_dict()
-
-
-@router.get(
-    "/generate/{task_id}/status",
-    response_model=PlanGenerationTaskRead,
-)
-def get_plan_generation_status(task_id: str) -> dict:
-    task = plan_task_store.get(task_id)
-    if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Plan generation task {task_id} not found. Tasks are kept "
-                "in memory only and may have been cleared by an appliance "
-                "restart — re-trigger if needed."
-            ),
-        )
-    return task.to_dict()
-
-
-# ---------------------------------------------------------------------------
-# Per-wave revision (move-vm)
-# ---------------------------------------------------------------------------
-@router.post("/{plan_id}/waves/{wave_number}/move-vm", response_model=PlanRead)
-def move_vm_between_waves(
-    request: Request,
-    plan_id: int,
-    wave_number: int,
-    payload: WaveMoveVMRequest,
-    db: Session = Depends(get_db),
-) -> MigrationPlan:
-    """Move one VM into a different wave, creating a new plan revision.
-
-    The original plan is preserved; the response is the **new** plan
-    (revision_number incremented, supersedes_plan_id pointing at the
-    previous revision). The ``wave_number`` in the URL is informational
-    — the new plan's wave membership is what counts.
-    """
-    plan = db.get(MigrationPlan, plan_id)
-    if plan is None:
-        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
-    if payload.target_wave_number == wave_number:
-        # No-op — the URL's wave_number is the source. Nothing to do.
-        raise HTTPException(
-            status_code=422,
-            detail="target_wave_number equals the source wave_number",
-        )
-    try:
-        revision = apply_move_vm(
-            db,
-            plan,
-            vm_id=payload.vm_id,
-            target_wave_number=payload.target_wave_number,
-            actor=request.headers.get("x-actor", "user"),
-            note=payload.note,
-        )
-    except PlanRevisionError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
-    request.state.skip_audit_log = True
-    return revision

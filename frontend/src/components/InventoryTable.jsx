@@ -36,10 +36,21 @@ const STATUS_COLOR = {
   failed: "#ff3355",
 };
 
+// Plan-membership lifecycle colors. Distinct palette from VM.status
+// (operational lifecycle) so the two pills stay legible side-by-side.
+const LIFECYCLE_COLOR = {
+  available: "#9ca3ff",
+  planned: "#ffaa00",
+  migrated: "#00ff88",
+  rolled_back: "#ff9933",
+  unmanageable: "#666688",
+};
+
 // Sort dropdowns operate on the same column ids the backend accepts.
 const SORTABLE_COLUMNS = [
   { id: "name", label: "VM Name" },
   { id: "status", label: "Status" },
+  { id: "lifecycle_state", label: "Plan" },
   { id: "environment", label: "Environment" },
   { id: "os_family", label: "OS Family" },
   { id: "application_hint", label: "Application" },
@@ -105,6 +116,24 @@ function StatusPill({ status }) {
         background: color, boxShadow: `0 0 6px ${color}`,
       }} />
       {status}
+    </span>
+  );
+}
+
+function LifecyclePill({ state }) {
+  const color = LIFECYCLE_COLOR[state] || "#888899";
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 6,
+      padding: "3px 10px",
+      border: `1px solid ${color}55`,
+      background: `${color}11`,
+      color, fontSize: 11,
+      fontFamily: "'Share Tech Mono', monospace",
+      letterSpacing: "0.04em", fontWeight: 700,
+      textTransform: "uppercase",
+    }}>
+      {state || "—"}
     </span>
   );
 }
@@ -333,6 +362,8 @@ export default function InventoryTable({
   onDelete,
   onBulkDelete,
   onBulkImport,
+  onRevertToVMware,
+  onMakeAvailable,
   vcenterSources = [],
   refreshSignal = 0,
   onMutate,
@@ -825,6 +856,9 @@ export default function InventoryTable({
                   <td style={{ padding: "10px 14px" }}>
                     <StatusPill status={vm.status} />
                   </td>
+                  <td style={{ padding: "10px 14px" }}>
+                    <LifecyclePill state={vm.lifecycle_state} />
+                  </td>
                   <td style={{ padding: "10px 14px" }}>{fmt(vm.environment)}</td>
                   <td style={{ padding: "10px 14px" }}>{fmt(vm.os_family)}</td>
                   <td style={{ padding: "10px 14px" }}>{fmt(vm.application_hint)}</td>
@@ -850,6 +884,38 @@ export default function InventoryTable({
                           ...SECONDARY_BTN_STYLE, padding: "4px 8px",
                           marginRight: 4,
                         }}>✎</button>
+                    )}
+                    {onRevertToVMware && vm.lifecycle_state === "migrated" && (
+                      <button
+                        type="button"
+                        onClick={() => onRevertToVMware(vm, () => {
+                          loadItems();
+                          loadFacets();
+                          if (onMutate) onMutate();
+                        })}
+                        title="Revert to VMware (rollback)"
+                        style={{
+                          ...SECONDARY_BTN_STYLE,
+                          border: "1px solid #ff9933",
+                          color: "#ffcc88",
+                          padding: "4px 8px",
+                          marginRight: 4,
+                        }}>↺ Revert</button>
+                    )}
+                    {onMakeAvailable && vm.lifecycle_state === "rolled_back" && (
+                      <button
+                        type="button"
+                        onClick={() => onMakeAvailable(vm, () => {
+                          loadItems();
+                          loadFacets();
+                          if (onMutate) onMutate();
+                        })}
+                        title="Mark Available (re-open for plans)"
+                        style={{
+                          ...PRIMARY_BTN_STYLE,
+                          padding: "4px 8px",
+                          marginRight: 4,
+                        }}>✓ Available</button>
                     )}
                     {onDelete && (
                       <button

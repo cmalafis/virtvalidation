@@ -27,9 +27,9 @@ from app.core.fips import log_startup_warning as _fips_startup_log
 from app.core.llm.factory import get_llm_backend
 from app.core.migrations import MigrationError, apply_migrations
 from app.core.scheduler import shutdown_scheduler, start_scheduler
+from app.core.startup import fail_orphan_plans
 from app.middleware.audit import AuditMiddleware
 from app.models import audit as _audit_models  # noqa: F401  (register models on Base)
-from app.models import chunk as _chunk_models  # noqa: F401  (register models on Base)
 from app.models import grouping as _grouping_models  # noqa: F401  (register models on Base)
 from app.models import llm_usage as _llm_usage_models  # noqa: F401  (register models on Base)
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)
@@ -110,6 +110,16 @@ async def lifespan(app: FastAPI):
     except MigrationError as e:
         logger.error("Migration failed: %s", e)
         raise SystemExit(1) from e
+
+    # Fail any plan rows left in an in-progress status from a prior
+    # process. BackgroundTasks don't survive container restarts; without
+    # this hook the orphans would block VMs in ``lifecycle_state =
+    # planned`` forever and the UI would render them as "pending" with
+    # no way to recover.
+    try:
+        fail_orphan_plans()
+    except Exception as e:  # noqa: BLE001 — startup must not block API serving
+        logger.error("startup.fail_orphan_plans error=%s", e)
 
     # Log the FIPS posture at boot so federal deployments leave a clear
     # breadcrumb in container logs about whether the application is

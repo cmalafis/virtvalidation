@@ -416,6 +416,7 @@ const DATA = {
           "app.core.db",
           "app.core.limits",
           "app.core.validation",
+          "app.core.vm_lifecycle",
           "app.models.validation",
           "app.models.vcenter",
           "app.models.vm",
@@ -441,6 +442,14 @@ const DATA = {
             "summary": ""
           },
           {
+            "name": "VMLifecycleState",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Plan-membership lifecycle, orthogonal to ``VMStatus``."
+          },
+          {
             "name": "VM",
             "kind": "model",
             "table": "vms",
@@ -458,6 +467,8 @@ const DATA = {
               "environment",
               "owner",
               "status",
+              "lifecycle_state",
+              "lifecycle_state_changed_at",
               "notes",
               "vsphere_networks",
               "vsphere_datastores",
@@ -567,6 +578,7 @@ const DATA = {
               "environment",
               "owner",
               "status",
+              "lifecycle_state",
               "notes",
               "vsphere_networks",
               "vsphere_datastores",
@@ -586,6 +598,8 @@ const DATA = {
             "fields": [
               "id",
               "status",
+              "lifecycle_state",
+              "lifecycle_state_changed_at",
               "created_at",
               "updated_at"
             ],
@@ -611,6 +625,7 @@ const DATA = {
             "table": "",
             "fields": [
               "status",
+              "lifecycle_state",
               "environment",
               "os_family",
               "application_hint",
@@ -1144,16 +1159,16 @@ const DATA = {
             "summary": ""
           },
           {
-            "method": "GET",
-            "path": "/api/plans/{plan_id}/chunks",
-            "handler": "get_plan_chunks",
-            "summary": "Return the chunk breakdown for a hierarchically-planned plan."
+            "method": "DELETE",
+            "path": "/api/plans/{plan_id}",
+            "handler": "delete_plan",
+            "summary": "Delete a plan and return its VMs to ``available``."
           },
           {
             "method": "POST",
-            "path": "/api/plans/preview-chunks",
-            "handler": "preview_chunks",
-            "summary": "Return what the chunker WOULD produce for a given scope without"
+            "path": "/api/plans/{plan_id}/mark-succeeded",
+            "handler": "mark_plan_succeeded",
+            "summary": "Operator declares the cutover finished; VMs transition to ``migrated``."
           },
           {
             "method": "GET",
@@ -1202,43 +1217,23 @@ const DATA = {
             "path": "/api/planning-strategies/{strategy_id}",
             "handler": "delete_strategy",
             "summary": ""
-          },
-          {
-            "method": "POST",
-            "path": "/api/plans/generate",
-            "handler": "trigger_plan_generation",
-            "summary": "Spawn strategy-driven plan generation as a BackgroundTask."
-          },
-          {
-            "method": "GET",
-            "path": "/api/plans/generate/{task_id}/status",
-            "handler": "get_plan_generation_status",
-            "summary": ""
-          },
-          {
-            "method": "POST",
-            "path": "/api/plans/{plan_id}/waves/{wave_number}/move-vm",
-            "handler": "move_vm_between_waves",
-            "summary": "Move one VM into a different wave, creating a new plan revision."
           }
         ],
         "classes": [],
         "functions": [],
         "depends_on": [
           "app.core.audit",
-          "app.core.baseline",
-          "app.core.chunker",
+          "app.core.config",
           "app.core.db",
-          "app.core.llm.factory",
+          "app.core.mapping_validation",
           "app.core.mtv",
           "app.core.plan_generation",
           "app.core.preclassifier",
           "app.core.reporter",
-          "app.models.chunk",
+          "app.core.vm_lifecycle",
           "app.models.plan",
           "app.models.target",
           "app.models.validation",
-          "app.models.vcenter",
           "app.models.vm",
           "app.schemas.plan",
           "app.schemas.report"
@@ -1443,24 +1438,14 @@ const DATA = {
               "waves",
               "summary",
               "model",
-              "strategy_id",
               "mapping_id",
-              "generation_prompt",
-              "generation_response",
-              "plan_summary",
-              "rationale",
-              "warnings",
-              "next_actions",
-              "supersedes_plan_id",
-              "revision_number",
               "status",
               "progress_message",
               "progress_percent",
               "error_message",
               "started_at",
               "completed_at",
-              "created_at",
-              "strategy"
+              "created_at"
             ],
             "methods": [],
             "summary": ""
@@ -1536,56 +1521,6 @@ const DATA = {
             "summary": ""
           },
           {
-            "name": "PlanScopeFilter",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "vm_ids",
-              "source_vcenter_id",
-              "environment",
-              "application_hint"
-            ],
-            "methods": [],
-            "summary": "Operator-supplied scope. At most one axis is honored \u2014 the API"
-          },
-          {
-            "name": "PlanGenerateRequest",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "name",
-              "strategy_id",
-              "inline_strategy",
-              "scope",
-              "mapping_id"
-            ],
-            "methods": [],
-            "summary": "Wizard submission. Either references a saved strategy or embeds"
-          },
-          {
-            "name": "PlanGenerationTaskRead",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "task_id",
-              "status",
-              "current_step",
-              "progress_percent",
-              "started_at",
-              "completed_at",
-              "plan_id",
-              "error",
-              "chunks_total",
-              "chunks_complete",
-              "current_chunk",
-              "elapsed_seconds",
-              "estimated_remaining_seconds",
-              "path_taken"
-            ],
-            "methods": [],
-            "summary": "Status payload the wizard polls."
-          },
-          {
             "name": "WaveRead",
             "kind": "schema",
             "table": "",
@@ -1605,27 +1540,6 @@ const DATA = {
             "summary": ""
           },
           {
-            "name": "PlanChunkRead",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "chunk_id",
-              "sequence_index",
-              "label",
-              "reason_for_chunk",
-              "partition_key",
-              "sub_key",
-              "hints",
-              "vm_ids",
-              "sequence_dependencies",
-              "chunk_rationale",
-              "chunk_risk_level",
-              "wave_numbers"
-            ],
-            "methods": [],
-            "summary": "One chunk row from the hierarchical plan. Surfaced to the UI's"
-          },
-          {
             "name": "PlanRead",
             "kind": "schema",
             "table": "",
@@ -1636,14 +1550,7 @@ const DATA = {
               "waves",
               "summary",
               "model",
-              "strategy_id",
               "mapping_id",
-              "plan_summary",
-              "rationale",
-              "warnings",
-              "next_actions",
-              "supersedes_plan_id",
-              "revision_number",
               "created_at",
               "status",
               "progress_message",
@@ -1657,7 +1564,7 @@ const DATA = {
               "attempts"
             ],
             "methods": [],
-            "summary": "Strategy-driven plans populate every field; legacy plans leave"
+            "summary": "API response shape for a stored plan."
           },
           {
             "name": "PlanCreate",
@@ -1665,6 +1572,8 @@ const DATA = {
             "table": "",
             "fields": [
               "vm_ids",
+              "name",
+              "mapping_id",
               "preclassification_enabled",
               "ha_strategy"
             ],
@@ -1684,23 +1593,10 @@ const DATA = {
             ],
             "methods": [],
             "summary": "Result of POST /api/plans/preview-groups \u2014 no plan persisted."
-          },
-          {
-            "name": "WaveMoveVMRequest",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "vm_id",
-              "target_wave_number",
-              "note"
-            ],
-            "methods": [],
-            "summary": ""
           }
         ],
         "functions": [],
         "depends_on": [
-          "app.core.limits",
           "app.models.plan"
         ]
       }
@@ -3226,135 +3122,6 @@ const DATA = {
       },
       {
         "kind": "module",
-        "id": "app.core.chunked_planner",
-        "title": "app.core.chunked_planner",
-        "subtitle": "backend/app/core/chunked_planner.py",
-        "summary": "Hierarchical migration planner.",
-        "category": "logic",
-        "routes": [],
-        "classes": [
-          {
-            "name": "ChunkPlan",
-            "kind": "class",
-            "table": "",
-            "fields": [
-              "chunk_id",
-              "label",
-              "rationale",
-              "risk_level",
-              "waves",
-              "vm_ids"
-            ],
-            "methods": [],
-            "summary": "Per-chunk LLM output, parsed + validated."
-          },
-          {
-            "name": "HierarchicalPlanResult",
-            "kind": "class",
-            "table": "",
-            "fields": [
-              "plan_summary",
-              "rationale",
-              "warnings",
-              "next_actions",
-              "waves",
-              "chunks",
-              "model",
-              "generation_prompt",
-              "generation_response",
-              "path_taken"
-            ],
-            "methods": [],
-            "summary": "Final orchestrator output. Shaped to drop into the existing"
-          }
-        ],
-        "functions": [
-          {
-            "name": "generate_plan_async",
-            "summary": "Three-stage hierarchical plan."
-          },
-          {
-            "name": "generate_plan",
-            "summary": "Sync entry point for FastAPI BackgroundTasks. Wraps the async"
-          }
-        ],
-        "depends_on": [
-          "app.core.chunker",
-          "app.core.llm.base",
-          "app.core.llm.factory",
-          "app.core.strategy_planner",
-          "app.models.plan",
-          "app.models.target",
-          "app.models.vm"
-        ]
-      },
-      {
-        "kind": "module",
-        "id": "app.core.chunker",
-        "title": "app.core.chunker",
-        "subtitle": "backend/app/core/chunker.py",
-        "summary": "Pure-Python chunking for hierarchical migration planning.",
-        "category": "logic",
-        "routes": [],
-        "classes": [
-          {
-            "name": "Chunk",
-            "kind": "class",
-            "table": "",
-            "fields": [
-              "chunk_id",
-              "vm_ids",
-              "partition_key",
-              "sub_key",
-              "hints",
-              "reason_for_chunk",
-              "sequence_dependencies"
-            ],
-            "methods": [
-              {
-                "name": "size",
-                "summary": ""
-              },
-              {
-                "name": "to_dict",
-                "summary": ""
-              }
-            ],
-            "summary": "One partition of the inventory."
-          },
-          {
-            "name": "_ChunkContext",
-            "kind": "class",
-            "table": "",
-            "fields": [
-              "strategy",
-              "mappings",
-              "target_cluster_id",
-              "classification_by_vcenter",
-              "max_size"
-            ],
-            "methods": [],
-            "summary": "Internal carry-along so helpers don't take 6 args each."
-          }
-        ],
-        "functions": [
-          {
-            "name": "chunk_vms",
-            "summary": "Pure-Python chunker. Returns an ordered list of :class:`Chunk`"
-          },
-          {
-            "name": "validate_chunks",
-            "summary": "Raise AssertionError if the chunk set has an integrity issue."
-          }
-        ],
-        "depends_on": [
-          "app.models.plan",
-          "app.models.target",
-          "app.models.vm"
-        ]
-      },
-      {
-        "kind": "module",
         "id": "app.core.commands",
         "title": "app.core.commands",
         "subtitle": "backend/app/core/commands.py",
@@ -3406,6 +3173,26 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.concurrency",
+        "title": "app.core.concurrency",
+        "subtitle": "backend/app/core/concurrency.py",
+        "summary": "Stage 5 \u2014 wave concurrency analysis (graph coloring).",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "assign_concurrency_groups",
+            "summary": "Mutate ``waves`` in place to set ``concurrency_group_id`` on each."
+          }
+        ],
+        "depends_on": [
+          "app.core.family",
+          "app.core.wave_skeleton"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.config",
         "title": "app.core.config",
         "subtitle": "backend/app/core/config.py",
@@ -3431,6 +3218,7 @@ const DATA = {
               "llm_connect_timeout",
               "llm_max_retries",
               "llm_max_items_per_call",
+              "max_vms_per_plan",
               "categorizer_batch_size",
               "llm_cost_per_million_input_tokens",
               "llm_cost_per_million_output_tokens",
@@ -3525,6 +3313,35 @@ const DATA = {
           {
             "name": "iter_supported_values",
             "summary": "All canonical enum string values \u2014 for API enums + dropdowns."
+          }
+        ],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.core.family",
+        "title": "app.core.family",
+        "subtitle": "backend/app/core/family.py",
+        "summary": "Name-based HA family detection.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "detect_family",
+            "summary": "Compute the family key for a VM name."
+          },
+          {
+            "name": "split_into_families",
+            "summary": "Convenience helper: group a list of VM names by family."
+          },
+          {
+            "name": "family_cap",
+            "summary": "Maximum members of a family that may share one wave."
+          },
+          {
+            "name": "split_overconcentrated_families",
+            "summary": "Stage 3: split any group that holds too many members of one family."
           }
         ],
         "depends_on": []
@@ -3982,6 +3799,64 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.mapping_validation",
+        "title": "app.core.mapping_validation",
+        "subtitle": "backend/app/core/mapping_validation.py",
+        "summary": "Stage 0 \u2014 mapping coverage validation.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "MappingGap",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "vm_name",
+              "kind",
+              "source_value"
+            ],
+            "methods": [
+              {
+                "name": "render",
+                "summary": ""
+              }
+            ],
+            "summary": "One missing mapping piece. ``kind`` is the resource category,"
+          },
+          {
+            "name": "ValidationResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "gaps"
+            ],
+            "methods": [
+              {
+                "name": "ok",
+                "summary": ""
+              },
+              {
+                "name": "render",
+                "summary": ""
+              }
+            ],
+            "summary": "Outcome of ``validate_plan_inputs``."
+          }
+        ],
+        "functions": [
+          {
+            "name": "validate_plan_inputs",
+            "summary": "Verify every VM has complete mapping coverage."
+          }
+        ],
+        "depends_on": [
+          "app.models.target",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.migrations",
         "title": "app.core.migrations",
         "subtitle": "backend/app/core/migrations.py",
@@ -4190,108 +4065,94 @@ const DATA = {
         "id": "app.core.plan_generation",
         "title": "app.core.plan_generation",
         "subtitle": "backend/app/core/plan_generation.py",
-        "summary": "Async migration plan generation + revision tracking.",
+        "summary": "BackgroundTask body for POST /api/plans.",
         "category": "logic",
         "routes": [],
-        "classes": [
-          {
-            "name": "PlanGenerationTask",
-            "kind": "class",
-            "table": "",
-            "fields": [
-              "task_id",
-              "status",
-              "current_step",
-              "progress_percent",
-              "started_at",
-              "completed_at",
-              "plan_id",
-              "error",
-              "chunks_total",
-              "chunks_complete",
-              "current_chunk",
-              "elapsed_seconds",
-              "estimated_remaining_seconds",
-              "path_taken"
-            ],
-            "methods": [
-              {
-                "name": "to_dict",
-                "summary": ""
-              }
-            ],
-            "summary": ""
-          },
-          {
-            "name": "PlanGenerationTaskStore",
-            "kind": "class",
-            "table": "",
-            "fields": [],
-            "methods": [
-              {
-                "name": "create",
-                "summary": ""
-              },
-              {
-                "name": "get",
-                "summary": ""
-              },
-              {
-                "name": "update",
-                "summary": ""
-              },
-              {
-                "name": "mark_completed",
-                "summary": ""
-              },
-              {
-                "name": "mark_failed",
-                "summary": ""
-              }
-            ],
-            "summary": ""
-          },
-          {
-            "name": "PlanRevisionError",
-            "kind": "class",
-            "table": "",
-            "fields": [],
-            "methods": [],
-            "summary": "Raised when a per-wave action can't be applied \u2014 usually a"
-          }
-        ],
+        "classes": [],
         "functions": [
-          {
-            "name": "resolve_scope",
-            "summary": "Apply the wizard's scope filter and return the matching VMs."
-          },
-          {
-            "name": "assemble_vm_profiles",
-            "summary": "Build the lightweight VM payload the strategy planner sends to"
-          },
-          {
-            "name": "run_plan_generation",
-            "summary": "Body of the FastAPI BackgroundTask the generate endpoint spawns."
-          },
           {
             "name": "run_simple_plan_generation",
             "summary": "Body of the BackgroundTask the POST /api/plans endpoint spawns."
-          },
-          {
-            "name": "apply_move_vm",
-            "summary": "Create a new plan revision with one VM moved between waves."
           }
         ],
         "depends_on": [
           "app.core",
           "app.core.audit",
-          "app.core.baseline",
-          "app.core.chunked_planner",
-          "app.core.strategy_planner",
-          "app.models.chunk",
+          "app.core.vm_lifecycle",
           "app.models.plan",
           "app.models.target",
-          "app.models.vcenter",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.plan_pipeline",
+        "title": "app.core.plan_pipeline",
+        "subtitle": "backend/app/core/plan_pipeline.py",
+        "summary": "End-to-end migration plan pipeline.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "PlanValidationError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised by Stage 0 when mapping coverage is incomplete."
+          },
+          {
+            "name": "AnnotatedWave",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "wave",
+              "description",
+              "risk_score",
+              "risk_rationale",
+              "notable_concerns",
+              "method",
+              "mtv_yaml"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": "Render to the JSON shape persisted in MigrationPlan.waves[]."
+              }
+            ],
+            "summary": "A wave plus its Stage-6 annotation and Stage-7 YAML."
+          },
+          {
+            "name": "PlanPipelineResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "waves",
+              "groups",
+              "method_per_wave"
+            ],
+            "methods": [],
+            "summary": "End-to-end pipeline output. ``method_per_wave`` lets operators"
+          }
+        ],
+        "functions": [
+          {
+            "name": "emit_wave_yaml",
+            "summary": "Stage 7 \u2014 render one wave's MTV YAML."
+          },
+          {
+            "name": "run_pipeline",
+            "summary": "Walk the seven stages and return an end-to-end annotated plan."
+          }
+        ],
+        "depends_on": [
+          "app.core.concurrency",
+          "app.core.family",
+          "app.core.mapping_validation",
+          "app.core.mtv",
+          "app.core.preclassifier",
+          "app.core.wave_skeleton",
+          "app.models.target",
           "app.models.vm"
         ]
       },
@@ -4608,6 +4469,27 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.startup",
+        "title": "app.core.startup",
+        "subtitle": "backend/app/core/startup.py",
+        "summary": "One-shot tasks the FastAPI lifespan runs once on each app boot.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "fail_orphan_plans",
+            "summary": "Mark every in-progress plan as ``failed`` and release its VMs."
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.vm_lifecycle",
+          "app.models.plan"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.storage_review",
         "title": "app.core.storage_review",
         "subtitle": "backend/app/core/storage_review.py",
@@ -4651,49 +4533,6 @@ const DATA = {
           "app.core.llm.base",
           "app.core.llm.factory",
           "app.models.vm"
-        ]
-      },
-      {
-        "kind": "module",
-        "id": "app.core.strategy_planner",
-        "title": "app.core.strategy_planner",
-        "subtitle": "backend/app/core/strategy_planner.py",
-        "summary": "Strategy-driven migration planner.",
-        "category": "logic",
-        "routes": [],
-        "classes": [
-          {
-            "name": "StrategyPlannerError",
-            "kind": "class",
-            "table": "",
-            "fields": [],
-            "methods": [],
-            "summary": "Raised when the strategy-driven planner fails to call the LLM,"
-          },
-          {
-            "name": "StrategyPlanner",
-            "kind": "class",
-            "table": "",
-            "fields": [],
-            "methods": [
-              {
-                "name": "plan",
-                "summary": "Generate a plan for the given strategy + VM inventory."
-              }
-            ],
-            "summary": "Strategy-driven plan generator."
-          }
-        ],
-        "functions": [
-          {
-            "name": "build_user_prompt",
-            "summary": "Assemble the user-message body for one strategy-driven plan call."
-          }
-        ],
-        "depends_on": [
-          "app.core.llm.base",
-          "app.core.llm.factory",
-          "app.models.plan"
         ]
       },
       {
@@ -4864,6 +4703,113 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.vm_lifecycle",
+        "title": "app.core.vm_lifecycle",
+        "subtitle": "backend/app/core/vm_lifecycle.py",
+        "summary": "VM plan-membership lifecycle service.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "LifecycleTransitionError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Raised when a VM is not in a state that admits the requested transition."
+          },
+          {
+            "name": "TransitionResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "vm_ids",
+              "from_states",
+              "to_state",
+              "audit_action"
+            ],
+            "methods": [],
+            "summary": "Summary of one transition call \u2014 returned for callers that want to log it."
+          }
+        ],
+        "functions": [
+          {
+            "name": "transition_to_planned",
+            "summary": "available \u2192 planned. Fails if any VM is not currently ``available``."
+          },
+          {
+            "name": "transition_to_available_from_failed_plan",
+            "summary": "planned \u2192 available. Used when a plan transitions to ``failed``."
+          },
+          {
+            "name": "transition_to_available_from_deleted_plan",
+            "summary": "planned \u2192 available. Used when a plan is DELETEd."
+          },
+          {
+            "name": "transition_to_migrated",
+            "summary": "planned \u2192 migrated. Triggered by ``POST /api/plans/{id}/mark-succeeded``."
+          },
+          {
+            "name": "transition_to_rolled_back",
+            "summary": "migrated \u2192 rolled_back. Single-VM operator action."
+          },
+          {
+            "name": "transition_to_available_from_rolled_back",
+            "summary": "rolled_back \u2192 available. Single-VM operator action."
+          },
+          {
+            "name": "patch_transition",
+            "summary": "Validate + apply a PATCH /api/vms/{id} lifecycle_state delta."
+          }
+        ],
+        "depends_on": [
+          "app.core.audit",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.wave_annotation",
+        "title": "app.core.wave_annotation",
+        "subtitle": "backend/app/core/wave_annotation.py",
+        "summary": "Stage 6 \u2014 per-wave LLM annotation with validate-retry-fallback.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "WaveAnnotation",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "description",
+              "risk_score",
+              "risk_rationale",
+              "notable_concerns"
+            ],
+            "methods": [],
+            "summary": "Pydantic validation for the Stage 6 LLM output."
+          }
+        ],
+        "functions": [
+          {
+            "name": "heuristic_risk",
+            "summary": "Default risk score when the LLM is unavailable."
+          },
+          {
+            "name": "annotate_one_wave",
+            "summary": "Run validate-retry-fallback for a single wave. Returns an"
+          },
+          {
+            "name": "annotate_waves",
+            "summary": "Annotate every wave in parallel under the backend's concurrency limit."
+          }
+        ],
+        "depends_on": [
+          "app.core.llm.base"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.wave_skeleton",
         "title": "app.core.wave_skeleton",
         "subtitle": "backend/app/core/wave_skeleton.py",
@@ -4879,7 +4825,8 @@ const DATA = {
               "wave_number",
               "groups",
               "estimated_risk",
-              "notes"
+              "notes",
+              "concurrency_group_id"
             ],
             "methods": [
               {
@@ -4950,6 +4897,7 @@ const DATA = {
           "app.core.llm.factory",
           "app.core.migrations",
           "app.core.scheduler",
+          "app.core.startup",
           "app.middleware.audit",
           "app.models"
         ]
@@ -4971,45 +4919,6 @@ const DATA = {
           "app.models.settings",
           "app.models.validation",
           "app.models.vm"
-        ]
-      },
-      {
-        "kind": "module",
-        "id": "app.models.chunk",
-        "title": "app.models.chunk",
-        "subtitle": "backend/app/models/chunk.py",
-        "summary": "Persisted plan chunks.",
-        "category": "data",
-        "routes": [],
-        "classes": [
-          {
-            "name": "PlanChunk",
-            "kind": "model",
-            "table": "plan_chunks",
-            "fields": [
-              "id",
-              "plan_id",
-              "chunk_id",
-              "sequence_index",
-              "label",
-              "reason_for_chunk",
-              "partition_key",
-              "sub_key",
-              "hints",
-              "vm_ids",
-              "sequence_dependencies",
-              "chunk_rationale",
-              "chunk_risk_level",
-              "wave_numbers",
-              "created_at"
-            ],
-            "methods": [],
-            "summary": ""
-          }
-        ],
-        "functions": [],
-        "depends_on": [
-          "app.core.db"
         ]
       },
       {
@@ -6774,6 +6683,10 @@ const DATA = {
             "kind": "component"
           },
           {
+            "name": "LifecyclePill",
+            "kind": "component"
+          },
+          {
             "name": "fmt",
             "kind": "helper"
           },
@@ -7065,14 +6978,13 @@ const DATA = {
         "id": "frontend/src/components/PlanWizard.jsx",
         "title": "PlanWizard.jsx",
         "subtitle": "frontend/src/components/PlanWizard.jsx",
-        "summary": "Strategy-driven migration planning wizard. 8 conceptual steps",
+        "summary": "Per-VM plan creation page. Two steps:",
         "category": "frontend",
         "api_calls": [
           "/api/mappings",
-          "/api/plans/generate",
-          "/api/plans/generate/{id}/status",
-          "/api/plans/preview-chunks",
-          "/api/sources/vcenters",
+          "/api/plans",
+          "/api/plans/{id}",
+          "/api/vms/facets?{id}",
           "/api/vms?{id}"
         ],
         "members": [
@@ -7081,19 +6993,39 @@ const DATA = {
             "kind": "component"
           },
           {
-            "name": "ChunkPreview",
+            "name": "StepBar",
+            "kind": "component"
+          },
+          {
+            "name": "FilterBar",
+            "kind": "component"
+          },
+          {
+            "name": "FacetDropdown",
+            "kind": "component"
+          },
+          {
+            "name": "Toggle",
+            "kind": "component"
+          },
+          {
+            "name": "NarrowingPanel",
+            "kind": "component"
+          },
+          {
+            "name": "SelectionCounter",
+            "kind": "component"
+          },
+          {
+            "name": "VMTable",
+            "kind": "component"
+          },
+          {
+            "name": "Pager",
             "kind": "component"
           },
           {
             "name": "ProgressBar",
-            "kind": "component"
-          },
-          {
-            "name": "estimateWaveCount",
-            "kind": "helper"
-          },
-          {
-            "name": "Radio",
             "kind": "component"
           },
           {
@@ -7740,6 +7672,14 @@ const DATA = {
           },
           {
             "name": "VirtValidate",
+            "kind": "component"
+          },
+          {
+            "name": "RevertToVmwareModal",
+            "kind": "component"
+          },
+          {
+            "name": "MakeAvailableModal",
             "kind": "component"
           },
           {

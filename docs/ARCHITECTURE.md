@@ -29,7 +29,7 @@ Enrolling, listing, editing, and deleting VMs.
 <details><summary><strong><code>app.api.vms</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/vms.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.limits`, `app.core.validation`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
+Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.limits`, `app.core.validation`, `app.core.vm_lifecycle`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
 
 **Routes**
 
@@ -37,10 +37,10 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core
 |---|---|---|---|
 | `POST` | `/api/vms` | `create_vm(payload, db)` | — |
 | `POST` | `/api/vms/bulk` | `create_vms_bulk(payload, db)` | Best-effort batch enrollment. |
-| `GET` | `/api/vms` | `list_vms(db, skip, limit, sort_by, sort_order, status_filter, vcenter_source_id, environment, application_hint, os_family, classification_level, search, offset)` | Paginated, filterable inventory listing. |
-| `GET` | `/api/vms/facets` | `vm_facets(db, status_filter, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Per-dimension counts so the filter UI can show &quot;Production (600)&quot;. |
+| `GET` | `/api/vms` | `list_vms(db, skip, limit, sort_by, sort_order, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, search, offset)` | Paginated, filterable inventory listing. |
+| `GET` | `/api/vms/facets` | `vm_facets(db, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Per-dimension counts so the filter UI can show &quot;Production (600)&quot;. |
 | `GET` | `/api/vms/stats` | `vm_stats(db)` | Cheap dashboard counters — no filter set, no row reads. |
-| `DELETE` | `/api/vms/all` | `delete_all_vms(request, db, confirm, status_filter, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Bulk-delete every VM that matches the given filters. |
+| `DELETE` | `/api/vms/all` | `delete_all_vms(request, db, confirm, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Bulk-delete every VM that matches the given filters. |
 | `POST` | `/api/vms/bulk-set-environment` | `bulk_set_environment(request, payload, db)` | Atomically set the environment of N VMs. |
 | `POST` | `/api/vms/redetect-environment` | `redetect_environment(request, payload, db)` | Re-run the detection cascade on the fleet (or one vCenter). |
 | `PATCH` | `/api/vms/{vm_id}/environment` | `set_vm_environment(request, vm_id, payload, db)` | Operator override of one VM&#x27;s environment. |
@@ -69,8 +69,10 @@ Depends on: `app.core.db`
 **Classes**
 
 - **`VMStatus`** (Class)
+- **`VMLifecycleState`** (Class)
+  - Plan-membership lifecycle, orthogonal to ``VMStatus``.
 - **`VM`** (SQLAlchemy model · table `vms`)
-  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`, `environment_source`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
+  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`, `environment_source`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
 - **`BaselineSnapshot`** (SQLAlchemy model · table `baseline_snapshots`)
   - Fields: `id`, `vm_id`, `snapshot_number`, `ssh_user`, `raw_data`, `checksum`, `collected_at`, `vm`
 
@@ -87,15 +89,15 @@ Depends on: `app.core.limits`, `app.models.vm`
   - Fields: `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`
 - **`VMCreate`** (Class)
 - **`VMUpdate`** (Pydantic schema)
-  - Fields: `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`
+  - Fields: `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `lifecycle_state`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`
 - **`VMRead`** (Class)
-  - Fields: `id`, `status`, `created_at`, `updated_at`
+  - Fields: `id`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `created_at`, `updated_at`
 - **`VMListResponse`** (Pydantic schema)
   - Paginated wrapper for the inventory listing.
   - Fields: `items`, `total`, `skip`, `limit`
 - **`VMFacetsResponse`** (Pydantic schema)
   - Per-dimension counts driven by the same filter set as list_vms.
-  - Fields: `status`, `environment`, `os_family`, `application_hint`, `vcenter_source_id`, `classification_level`, `total`
+  - Fields: `status`, `lifecycle_state`, `environment`, `os_family`, `application_hint`, `vcenter_source_id`, `classification_level`, `total`
 - **`VMStats`** (Pydantic schema)
   - Cheap aggregate counters for dashboard headers.
   - Fields: `total`, `by_status`, `missing_from_last_upload`
@@ -260,7 +262,7 @@ LLM-driven wave planning + MTV/Forklift YAML generation.
 <details><summary><strong><code>app.api.plans</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/plans.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.chunker`, `app.core.db`, `app.core.llm.factory`, `app.core.mtv`, `app.core.plan_generation`, `app.core.preclassifier`, `app.core.reporter`, `app.models.chunk`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
+Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_generation`, `app.core.preclassifier`, `app.core.reporter`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
 
 **Routes**
 
@@ -270,8 +272,8 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.chunker`, `app.core
 | `POST` | `/api/plans/preview-groups` | `preview_groups(payload, db)` | Show how the pre-classifier WOULD group these VMs — no LLM, no plan. |
 | `GET` | `/api/plans` | `list_plans(db, limit)` | — |
 | `GET` | `/api/plans/{plan_id}` | `get_plan(plan_id, db)` | — |
-| `GET` | `/api/plans/{plan_id}/chunks` | `get_plan_chunks(plan_id, db)` | Return the chunk breakdown for a hierarchically-planned plan. |
-| `POST` | `/api/plans/preview-chunks` | `preview_chunks(payload, db)` | Return what the chunker WOULD produce for a given scope without |
+| `DELETE` | `/api/plans/{plan_id}` | `delete_plan(request, plan_id, db)` | Delete a plan and return its VMs to ``available``. |
+| `POST` | `/api/plans/{plan_id}/mark-succeeded` | `mark_plan_succeeded(request, plan_id, db)` | Operator declares the cutover finished; VMs transition to ``migrated``. |
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/report` | `wave_report(request, plan_id, wave_number, format, db)` | — |
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/report/pdf` | `wave_report_pdf(request, plan_id, wave_number, db)` | Dedicated PDF endpoint — always returns Content-Type: application/pdf. |
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/mtv-yaml` | `wave_mtv_yaml(request, plan_id, wave_number, db)` | Render the wave as a multi-doc MTV/Forklift YAML for ``oc apply -f``. |
@@ -280,9 +282,6 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.chunker`, `app.core
 | `GET` | `/api/planning-strategies/{strategy_id}` | `get_strategy(strategy_id, db)` | — |
 | `PATCH` | `/api/planning-strategies/{strategy_id}` | `update_strategy(request, strategy_id, payload, db)` | — |
 | `DELETE` | `/api/planning-strategies/{strategy_id}` | `delete_strategy(request, strategy_id, db)` | — |
-| `POST` | `/api/plans/generate` | `trigger_plan_generation(request, payload, background_tasks, db)` | Spawn strategy-driven plan generation as a BackgroundTask. |
-| `GET` | `/api/plans/generate/{task_id}/status` | `get_plan_generation_status(task_id)` | — |
-| `POST` | `/api/plans/{plan_id}/waves/{wave_number}/move-vm` | `move_vm_between_waves(request, plan_id, wave_number, payload, db)` | Move one VM into a different wave, creating a new plan revision. |
 
 </details>
 
@@ -346,14 +345,14 @@ Depends on: `app.core.db`
   - Customer intent captured by the planning wizard.
   - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
 - **`MigrationPlan`** (SQLAlchemy model · table `migration_plans`)
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `generation_prompt`, `generation_response`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `created_at`, `strategy`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_id`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `created_at`
 
 </details>
 
 <details><summary><strong><code>app.schemas.plan</code></strong> — <em>Data models / schemas</em> · Pydantic schemas for migration plans + strategies.</summary>
 
 Path: `backend/app/schemas/plan.py`  
-Depends on: `app.core.limits`, `app.models.plan`
+Depends on: `app.models.plan`
 
 **Classes**
 
@@ -363,30 +362,16 @@ Depends on: `app.core.limits`, `app.models.plan`
   - Fields: `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`
 - **`PlanningStrategyRead`** (Pydantic schema)
   - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
-- **`PlanScopeFilter`** (Pydantic schema)
-  - Operator-supplied scope. At most one axis is honored — the API
-  - Fields: `vm_ids`, `source_vcenter_id`, `environment`, `application_hint`
-- **`PlanGenerateRequest`** (Pydantic schema)
-  - Wizard submission. Either references a saved strategy or embeds
-  - Fields: `name`, `strategy_id`, `inline_strategy`, `scope`, `mapping_id`
-- **`PlanGenerationTaskRead`** (Pydantic schema)
-  - Status payload the wizard polls.
-  - Fields: `task_id`, `status`, `current_step`, `progress_percent`, `started_at`, `completed_at`, `plan_id`, `error`, `chunks_total`, `chunks_complete`, `current_chunk`, `elapsed_seconds`, `estimated_remaining_seconds`, `path_taken`
 - **`WaveRead`** (Pydantic schema)
   - Fields: `wave_number`, `name`, `vm_ids`, `rationale`, `estimated_duration`, `estimated_risk`, `risk_level`, `considerations`, `applications_included`, `applications_split_warning`
-- **`PlanChunkRead`** (Pydantic schema)
-  - One chunk row from the hierarchical plan. Surfaced to the UI's
-  - Fields: `chunk_id`, `sequence_index`, `label`, `reason_for_chunk`, `partition_key`, `sub_key`, `hints`, `vm_ids`, `sequence_dependencies`, `chunk_rationale`, `chunk_risk_level`, `wave_numbers`
 - **`PlanRead`** (Pydantic schema)
-  - Strategy-driven plans populate every field; legacy plans leave
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`
+  - API response shape for a stored plan.
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_id`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`
 - **`PlanCreate`** (Pydantic schema)
-  - Fields: `vm_ids`, `preclassification_enabled`, `ha_strategy`
+  - Fields: `vm_ids`, `name`, `mapping_id`, `preclassification_enabled`, `ha_strategy`
 - **`PreviewGroupsResponse`** (Pydantic schema)
   - Result of POST /api/plans/preview-groups — no plan persisted.
   - Fields: `vm_count`, `groups_formed`, `groups`, `over_ceiling`, `ceiling`
-- **`WaveMoveVMRequest`** (Pydantic schema)
-  - Fields: `vm_id`, `target_wave_number`, `note`
 
 </details>
 
@@ -900,51 +885,6 @@ Depends on: `app.core`, `app.core.audit`, `app.core.config`, `app.core.llm.base`
 
 </details>
 
-<details><summary><strong><code>app.core.chunked_planner</code></strong> — <em>Business logic</em> · Hierarchical migration planner.</summary>
-
-Path: `backend/app/core/chunked_planner.py`  
-Depends on: `app.core.chunker`, `app.core.llm.base`, `app.core.llm.factory`, `app.core.strategy_planner`, `app.models.plan`, `app.models.target`, `app.models.vm`
-
-**Classes**
-
-- **`ChunkPlan`** (Class)
-  - Per-chunk LLM output, parsed + validated.
-  - Fields: `chunk_id`, `label`, `rationale`, `risk_level`, `waves`, `vm_ids`
-- **`HierarchicalPlanResult`** (Class)
-  - Final orchestrator output. Shaped to drop into the existing
-  - Fields: `plan_summary`, `rationale`, `warnings`, `next_actions`, `waves`, `chunks`, `model`, `generation_prompt`, `generation_response`, `path_taken`
-
-**Functions**
-
-- `generate_plan_async()` — Three-stage hierarchical plan.
-- `generate_plan()` — Sync entry point for FastAPI BackgroundTasks. Wraps the async
-
-</details>
-
-<details><summary><strong><code>app.core.chunker</code></strong> — <em>Business logic</em> · Pure-Python chunking for hierarchical migration planning.</summary>
-
-Path: `backend/app/core/chunker.py`  
-Depends on: `app.models.plan`, `app.models.target`, `app.models.vm`
-
-**Classes**
-
-- **`Chunk`** (Class)
-  - One partition of the inventory.
-  - Fields: `chunk_id`, `vm_ids`, `partition_key`, `sub_key`, `hints`, `reason_for_chunk`, `sequence_dependencies`
-  - Methods:
-    - `size(self)`
-    - `to_dict(self)`
-- **`_ChunkContext`** (Class)
-  - Internal carry-along so helpers don't take 6 args each.
-  - Fields: `strategy`, `mappings`, `target_cluster_id`, `classification_by_vcenter`, `max_size`
-
-**Functions**
-
-- `chunk_vms(vms)` — Pure-Python chunker. Returns an ordered list of :class:`Chunk`
-- `validate_chunks(chunks, expected_vm_ids)` — Raise AssertionError if the chunk set has an integrity issue.
-
-</details>
-
 <details><summary><strong><code>app.core.commands</code></strong> — <em>Business logic</em> · Per-OS command dispatch for the SSH collector.</summary>
 
 Path: `backend/app/core/commands.py`  
@@ -962,6 +902,17 @@ Depends on: `app.core.os_profile`
 
 </details>
 
+<details><summary><strong><code>app.core.concurrency</code></strong> — <em>Business logic</em> · Stage 5 — wave concurrency analysis (graph coloring).</summary>
+
+Path: `backend/app/core/concurrency.py`  
+Depends on: `app.core.family`, `app.core.wave_skeleton`
+
+**Functions**
+
+- `assign_concurrency_groups(waves, vm_name_by_id)` — Mutate ``waves`` in place to set ``concurrency_group_id`` on each.
+
+</details>
+
 <details><summary><strong><code>app.core.config</code></strong> — <em>Business logic</em></summary>
 
 Path: `backend/app/core/config.py`  
@@ -969,7 +920,7 @@ Path: `backend/app/core/config.py`
 **Classes**
 
 - **`Settings`** (Class)
-  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `llm_max_items_per_call`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
+  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `llm_max_items_per_call`, `max_vms_per_plan`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
 
 </details>
 
@@ -1005,6 +956,19 @@ Path: `backend/app/core/environment.py`
 - `normalize(value)` — Map a free-text environment label to the canonical enum.
 - `detect_environment()` — Five-tier signal cascade. First match wins.
 - `iter_supported_values()` — All canonical enum string values — for API enums + dropdowns.
+
+</details>
+
+<details><summary><strong><code>app.core.family</code></strong> — <em>Business logic</em> · Name-based HA family detection.</summary>
+
+Path: `backend/app/core/family.py`  
+
+**Functions**
+
+- `detect_family(vm_name)` — Compute the family key for a VM name.
+- `split_into_families(vm_names)` — Convenience helper: group a list of VM names by family.
+- `family_cap(family_size)` — Maximum members of a family that may share one wave.
+- `split_overconcentrated_families(groups, vm_name_by_id)` — Stage 3: split any group that holds too many members of one family.
 
 </details>
 
@@ -1189,6 +1153,31 @@ Depends on: `app.core.llm.base`, `app.core.llm.factory`
 
 </details>
 
+<details><summary><strong><code>app.core.mapping_validation</code></strong> — <em>Business logic</em> · Stage 0 — mapping coverage validation.</summary>
+
+Path: `backend/app/core/mapping_validation.py`  
+Depends on: `app.models.target`, `app.models.vm`
+
+**Classes**
+
+- **`MappingGap`** (Class)
+  - One missing mapping piece. ``kind`` is the resource category,
+  - Fields: `vm_id`, `vm_name`, `kind`, `source_value`
+  - Methods:
+    - `render(self)`
+- **`ValidationResult`** (Class)
+  - Outcome of ``validate_plan_inputs``.
+  - Fields: `gaps`
+  - Methods:
+    - `ok(self)`
+    - `render(self)`
+
+**Functions**
+
+- `validate_plan_inputs(vms, mapping)` — Verify every VM has complete mapping coverage.
+
+</details>
+
 <details><summary><strong><code>app.core.migrations</code></strong> — <em>Business logic</em> · Alembic migration orchestration for the FastAPI lifespan.</summary>
 
 Path: `backend/app/core/migrations.py`  
@@ -1274,34 +1263,39 @@ Path: `backend/app/core/os_profile.py`
 
 </details>
 
-<details><summary><strong><code>app.core.plan_generation</code></strong> — <em>Business logic</em> · Async migration plan generation + revision tracking.</summary>
+<details><summary><strong><code>app.core.plan_generation</code></strong> — <em>Business logic</em> · BackgroundTask body for POST /api/plans.</summary>
 
 Path: `backend/app/core/plan_generation.py`  
-Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.chunked_planner`, `app.core.strategy_planner`, `app.models.chunk`, `app.models.plan`, `app.models.target`, `app.models.vcenter`, `app.models.vm`
-
-**Classes**
-
-- **`PlanGenerationTask`** (Class)
-  - Fields: `task_id`, `status`, `current_step`, `progress_percent`, `started_at`, `completed_at`, `plan_id`, `error`, `chunks_total`, `chunks_complete`, `current_chunk`, `elapsed_seconds`, `estimated_remaining_seconds`, `path_taken`
-  - Methods:
-    - `to_dict(self)`
-- **`PlanGenerationTaskStore`** (Class)
-  - Methods:
-    - `create(self)`
-    - `get(self, task_id)`
-    - `update(self, task_id, **fields)`
-    - `mark_completed(self, task_id)`
-    - `mark_failed(self, task_id)`
-- **`PlanRevisionError`** (Class)
-  - Raised when a per-wave action can't be applied — usually a
+Depends on: `app.core`, `app.core.audit`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.vm`
 
 **Functions**
 
-- `resolve_scope(db, scope)` — Apply the wizard's scope filter and return the matching VMs.
-- `assemble_vm_profiles(db, vms)` — Build the lightweight VM payload the strategy planner sends to
-- `run_plan_generation(task_id)` — Body of the FastAPI BackgroundTask the generate endpoint spawns.
 - `run_simple_plan_generation(plan_id)` — Body of the BackgroundTask the POST /api/plans endpoint spawns.
-- `apply_move_vm(db, plan)` — Create a new plan revision with one VM moved between waves.
+
+</details>
+
+<details><summary><strong><code>app.core.plan_pipeline</code></strong> — <em>Business logic</em> · End-to-end migration plan pipeline.</summary>
+
+Path: `backend/app/core/plan_pipeline.py`  
+Depends on: `app.core.concurrency`, `app.core.family`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.preclassifier`, `app.core.wave_skeleton`, `app.models.target`, `app.models.vm`
+
+**Classes**
+
+- **`PlanValidationError`** (Class)
+  - Raised by Stage 0 when mapping coverage is incomplete.
+- **`AnnotatedWave`** (Class)
+  - A wave plus its Stage-6 annotation and Stage-7 YAML.
+  - Fields: `wave`, `description`, `risk_score`, `risk_rationale`, `notable_concerns`, `method`, `mtv_yaml`
+  - Methods:
+    - `to_dict(self)` — Render to the JSON shape persisted in MigrationPlan.waves[].
+- **`PlanPipelineResult`** (Class)
+  - End-to-end pipeline output. ``method_per_wave`` lets operators
+  - Fields: `waves`, `groups`, `method_per_wave`
+
+**Functions**
+
+- `emit_wave_yaml(plan_id, wave, description, vm_by_id, resolver)` — Stage 7 — render one wave's MTV YAML.
+- `run_pipeline(vms, mapping)` — Walk the seven stages and return an end-to-end annotated plan.
 
 </details>
 
@@ -1405,6 +1399,17 @@ Depends on: `app.core.fips`
 
 </details>
 
+<details><summary><strong><code>app.core.startup</code></strong> — <em>Business logic</em> · One-shot tasks the FastAPI lifespan runs once on each app boot.</summary>
+
+Path: `backend/app/core/startup.py`  
+Depends on: `app.core`, `app.core.vm_lifecycle`, `app.models.plan`
+
+**Functions**
+
+- `fail_orphan_plans(session_factory)` — Mark every in-progress plan as ``failed`` and release its VMs.
+
+</details>
+
 <details><summary><strong><code>app.core.storage_review</code></strong> — <em>Business logic</em> · Storage Design Review — gap analysis between source VMware datastore</summary>
 
 Path: `backend/app/core/storage_review.py`  
@@ -1423,26 +1428,6 @@ Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.models.vm`
 
 - `build_storage_source_summary(db)` — Aggregate vSphere datastores + per-datastore VM membership.
 - `normalize_findings(items)` — Public re-export — same shape as network_review.normalize_findings.
-
-</details>
-
-<details><summary><strong><code>app.core.strategy_planner</code></strong> — <em>Business logic</em> · Strategy-driven migration planner.</summary>
-
-Path: `backend/app/core/strategy_planner.py`  
-Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.models.plan`
-
-**Classes**
-
-- **`StrategyPlannerError`** (Class)
-  - Raised when the strategy-driven planner fails to call the LLM,
-- **`StrategyPlanner`** (Class)
-  - Strategy-driven plan generator.
-  - Methods:
-    - `plan(self, strategy, vm_profiles)` — Generate a plan for the given strategy + VM inventory.
-
-**Functions**
-
-- `build_user_prompt(strategy, vm_profiles)` — Assemble the user-message body for one strategy-driven plan call.
 
 </details>
 
@@ -1507,6 +1492,50 @@ Path: `backend/app/core/validation_tiers.py`
 
 </details>
 
+<details><summary><strong><code>app.core.vm_lifecycle</code></strong> — <em>Business logic</em> · VM plan-membership lifecycle service.</summary>
+
+Path: `backend/app/core/vm_lifecycle.py`  
+Depends on: `app.core.audit`, `app.models.vm`
+
+**Classes**
+
+- **`LifecycleTransitionError`** (Class)
+  - Raised when a VM is not in a state that admits the requested transition.
+- **`TransitionResult`** (Class)
+  - Summary of one transition call — returned for callers that want to log it.
+  - Fields: `vm_ids`, `from_states`, `to_state`, `audit_action`
+
+**Functions**
+
+- `transition_to_planned(vm_ids, plan_id, db)` — available → planned. Fails if any VM is not currently ``available``.
+- `transition_to_available_from_failed_plan(plan_id, vm_ids, db)` — planned → available. Used when a plan transitions to ``failed``.
+- `transition_to_available_from_deleted_plan(plan_id, vm_ids, db)` — planned → available. Used when a plan is DELETEd.
+- `transition_to_migrated(plan_id, vm_ids, db)` — planned → migrated. Triggered by ``POST /api/plans/{id}/mark-succeeded``.
+- `transition_to_rolled_back(vm_id, db)` — migrated → rolled_back. Single-VM operator action.
+- `transition_to_available_from_rolled_back(vm_id, db)` — rolled_back → available. Single-VM operator action.
+- `patch_transition(vm, target, db)` — Validate + apply a PATCH /api/vms/{id} lifecycle_state delta.
+
+</details>
+
+<details><summary><strong><code>app.core.wave_annotation</code></strong> — <em>Business logic</em> · Stage 6 — per-wave LLM annotation with validate-retry-fallback.</summary>
+
+Path: `backend/app/core/wave_annotation.py`  
+Depends on: `app.core.llm.base`
+
+**Classes**
+
+- **`WaveAnnotation`** (Pydantic schema)
+  - Pydantic validation for the Stage 6 LLM output.
+  - Fields: `description`, `risk_score`, `risk_rationale`, `notable_concerns`
+
+**Functions**
+
+- `heuristic_risk(wave)` — Default risk score when the LLM is unavailable.
+- `annotate_one_wave(wave)` — Run validate-retry-fallback for a single wave. Returns an
+- `annotate_waves(waves)` — Annotate every wave in parallel under the backend's concurrency limit.
+
+</details>
+
 <details><summary><strong><code>app.core.wave_skeleton</code></strong> — <em>Business logic</em> · Mechanical wave assignment — pure Python, deterministic, fast.</summary>
 
 Path: `backend/app/core/wave_skeleton.py`  
@@ -1516,7 +1545,7 @@ Depends on: `app.core.config`, `app.core.preclassifier`
 
 - **`Wave`** (Class)
   - One migration wave — sequence number + ordered groups inside.
-  - Fields: `wave_number`, `groups`, `estimated_risk`, `notes`
+  - Fields: `wave_number`, `groups`, `estimated_risk`, `notes`, `concurrency_group_id`
   - Methods:
     - `vm_ids(self)`
     - `vm_count(self)`
@@ -1530,7 +1559,7 @@ Depends on: `app.core.config`, `app.core.preclassifier`
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.migrations`, `app.core.scheduler`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -1542,18 +1571,6 @@ Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.a
 
 Path: `backend/app/models/__init__.py`  
 Depends on: `app.models.audit`, `app.models.network_review`, `app.models.plan`, `app.models.settings`, `app.models.validation`, `app.models.vm`
-
-</details>
-
-<details><summary><strong><code>app.models.chunk</code></strong> — <em>Data models / schemas</em> · Persisted plan chunks.</summary>
-
-Path: `backend/app/models/chunk.py`  
-Depends on: `app.core.db`
-
-**Classes**
-
-- **`PlanChunk`** (SQLAlchemy model · table `plan_chunks`)
-  - Fields: `id`, `plan_id`, `chunk_id`, `sequence_index`, `label`, `reason_for_chunk`, `partition_key`, `sub_key`, `hints`, `vm_ids`, `sequence_dependencies`, `chunk_rationale`, `chunk_risk_level`, `wave_numbers`, `created_at`
 
 </details>
 
@@ -1985,6 +2002,7 @@ API calls:
 
 Exports / inner components:
 - **`StatusPill`** (component)
+- **`LifecyclePill`** (component)
 - **`fmt`** (helper)
 - **`formatTimestamp`** (helper)
 - **`readStateFromUrl`** (helper)
@@ -2097,22 +2115,26 @@ Exports / inner components:
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/PlanWizard.jsx</code></strong> — <em>Frontend component</em> · Strategy-driven migration planning wizard. 8 conceptual steps</summary>
+<details><summary><strong><code>frontend/src/components/PlanWizard.jsx</code></strong> — <em>Frontend component</em> · Per-VM plan creation page. Two steps:</summary>
 
 API calls:
 - `/api/mappings`
-- `/api/plans/generate`
-- `/api/plans/generate/{id}/status`
-- `/api/plans/preview-chunks`
-- `/api/sources/vcenters`
+- `/api/plans`
+- `/api/plans/{id}`
+- `/api/vms/facets?{id}`
 - `/api/vms?{id}`
 
 Exports / inner components:
 - **`PlanWizard`** (component)
-- **`ChunkPreview`** (component)
+- **`StepBar`** (component)
+- **`FilterBar`** (component)
+- **`FacetDropdown`** (component)
+- **`Toggle`** (component)
+- **`NarrowingPanel`** (component)
+- **`SelectionCounter`** (component)
+- **`VMTable`** (component)
+- **`Pager`** (component)
 - **`ProgressBar`** (component)
-- **`estimateWaveCount`** (helper)
-- **`Radio`** (component)
 - **`Step`** (component)
 - **`Shell`** (component)
 
@@ -2368,6 +2390,8 @@ Exports / inner components:
 - **`BulkDeleteVMsModal`** (component)
 - **`GeneratePlanModal`** (component)
 - **`VirtValidate`** (component)
+- **`RevertToVmwareModal`** (component)
+- **`MakeAvailableModal`** (component)
 - **`StatusBadge`** (component)
 - **`SeverityTag`** (component)
 - **`Metric`** (component)
