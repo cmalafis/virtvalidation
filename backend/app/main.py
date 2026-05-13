@@ -14,6 +14,7 @@ from app.api.rvtools import router as rvtools_router
 from app.api.settings import settings_router, system_router
 from app.api.snapshots import router as snapshots_router
 from app.api.storage_reviews import router as storage_reviews_router
+from app.api.target_entities import router as target_entities_router
 from app.api.targets import mappings_router as resource_mappings_router
 from app.api.targets import targets_router as ocp_targets_router
 from app.api.templates import router as templates_router
@@ -164,6 +165,12 @@ app.include_router(rvtools_router, prefix="/api/rvtools")
 app.include_router(network_reviews_router, prefix="/api/network-reviews")
 app.include_router(storage_reviews_router, prefix="/api/storage-reviews")
 app.include_router(ocp_targets_router, prefix="/api/sources/targets")
+# Target-entity CRUD lives under both the new ``/api/ocp-targets`` prefix
+# (used by the acceptance test) and the existing ``/api/sources/targets``
+# prefix (used by the frontend). The two routes resolve to the same
+# handlers — operators can call either path.
+app.include_router(target_entities_router, prefix="/api/ocp-targets")
+app.include_router(target_entities_router, prefix="/api/sources/targets")
 app.include_router(resource_mappings_router, prefix="/api/mappings")
 app.include_router(validations_router, prefix="/api/validations")
 app.include_router(validation_schedules_router, prefix="/api/validation-schedules")
