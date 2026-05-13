@@ -1525,11 +1525,16 @@ function BulkDeleteVMsModal({ open, vms, onClose, onConfirmed }) {
 function GeneratePlanModal({ open, onClose, vms, onCreated }) {
   const [selected, setSelected] = useState(new Set());
   const [submitting, setSubmitting] = useState(false);
+  // Live status surfaced by polling GET /api/plans/{id} every 2s.
+  // Visible to the operator so a 5-10 minute LLM call doesn't look
+  // like the modal is frozen.
+  const [progress, setProgress] = useState(null);
 
   useEffect(() => {
     if (open) {
       setSelected(new Set(vms.map((v) => v.id)));
       setSubmitting(false);
+      setProgress(null);
     }
   }, [open, vms]);
 
@@ -1545,20 +1550,71 @@ function GeneratePlanModal({ open, onClose, vms, onCreated }) {
     e.preventDefault();
     if (selected.size === 0) return;
     setSubmitting(true);
-    const promise = fetchJSON("/api/plans", {
-      method: "POST",
-      body: { vm_ids: Array.from(selected) },
-    });
+    setProgress({ status: "pending", progress_message: "Submitting…", progress_percent: 0 });
+
+    let spawn;
     try {
-      await toast.promise(promise, {
-        loading: "Generating migration plan…",
-        success: (r) => `Plan #${r.data.id} generated (${(r.data.waves || []).length} waves)`,
-        error: (e) => e.message || "Plan generation failed",
-      }, TOAST_OPTS);
-      onCreated();
-      onClose();
-    } catch {
-      // toast surfaced
+      // The POST returns 202 + plan body with status=pending. The
+      // backend's BackgroundTask runs the planner asynchronously and
+      // writes status/progress to the plan row as it advances.
+      spawn = await fetchJSON("/api/plans", {
+        method: "POST",
+        body: { vm_ids: Array.from(selected) },
+      });
+    } catch (err) {
+      toast.error(err.message || "Plan generation failed to start", TOAST_OPTS);
+      setSubmitting(false);
+      setProgress(null);
+      return;
+    }
+
+    const planId = spawn.data?.id;
+    if (!planId) {
+      toast.error("Backend returned no plan_id", TOAST_OPTS);
+      setSubmitting(false);
+      setProgress(null);
+      return;
+    }
+
+    // Poll every 2 seconds. Bound the poll loop at 30 minutes —
+    // anything beyond that is almost certainly a stuck job. The
+    // backend's own LLM timeout will mark the plan failed before
+    // we reach the ceiling under normal operation.
+    const maxPolls = 900; // 30 minutes / 2s
+    let lastPlan = spawn.data;
+    try {
+      for (let i = 0; i < maxPolls; i += 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const poll = await fetchJSON(`/api/plans/${planId}`);
+        lastPlan = poll.data;
+        setProgress(lastPlan);
+        if (lastPlan.status === "complete") {
+          toast.success(
+            `Plan #${planId} generated (${(lastPlan.waves || []).length} waves)`,
+            TOAST_OPTS,
+          );
+          onCreated();
+          onClose();
+          return;
+        }
+        if (lastPlan.status === "failed") {
+          // The verbatim typed-exception message lives in
+          // error_message — surface it directly so the operator
+          // sees the same string the pod log shows.
+          toast.error(
+            lastPlan.error_message || "Plan generation failed",
+            TOAST_OPTS,
+          );
+          setSubmitting(false);
+          return;
+        }
+      }
+      toast.error(
+        `Plan #${planId} still ${lastPlan.status} after 30 minutes — check pod logs`,
+        TOAST_OPTS,
+      );
+    } catch (err) {
+      toast.error(err.message || "Polling plan status failed", TOAST_OPTS);
     } finally {
       setSubmitting(false);
     }
@@ -1585,6 +1641,32 @@ function GeneratePlanModal({ open, onClose, vms, onCreated }) {
       }}>
         Select the VMs to include. The configured LLM will analyze VM metadata and group them into dependency-ordered migration waves. Plan generation typically takes 1-3 minutes depending on VM count and the configured model.
       </div>
+      {submitting && progress && (
+        <div style={{
+          padding: "12px 16px", marginBottom: 16,
+          border: "1px solid #1a1a2e", background: "#07070f",
+          fontFamily: "'Share Tech Mono', monospace",
+        }}>
+          <div style={{ fontSize: 13, color: "#eeeeff", marginBottom: 6 }}>
+            {`status: ${progress.status || "pending"}`}
+          </div>
+          {progress.progress_message && (
+            <div style={{ fontSize: 12, color: "#aaaacc", marginBottom: 8 }}>
+              {progress.progress_message}
+            </div>
+          )}
+          <div style={{
+            height: 4, background: "#1a1a2e", overflow: "hidden",
+          }}>
+            <div style={{
+              height: "100%",
+              width: `${progress.progress_percent || 0}%`,
+              background: "#4488ff",
+              transition: "width 0.4s ease",
+            }}/>
+          </div>
+        </div>
+      )}
       {vms.length === 0 ? (
         <Notice tone="warn">No VMs available. Enroll at least one before generating a plan.</Notice>
       ) : (

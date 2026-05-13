@@ -203,6 +203,19 @@ class PlanRead(BaseModel):
     supersedes_plan_id: int | None = None
     revision_number: int = 1
     created_at: datetime
+
+    # Async-lifecycle fields the rewritten POST /api/plans writes to
+    # via its BackgroundTask. status is the source of truth for the
+    # frontend's progress polling — pending|validating|chunking
+    # |llm_grouping|assembling|complete|failed. error_message carries
+    # the verbatim typed-exception message so the operator sees the
+    # same string in the UI and in pod logs.
+    status: str = "complete"
+    progress_message: str | None = None
+    progress_percent: int = 100
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     # Transient — only populated on the create response. GET /api/plans/{id}
     # leaves these empty since they aren't persisted on the model today;
     # the waves[] entries carry the group_ids list so groups can be re-

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -14,7 +16,9 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
+from app.core.chunker import chunk_vms
 from app.core.db import get_db
+from app.core.llm.factory import get_llm_backend
 from app.core.mtv import (
     MappingResolver,
     MTVGenerationError,
@@ -26,17 +30,16 @@ from app.core.plan_generation import (
     apply_move_vm,
     resolve_scope,
     run_plan_generation,
+    run_simple_plan_generation,
 )
 from app.core.plan_generation import task_store as plan_task_store
-from app.core.planner import MigrationPlanner, PlannerError
+from app.core.preclassifier import PreClassifier
 from app.core.reporter import ReporterError, WaveReporter, render_pdf
-from app.core.chunker import chunk_vms
-from app.core.llm.factory import get_llm_backend
 from app.models.chunk import PlanChunk
 from app.models.plan import MigrationPlan, PlanningStrategy
 from app.models.target import ResourceMapping
-from app.models.vcenter import VCenterSource
 from app.models.validation import ValidationResult
+from app.models.vcenter import VCenterSource
 from app.models.vm import VM, BaselineSnapshot
 from app.schemas.plan import (
     PlanChunkRead,
@@ -50,7 +53,6 @@ from app.schemas.plan import (
     PreviewGroupsResponse,
     WaveMoveVMRequest,
 )
-from app.core.preclassifier import PreClassifier
 from app.schemas.report import WaveReport
 
 router = APIRouter(tags=["plans"])
@@ -91,64 +93,69 @@ def _assemble_vm_profiles(db: Session, vm_ids: list[int]) -> list[dict]:
     return profiles
 
 
-@router.post("", response_model=PlanRead, status_code=status.HTTP_201_CREATED)
-def create_plan(payload: PlanCreate, db: Session = Depends(get_db)) -> dict:
-    """Generate a migration plan.
+@router.post("", response_model=PlanRead, status_code=status.HTTP_202_ACCEPTED)
+def create_plan(
+    payload: PlanCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Kick off async migration plan generation.
 
-    Default path runs the mechanical pre-classifier first so the LLM
-    only sees ~5-15 groups instead of N raw VMs — see
-    ``docs/PLANNER_ARCHITECTURE.md`` for why. Set
-    ``preclassification_enabled=false`` to fall back to the legacy
-    raw-VM flow (useful for testing model behavior on small fleets).
+    Returns 202 within ~1 second with the plan row in ``status=pending``.
+    The actual work — preclassification, LLM rationale, wave assembly —
+    runs in a FastAPI BackgroundTask that writes ``status`` /
+    ``progress_message`` / ``progress_percent`` to the plan row as it
+    advances. The frontend polls ``GET /api/plans/{id}`` every 2s and
+    transitions the modal through the visible status states.
+
+    On LLM failure the verbatim typed-exception message lands in
+    ``Plan.error_message`` — operators see "Cannot reach KServe at
+    http://wrong.endpoint", not a generic "Plan generation failed".
+
+    Fail-fast pre-flight: missing vm_ids 404 immediately so the
+    operator doesn't wait for the background task to surface the
+    same answer.
     """
     unique_ids = list(dict.fromkeys(payload.vm_ids))
-    planner = MigrationPlanner()
-
-    if payload.preclassification_enabled:
-        vms = list(db.scalars(select(VM).where(VM.id.in_(unique_ids))).all())
-        missing = [vid for vid in unique_ids if vid not in {v.id for v in vms}]
-        if missing:
-            raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
-        try:
-            result = planner.plan_with_groups(
-                vms, ha_strategy=payload.ha_strategy,
-            )
-        except PlannerError as e:
-            raise HTTPException(status_code=502, detail=f"Planner failed: {e}") from e
-        plan_vm_ids = unique_ids
-        groups_payload = result.get("groups", [])
-        groups_formed = result.get("groups_formed", 0)
-        method = result.get("method", "")
-        attempts = result.get("attempts", 0)
-    else:
-        profiles = _assemble_vm_profiles(db, unique_ids)
-        try:
-            result = planner.plan(profiles)
-        except PlannerError as e:
-            raise HTTPException(status_code=502, detail=f"Planner failed: {e}") from e
-        plan_vm_ids = [p["vm_id"] for p in profiles]
-        groups_payload = []
-        groups_formed = 0
-        method = ""
-        attempts = 0
+    if not unique_ids:
+        raise HTTPException(status_code=422, detail="vm_ids must contain at least one VM")
+    known = {vid for vid in db.scalars(select(VM.id).where(VM.id.in_(unique_ids))).all()}
+    missing = [vid for vid in unique_ids if vid not in known]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
 
     plan = MigrationPlan(
-        vm_ids=plan_vm_ids,
-        waves=result["waves"],
-        summary=result.get("summary") or None,
-        model=planner.backend.default_model or "",
+        vm_ids=unique_ids,
+        waves=[],
+        # ``model`` is non-null on the column; the planner overwrites it
+        # when it completes. Empty string is the sentinel for "not yet
+        # generated".
+        model="",
+        status="pending",
+        progress_message="Queued",
+        progress_percent=0,
+        started_at=datetime.now(timezone.utc),
     )
     db.add(plan)
     db.commit()
     db.refresh(plan)
-    # Hand-build the response so the transient ``groups`` field gets
-    # surfaced — PlanRead.model_validate(plan) would drop it because
-    # the field doesn't exist on the SA model.
+
+    background_tasks.add_task(
+        run_simple_plan_generation,
+        plan.id,
+        vm_ids=unique_ids,
+        ha_strategy=payload.ha_strategy,
+        preclassification_enabled=payload.preclassification_enabled,
+    )
+
     body = PlanRead.model_validate(plan).model_dump(mode="json")
-    body["groups"] = groups_payload
-    body["groups_formed"] = groups_formed
-    body["method"] = method
-    body["attempts"] = attempts
+    # Legacy fields the dashboard's old success toast reads. They stay
+    # empty until the background task completes; the frontend's poll
+    # loop replaces the row with the completed version.
+    body["groups"] = []
+    body["groups_formed"] = 0
+    body["method"] = ""
+    body["attempts"] = 0
     return body
 
 
@@ -175,6 +182,7 @@ def preview_groups(payload: PlanCreate, db: Session = Depends(get_db)) -> dict:
     # still surface the ceiling so the UI can show "this plan will
     # need N LLM calls" if it wants to.
     from app.core.wave_skeleton import MAX_VMS_PER_WAVE
+
     per_call_ceiling = MAX_VMS_PER_WAVE
     return {
         "vm_count": len(vms),
@@ -214,17 +222,13 @@ def get_plan_chunks(plan_id: int, db: Session = Depends(get_db)) -> list[PlanChu
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
     return list(
         db.scalars(
-            select(PlanChunk)
-            .where(PlanChunk.plan_id == plan_id)
-            .order_by(PlanChunk.sequence_index)
+            select(PlanChunk).where(PlanChunk.plan_id == plan_id).order_by(PlanChunk.sequence_index)
         ).all()
     )
 
 
 @router.post("/preview-chunks")
-def preview_chunks(
-    payload: PlanGenerateRequest, db: Session = Depends(get_db)
-) -> dict:
+def preview_chunks(payload: PlanGenerateRequest, db: Session = Depends(get_db)) -> dict:
     """Return what the chunker WOULD produce for a given scope without
     invoking the LLM. The wizard calls this before submission so the
     operator sees the planned chunk breakdown ("8 chunks, avg 12 VMs,
@@ -249,9 +253,7 @@ def preview_chunks(
     if payload.strategy_id is not None:
         strategy = db.get(PlanningStrategy, payload.strategy_id)
         if strategy is None:
-            raise HTTPException(
-                status_code=404, detail=f"Strategy {payload.strategy_id} not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Strategy {payload.strategy_id} not found")
     elif payload.inline_strategy is not None:
         strategy = PlanningStrategy(**payload.inline_strategy.model_dump())
     else:
@@ -261,9 +263,7 @@ def preview_chunks(
         )
 
     mapping = (
-        db.get(ResourceMapping, payload.mapping_id)
-        if payload.mapping_id is not None
-        else None
+        db.get(ResourceMapping, payload.mapping_id) if payload.mapping_id is not None else None
     )
 
     from app.core.chunker import SINGLE_SHOT_THRESHOLD
@@ -518,6 +518,7 @@ def wave_mtv_yaml(
         used_mapping_id = mapping.id
         # Stamp last_used_at so operators can spot stale mappings.
         from datetime import datetime, timezone
+
         mapping.last_used_at = datetime.now(timezone.utc)
 
     ctx = WaveContext.from_settings(
@@ -565,9 +566,7 @@ strategies_router = APIRouter(tags=["planning-strategies"])
 @strategies_router.get("", response_model=list[PlanningStrategyRead])
 def list_strategies(db: Session = Depends(get_db)) -> list[PlanningStrategy]:
     return list(
-        db.scalars(
-            select(PlanningStrategy).order_by(PlanningStrategy.created_at.desc())
-        ).all()
+        db.scalars(select(PlanningStrategy).order_by(PlanningStrategy.created_at.desc())).all()
     )
 
 
@@ -615,9 +614,7 @@ def create_strategy(
 def get_strategy(strategy_id: int, db: Session = Depends(get_db)) -> PlanningStrategy:
     strategy = db.get(PlanningStrategy, strategy_id)
     if strategy is None:
-        raise HTTPException(
-            status_code=404, detail=f"Strategy {strategy_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
     return strategy
 
 
@@ -630,9 +627,7 @@ def update_strategy(
 ) -> PlanningStrategy:
     strategy = db.get(PlanningStrategy, strategy_id)
     if strategy is None:
-        raise HTTPException(
-            status_code=404, detail=f"Strategy {strategy_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(strategy, field, value)
@@ -642,9 +637,7 @@ def update_strategy(
     return strategy
 
 
-@strategies_router.delete(
-    "/{strategy_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@strategies_router.delete("/{strategy_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_strategy(
     request: Request,
     strategy_id: int,
@@ -652,9 +645,7 @@ def delete_strategy(
 ) -> None:
     strategy = db.get(PlanningStrategy, strategy_id)
     if strategy is None:
-        raise HTTPException(
-            status_code=404, detail=f"Strategy {strategy_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
     record_audit(
         db,
         action="strategy.delete",
@@ -734,10 +725,7 @@ def trigger_plan_generation(
                 detail=f"Resource mapping {mapping_id} not found",
             )
         scope_vcenter_id = payload.scope.source_vcenter_id
-        if (
-            scope_vcenter_id is not None
-            and mapping.vcenter_source_id != scope_vcenter_id
-        ):
+        if scope_vcenter_id is not None and mapping.vcenter_source_id != scope_vcenter_id:
             raise HTTPException(
                 status_code=409,
                 detail=(

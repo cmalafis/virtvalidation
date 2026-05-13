@@ -48,17 +48,20 @@ def _vm(id_: int, name: str, **kwargs) -> VM:
 # ---------------------------------------------------------------------------
 # HA role detection
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("name,expected", [
-    ("db-primary-01", "primary"),
-    ("db-master", "primary"),
-    ("postgres-leader", "primary"),
-    ("db-replica-01", "replica"),
-    ("db-secondary-01", "replica"),
-    ("db-follower-2", "replica"),
-    ("db-standby-01", "standby"),
-    ("backup-passive", "standby"),
-    ("misc-01", "standalone"),
-])
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("db-primary-01", "primary"),
+        ("db-master", "primary"),
+        ("postgres-leader", "primary"),
+        ("db-replica-01", "replica"),
+        ("db-secondary-01", "replica"),
+        ("db-follower-2", "replica"),
+        ("db-standby-01", "standby"),
+        ("backup-passive", "standby"),
+        ("misc-01", "standalone"),
+    ],
+)
 def test_detect_ha_role_from_name_patterns(name, expected):
     assert detect_ha_role(name) == expected
 
@@ -202,7 +205,8 @@ def test_plan_with_groups_auto_spreads_only_large_clusters():
         _vm(5, "big-db-03", application_hint="big", networks=["big-net"]),
     ]
     result = MigrationPlanner(backend=MockBackend()).plan_with_groups(
-        vms, ha_strategy="auto",
+        vms,
+        ha_strategy="auto",
     )
     # small-db stays as 1 group; big-db splits into 3 micro-groups.
     # Total ≥ 4 (could be more if other splits happen, but at least
@@ -214,10 +218,7 @@ def test_plan_with_groups_auto_spreads_only_large_clusters():
 # Risk assessment
 # ---------------------------------------------------------------------------
 def test_every_group_has_risk_assessment():
-    vms = [
-        _vm(i, f"web-{i:02d}", application_hint="app1", networks=["w"])
-        for i in range(1, 4)
-    ]
+    vms = [_vm(i, f"web-{i:02d}", application_hint="app1", networks=["w"]) for i in range(1, 4)]
     groups = PreClassifier().classify(vms)
     for g in groups:
         assert g.risk_assessment is not None
@@ -251,8 +252,7 @@ def test_stateful_data_group_carries_specific_factors():
 
 def test_infrastructure_group_carries_secondary_failover_mitigation():
     vms = [
-        _vm(i, f"ad-dc-{i:02d}", application_hint="infra", networks=["infra"])
-        for i in range(1, 3)
+        _vm(i, f"ad-dc-{i:02d}", application_hint="infra", networks=["infra"]) for i in range(1, 3)
     ]
     groups = PreClassifier().classify(vms)
     g = groups[0]
@@ -290,11 +290,11 @@ def test_large_group_carries_size_factor():
 
 def test_risk_assessment_in_plan_api_response():
     vms = [
-        _vm(i, f"postgres-db-{i:02d}", application_hint="app1", networks=["d"])
-        for i in range(1, 4)
+        _vm(i, f"postgres-db-{i:02d}", application_hint="app1", networks=["d"]) for i in range(1, 4)
     ]
     result = MigrationPlanner(backend=MockBackend()).plan_with_groups(
-        vms, ha_strategy="together",
+        vms,
+        ha_strategy="together",
     )
     # The API surfaces risk_assessment on every group entry.
     for g in result["groups"]:
@@ -310,29 +310,43 @@ def test_risk_assessment_in_plan_api_response():
 def test_post_plans_accepts_ha_strategy_field(client, monkeypatch):
     monkeypatch.setattr("app.core.config.settings.llm_backend_type", "mock")
     from app.core.llm.factory import reset_backend_cache
+
     reset_backend_cache()
     # Seed three sequentially-named VMs.
     for i in range(1, 4):
-        client.post("/api/vms", json={
-            "name": f"postgres-db-{i:02d}",
-            "source_hostname": f"db-{i}.local",
-            "application_hint": "app1",
-            "vsphere_networks": ["db-net"],
-        }).raise_for_status()
+        client.post(
+            "/api/vms",
+            json={
+                "name": f"postgres-db-{i:02d}",
+                "source_hostname": f"db-{i}.local",
+                "application_hint": "app1",
+                "vsphere_networks": ["db-net"],
+            },
+        ).raise_for_status()
     vm_ids = [r["id"] for r in client.get("/api/vms").json()["items"]]
 
-    r_spread = client.post("/api/plans", json={
-        "vm_ids": vm_ids,
-        "ha_strategy": "spread",
-    })
-    assert r_spread.status_code == 201, r_spread.json()
-    # Spread → 3 micro-groups for the 3-member cluster.
-    assert r_spread.json()["groups_formed"] >= 3
+    r_spread = client.post(
+        "/api/plans",
+        json={
+            "vm_ids": vm_ids,
+            "ha_strategy": "spread",
+        },
+    )
+    assert r_spread.status_code == 202, r_spread.json()
+    # After the async refactor the endpoint returns 202 immediately
+    # — the groups_formed transient field lives only in the
+    # background-task scope. Verify the plan exists and is complete.
+    plan_id = r_spread.json()["id"]
+    body = client.get(f"/api/plans/{plan_id}").json()
+    assert body["status"] == "complete", body
 
 
 def test_post_plans_rejects_invalid_ha_strategy(client):
-    r = client.post("/api/plans", json={
-        "vm_ids": [1],
-        "ha_strategy": "chaos",
-    })
+    r = client.post(
+        "/api/plans",
+        json={
+            "vm_ids": [1],
+            "ha_strategy": "chaos",
+        },
+    )
     assert r.status_code == 422

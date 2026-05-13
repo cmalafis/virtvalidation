@@ -18,7 +18,7 @@ import uuid
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -28,6 +28,8 @@ from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
 from app.core.chunked_planner import (
     HierarchicalPlanResult,
+)
+from app.core.chunked_planner import (
     generate_plan as run_hierarchical_plan,
 )
 from app.core.strategy_planner import StrategyPlannerError
@@ -160,9 +162,7 @@ def resolve_scope(db: Session, scope: dict) -> list[VM]:
     """
     vm_ids = scope.get("vm_ids") or []
     if vm_ids:
-        return list(
-            db.scalars(select(VM).where(VM.id.in_(vm_ids)).order_by(VM.id)).all()
-        )
+        return list(db.scalars(select(VM).where(VM.id.in_(vm_ids)).order_by(VM.id)).all())
     stmt = select(VM).order_by(VM.id)
     if scope.get("source_vcenter_id") is not None:
         stmt = stmt.where(VM.source_vcenter_id == scope["source_vcenter_id"])
@@ -227,17 +227,13 @@ def run_plan_generation(
 
         strategy = db.get(PlanningStrategy, strategy_id)
         if strategy is None:
-            task_store.mark_failed(
-                task_id, error=f"Strategy {strategy_id} not found"
-            )
+            task_store.mark_failed(task_id, error=f"Strategy {strategy_id} not found")
             return
         mapping_warnings: list[str] = []
         if mapping_id is not None:
             mapping = db.get(ResourceMapping, mapping_id)
             if mapping is None:
-                task_store.mark_failed(
-                    task_id, error=f"Resource mapping {mapping_id} not found"
-                )
+                task_store.mark_failed(task_id, error=f"Resource mapping {mapping_id} not found")
                 return
             if mapping.status.value == "incomplete":
                 mapping_warnings.append(
@@ -259,9 +255,7 @@ def run_plan_generation(
             )
         vms = resolve_scope(db, scope)
         if not vms:
-            task_store.mark_failed(
-                task_id, error="Scope filter matched zero VMs"
-            )
+            task_store.mark_failed(task_id, error="Scope filter matched zero VMs")
             return
         profiles = assemble_vm_profiles(db, vms)
 
@@ -269,9 +263,7 @@ def run_plan_generation(
         # can hard-partition by classification without doing a second
         # query per VM.
         vc_rows = list(db.scalars(select(VCenterSource)).all())
-        classification_by_vc = {
-            row.id: row.classification_level.value for row in vc_rows
-        }
+        classification_by_vc = {row.id: row.classification_level.value for row in vc_rows}
 
         # Hand off to the hierarchical planner. Progress callbacks
         # update the task store so the UI's poll endpoint reflects
@@ -303,9 +295,7 @@ def run_plan_generation(
                 vms=vms,
                 vm_profiles=profiles,
                 strategy=strategy,
-                mappings=(
-                    db.get(ResourceMapping, mapping_id) if mapping_id else None
-                ),
+                mappings=(db.get(ResourceMapping, mapping_id) if mapping_id else None),
                 classification_by_vcenter=classification_by_vc,
                 progress_cb=_progress,
             )
@@ -347,9 +337,7 @@ def run_plan_generation(
                     sub_key=chunk_dict.get("sub_key") or {},
                     hints=chunk_dict.get("hints") or {},
                     vm_ids=chunk_dict.get("vm_ids") or [],
-                    sequence_dependencies=(
-                        chunk_dict.get("sequence_dependencies") or []
-                    ),
+                    sequence_dependencies=(chunk_dict.get("sequence_dependencies") or []),
                     chunk_rationale=chunk_dict.get("chunk_rationale") or None,
                     chunk_risk_level=chunk_dict.get("chunk_risk_level") or None,
                     wave_numbers=chunk_dict.get("wave_numbers") or [],
@@ -385,6 +373,211 @@ def run_plan_generation(
             len(plan.waves),
             len(result.chunks),
             len(plan.vm_ids),
+        )
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Simple (non-strategy) async runner used by POST /api/plans
+# ---------------------------------------------------------------------------
+def _update_plan_status(
+    plan_id: int,
+    *,
+    status_value: str | None = None,
+    progress_message: str | None = None,
+    progress_percent: int | None = None,
+    error_message: str | None = None,
+    completed_at: datetime | None = None,
+) -> None:
+    """Apply a single status transition to a Plan row.
+
+    Each transition is its own short-lived session so the polling
+    endpoint sees the update as soon as the planner advances —
+    deferring all writes to the end of the BackgroundTask would
+    leave the UI staring at progress_percent=0 for minutes.
+    """
+    db = _db_module.SessionLocal()
+    try:
+        plan = db.get(MigrationPlan, plan_id)
+        if plan is None:
+            return
+        if status_value is not None:
+            plan.status = status_value
+        if progress_message is not None:
+            plan.progress_message = progress_message
+        if progress_percent is not None:
+            plan.progress_percent = progress_percent
+        if error_message is not None:
+            plan.error_message = error_message
+        if completed_at is not None:
+            plan.completed_at = completed_at
+        db.commit()
+    finally:
+        db.close()
+
+
+def run_simple_plan_generation(
+    plan_id: int,
+    *,
+    vm_ids: list[int],
+    ha_strategy: str = "spread",
+    preclassification_enabled: bool = True,
+    actor: str = "user",
+) -> None:
+    """Body of the BackgroundTask the POST /api/plans endpoint spawns.
+
+    Walks the planner pipeline writing status transitions to the
+    Plan row at each stage. On failure the typed-exception message
+    is preserved verbatim in ``Plan.error_message`` so the operator
+    sees the same string the lifespan startup health-check logs
+    would surface.
+    """
+    # Lazy-imported so the module loads cheaply even when the planner
+    # isn't reachable (e.g. in unit tests that don't exercise this
+    # path).
+    from app.core.llm.base import LLMBackendError
+    from app.core.planner import MigrationPlanner, PlannerError
+
+    started = datetime.now(timezone.utc)
+    _update_plan_status(
+        plan_id,
+        status_value="validating",
+        progress_message="Loading VMs",
+        progress_percent=5,
+    )
+
+    db = _db_module.SessionLocal()
+    try:
+        unique_ids = list(dict.fromkeys(vm_ids))
+        vms = list(db.scalars(select(VM).where(VM.id.in_(unique_ids))).all())
+        missing = [vid for vid in unique_ids if vid not in {v.id for v in vms}]
+        if missing:
+            _update_plan_status(
+                plan_id,
+                status_value="failed",
+                error_message=f"Unknown vm_ids: {missing}",
+                completed_at=datetime.now(timezone.utc),
+            )
+            return
+        planner = MigrationPlanner()
+
+        if preclassification_enabled:
+            _update_plan_status(
+                plan_id,
+                status_value="chunking",
+                progress_message="Grouping VMs (preclassifier)",
+                progress_percent=20,
+            )
+            # The planner runs preclassifier + LLM rationale internally;
+            # update status to llm_grouping before invoking so the UI
+            # progresses through the visible states the spec calls out.
+            _update_plan_status(
+                plan_id,
+                status_value="llm_grouping",
+                progress_message="LLM generating per-wave rationale",
+                progress_percent=45,
+            )
+            try:
+                result = planner.plan_with_groups(vms, ha_strategy=ha_strategy)
+            except (PlannerError, LLMBackendError) as e:
+                # Verbatim error_message — the typed-exception layer
+                # already wrote operator-actionable detail (auth vs
+                # unreachable vs timeout vs response error). Don't
+                # rewrap it.
+                logger.warning("Plan %d generation failed: %s", plan_id, e)
+                _update_plan_status(
+                    plan_id,
+                    status_value="failed",
+                    error_message=str(e),
+                    completed_at=datetime.now(timezone.utc),
+                )
+                return
+        else:
+            _update_plan_status(
+                plan_id,
+                status_value="llm_grouping",
+                progress_message="Legacy raw-VM LLM call",
+                progress_percent=45,
+            )
+            from app.core.baseline import synthesize_profile
+
+            profiles: list[dict] = []
+            for vm in vms:
+                snapshots = list(
+                    db.scalars(
+                        select(BaselineSnapshot)
+                        .where(BaselineSnapshot.vm_id == vm.id)
+                        .order_by(BaselineSnapshot.collected_at.asc())
+                    ).all()
+                )
+                profile = synthesize_profile(vm.id, snapshots)
+                profiles.append(
+                    {
+                        "vm_id": vm.id,
+                        "name": vm.name,
+                        "role": vm.role or "",
+                        "os_family": vm.os_family or "",
+                        "vsphere_networks": list(vm.vsphere_networks or []),
+                        "vsphere_datastores": list(vm.vsphere_datastores or []),
+                        "target_namespace": vm.target_namespace or "",
+                        "target_storage_class": vm.target_storage_class or "",
+                        "target_network_attachment": vm.target_network_attachment or "",
+                        "baseline": profile.model_dump(mode="json"),
+                    }
+                )
+            try:
+                result = planner.plan(profiles)
+            except (PlannerError, LLMBackendError) as e:
+                logger.warning("Plan %d generation failed: %s", plan_id, e)
+                _update_plan_status(
+                    plan_id,
+                    status_value="failed",
+                    error_message=str(e),
+                    completed_at=datetime.now(timezone.utc),
+                )
+                return
+
+        _update_plan_status(
+            plan_id,
+            status_value="assembling",
+            progress_message="Persisting plan",
+            progress_percent=90,
+        )
+
+        plan = db.get(MigrationPlan, plan_id)
+        if plan is None:
+            return
+        plan.vm_ids = unique_ids
+        plan.waves = result["waves"]
+        plan.summary = result.get("summary") or None
+        plan.model = getattr(planner.backend, "default_model", "") or ""
+        plan.status = "complete"
+        plan.progress_message = "Done"
+        plan.progress_percent = 100
+        plan.completed_at = datetime.now(timezone.utc)
+        db.commit()
+
+        record_audit(
+            db,
+            action="plan.generated",
+            actor=actor,
+            resource_type="plan",
+            resource_id=plan.id,
+            details={
+                "vm_count": len(plan.vm_ids),
+                "wave_count": len(plan.waves),
+                "method": result.get("method", ""),
+                "elapsed_seconds": int((datetime.now(timezone.utc) - started).total_seconds()),
+            },
+        )
+        db.commit()
+        logger.info(
+            "plan %d generated: %d waves for %d VMs (method=%s)",
+            plan.id,
+            len(plan.waves),
+            len(plan.vm_ids),
+            result.get("method", ""),
         )
     finally:
         db.close()
@@ -440,33 +633,21 @@ def apply_move_vm(
     placeholders); cleanup is a separate operator decision.
     """
     if vm_id not in (plan.vm_ids or []):
-        raise PlanRevisionError(
-            f"vm_id {vm_id} is not in plan {plan.id}"
-        )
+        raise PlanRevisionError(f"vm_id {vm_id} is not in plan {plan.id}")
     waves = deepcopy(plan.waves or [])
-    target_wave = next(
-        (w for w in waves if w.get("wave_number") == target_wave_number), None
-    )
+    target_wave = next((w for w in waves if w.get("wave_number") == target_wave_number), None)
     if target_wave is None:
         raise PlanRevisionError(
             f"target_wave_number {target_wave_number} not found in plan {plan.id}"
         )
     source_wave = next(
-        (
-            w
-            for w in waves
-            if vm_id in (w.get("vm_ids") or [])
-        ),
+        (w for w in waves if vm_id in (w.get("vm_ids") or [])),
         None,
     )
     if source_wave is None:
-        raise PlanRevisionError(
-            f"vm_id {vm_id} not assigned to any wave in plan {plan.id}"
-        )
+        raise PlanRevisionError(f"vm_id {vm_id} not assigned to any wave in plan {plan.id}")
     if source_wave.get("wave_number") == target_wave_number:
-        raise PlanRevisionError(
-            f"vm_id {vm_id} is already in wave {target_wave_number}"
-        )
+        raise PlanRevisionError(f"vm_id {vm_id} is already in wave {target_wave_number}")
 
     source_wave["vm_ids"] = [v for v in source_wave["vm_ids"] if v != vm_id]
     target_wave["vm_ids"] = [*target_wave.get("vm_ids", []), vm_id]

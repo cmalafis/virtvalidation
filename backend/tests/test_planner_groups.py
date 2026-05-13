@@ -81,16 +81,30 @@ def test_plan_with_groups_57_vm_fleet_succeeds():
     vms = []
     idx = 1
     for i in range(1, 16):
-        vms.append(_vm(idx, f"epic-web-{i:02d}", networks=["epic-web"], application_hint="epic-emr"))
+        vms.append(
+            _vm(idx, f"epic-web-{i:02d}", networks=["epic-web"], application_hint="epic-emr")
+        )
         idx += 1
     for i in range(1, 11):
-        vms.append(_vm(idx, f"epic-app-{i:02d}", networks=["epic-app"], application_hint="epic-emr"))
+        vms.append(
+            _vm(idx, f"epic-app-{i:02d}", networks=["epic-app"], application_hint="epic-emr")
+        )
         idx += 1
     for i in range(1, 5):
-        vms.append(_vm(idx, f"postgres-db-{i:02d}", networks=["epic-db"], application_hint="epic-emr"))
+        vms.append(
+            _vm(idx, f"postgres-db-{i:02d}", networks=["epic-db"], application_hint="epic-emr")
+        )
         idx += 1
     for i in range(1, 13):
-        vms.append(_vm(idx, f"analytics-worker-{i:02d}", vcenter=2, networks=["analytics"], application_hint="analytics"))
+        vms.append(
+            _vm(
+                idx,
+                f"analytics-worker-{i:02d}",
+                vcenter=2,
+                networks=["analytics"],
+                application_hint="analytics",
+            )
+        )
         idx += 1
     for i in range(1, 6):
         vms.append(_vm(idx, f"dc-ldap-{i:02d}", vcenter=2, application_hint="infra"))
@@ -124,12 +138,15 @@ def test_plan_with_groups_waves_carry_group_ids():
 # ---------------------------------------------------------------------------
 def _seed_vms(client, count=5, prefix="web"):
     for i in range(1, count + 1):
-        client.post("/api/vms", json={
-            "name": f"{prefix}-{i:02d}",
-            "source_hostname": f"{prefix}-{i:02d}.local",
-            "vsphere_networks": [f"{prefix}-net"],
-            "application_hint": "test-app",
-        }).raise_for_status()
+        client.post(
+            "/api/vms",
+            json={
+                "name": f"{prefix}-{i:02d}",
+                "source_hostname": f"{prefix}-{i:02d}.local",
+                "vsphere_networks": [f"{prefix}-net"],
+                "application_hint": "test-app",
+            },
+        ).raise_for_status()
     rows = client.get("/api/vms").json()["items"]
     return [r["id"] for r in rows]
 
@@ -137,13 +154,17 @@ def _seed_vms(client, count=5, prefix="web"):
 def test_post_plans_uses_preclassification_by_default(client, monkeypatch):
     monkeypatch.setattr("app.core.config.settings.llm_backend_type", "mock")
     from app.core.llm.factory import reset_backend_cache
+
     reset_backend_cache()
     vm_ids = _seed_vms(client, count=6)
     r = client.post("/api/plans", json={"vm_ids": vm_ids})
-    assert r.status_code == 201, r.json()
-    body = r.json()
-    assert body["groups_formed"] >= 1
-    assert body["groups"]
+    # Post-async-rewrite the endpoint returns 202 immediately; the
+    # BackgroundTask runs before TestClient returns control, so by
+    # the time we GET the plan row it's already complete.
+    assert r.status_code == 202, r.json()
+    plan_id = r.json()["id"]
+    body = client.get(f"/api/plans/{plan_id}").json()
+    assert body["status"] == "complete", body
     # Plan invariant: every input vm_id appears in waves.
     placed = sorted(vid for wave in body["waves"] for vid in wave["vm_ids"])
     assert placed == sorted(vm_ids)
@@ -152,22 +173,27 @@ def test_post_plans_uses_preclassification_by_default(client, monkeypatch):
 def test_post_plans_preclassification_disabled_falls_back_to_raw(client, monkeypatch):
     monkeypatch.setattr("app.core.config.settings.llm_backend_type", "mock")
     from app.core.llm.factory import reset_backend_cache
+
     reset_backend_cache()
     vm_ids = _seed_vms(client, count=3)
-    r = client.post("/api/plans", json={
-        "vm_ids": vm_ids,
-        "preclassification_enabled": False,
-    })
-    assert r.status_code == 201, r.json()
-    body = r.json()
-    # Legacy path doesn't populate groups.
-    assert body["groups_formed"] == 0
-    assert body["groups"] == []
+    r = client.post(
+        "/api/plans",
+        json={
+            "vm_ids": vm_ids,
+            "preclassification_enabled": False,
+        },
+    )
+    assert r.status_code == 202, r.json()
+    plan_id = r.json()["id"]
+    body = client.get(f"/api/plans/{plan_id}").json()
+    assert body["status"] == "complete", body
+    assert body["waves"]
 
 
 def test_post_preview_groups_returns_groups_without_persisting(client, monkeypatch):
     monkeypatch.setattr("app.core.config.settings.llm_backend_type", "mock")
     from app.core.llm.factory import reset_backend_cache
+
     reset_backend_cache()
     vm_ids = _seed_vms(client, count=6)
     r = client.post("/api/plans/preview-groups", json={"vm_ids": vm_ids})
@@ -186,6 +212,74 @@ def test_post_preview_groups_404_for_unknown_vm_ids(client):
 
 
 # ---------------------------------------------------------------------------
+# Async plan generation lifecycle (status, error_message)
+# ---------------------------------------------------------------------------
+def test_post_plans_persists_status_and_started_at(client, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.llm_backend_type", "mock")
+    from app.core.llm.factory import reset_backend_cache
+
+    reset_backend_cache()
+    vm_ids = _seed_vms(client, count=3)
+    r = client.post("/api/plans", json={"vm_ids": vm_ids})
+    assert r.status_code == 202
+    body = r.json()
+    # POST response reflects the row at create time. The background
+    # task may have already updated it by the time the response is
+    # serialized, so we accept either pending or any post-pending
+    # status — what matters is that started_at is populated and the
+    # plan exists.
+    assert body["id"]
+    assert body["started_at"] is not None
+    # The drift test pins the columns exist; the GET fetches the
+    # final state once the background task has run.
+    plan_id = body["id"]
+    fetched = client.get(f"/api/plans/{plan_id}").json()
+    assert fetched["status"] in (
+        "complete",
+        "pending",
+        "validating",
+        "chunking",
+        "llm_grouping",
+        "assembling",
+    )
+
+
+def test_post_plans_404_for_unknown_vm_ids_before_task_spawns(client):
+    # Fail-fast pre-flight: missing vm_ids must 404 synchronously,
+    # without leaving a stale "failed" plan row behind. Operators
+    # who typo a vm_id shouldn't pollute the plan history.
+    r = client.post("/api/plans", json={"vm_ids": [9999999]})
+    assert r.status_code == 404
+    plans = client.get("/api/plans").json()
+    assert plans == []
+
+
+def test_get_plan_surfaces_error_message_when_background_fails(client, monkeypatch):
+    # Force the planner to fail with a typed LLM exception. The
+    # error_message column must carry the verbatim str(e) so the
+    # frontend can show "Cannot reach KServe at ..." rather than a
+    # generic "Plan generation failed".
+    from app.core.llm.base import LLMUnreachableError
+
+    def _boom(self, vms, ha_strategy="spread"):
+        raise LLMUnreachableError("Cannot reach KServe at https://wrong.svc")
+
+    monkeypatch.setattr("app.core.planner.MigrationPlanner.plan_with_groups", _boom)
+    monkeypatch.setattr("app.core.config.settings.llm_backend_type", "mock")
+    from app.core.llm.factory import reset_backend_cache
+
+    reset_backend_cache()
+    vm_ids = _seed_vms(client, count=2)
+    r = client.post("/api/plans", json={"vm_ids": vm_ids})
+    assert r.status_code == 202
+    plan_id = r.json()["id"]
+    body = client.get(f"/api/plans/{plan_id}").json()
+    assert body["status"] == "failed", body
+    assert "Cannot reach KServe" in (body["error_message"] or "")
+    assert body["completed_at"] is not None
+
+
+# ---------------------------------------------------------------------------
 # Performance: LLM stays cheap regardless of VM count
 # ---------------------------------------------------------------------------
 def test_plan_with_groups_10_vms_under_a_second():
@@ -200,11 +294,14 @@ def test_plan_with_groups_100_vms_under_two_seconds():
     vms = []
     for i in range(1, 101):
         role = ["web", "app", "db", "edge"][i % 4]
-        vms.append(_vm(
-            i, f"{role}-{i:03d}",
-            networks=[f"net-{i % 5}"],
-            application_hint=f"app-{i % 10}",
-        ))
+        vms.append(
+            _vm(
+                i,
+                f"{role}-{i:03d}",
+                networks=[f"net-{i % 5}"],
+                application_hint=f"app-{i % 10}",
+            )
+        )
     started = time.monotonic()
     result = MigrationPlanner(backend=MockBackend()).plan_with_groups(vms)
     elapsed = time.monotonic() - started
@@ -219,12 +316,15 @@ def test_plan_with_groups_1000_vms_under_ten_seconds():
     vms = []
     for i in range(1, 1001):
         role = ["web", "app", "db", "edge"][i % 4]
-        vms.append(_vm(
-            i, f"{role}-{i:04d}",
-            networks=[f"net-{i % 8}"],
-            datastores=[f"ds-{i % 4}"],
-            application_hint=f"app-{i % 25}",
-        ))
+        vms.append(
+            _vm(
+                i,
+                f"{role}-{i:04d}",
+                networks=[f"net-{i % 8}"],
+                datastores=[f"ds-{i % 4}"],
+                application_hint=f"app-{i % 25}",
+            )
+        )
     started = time.monotonic()
     result = MigrationPlanner(backend=MockBackend()).plan_with_groups(vms)
     elapsed = time.monotonic() - started
