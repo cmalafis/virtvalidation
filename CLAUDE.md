@@ -226,6 +226,82 @@ See `docs/DATABASE_MIGRATIONS.md` for the full workflow including
 data migrations, rollback recovery, and the legacy-`create_all`
 bridge for v0.1.x deployments.
 
+## Enum I/O rules (names vs. values on both sides)
+
+Whenever a Python `str` enum has member NAMES that differ from member
+VALUES (e.g. `rwx = "ReadWriteMany"`), the codebase needs explicit
+serialization config on BOTH sides of every I/O boundary — otherwise
+SQLAlchemy / Pydantic default behavior leaks the wrong string and
+something at the other end rejects it.
+
+**Output side (API → frontend):**
+
+```python
+class FooRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+    state: FooState
+```
+
+Without `use_enum_values=True`, FastAPI emits the member NAME instead
+of the VALUE, breaking any frontend filter that uses the value string.
+
+**Input side (SQLAlchemy → Postgres):**
+
+```python
+state: Mapped[FooState] = mapped_column(
+    Enum(FooState, name="foo_state",
+         values_callable=lambda e: [m.value for m in e]),
+    ...
+)
+```
+
+Without `values_callable`, SQLAlchemy `INSERT`s the member NAME, and
+Postgres rejects with `invalid input value for enum foo_state: "rwx"`
+when the Alembic migration created the `CREATE TYPE` with the values
+(`"ReadWriteMany"`). The `values_callable` callback must match what
+the migration's `sa.Enum(...)` literal list contains.
+
+**Skip both** when `member = "member"` style (names == values). The
+default behavior is correct in that case and adding the kwargs is
+noise. Most enums in this codebase fall here — `available =
+"available"`, `discovered = "discovered"` etc.
+
+**Audit shortcut**: grep `app/models/*.py` for `Enum(` to find every
+column. For each, check the surrounding enum class definition: if
+the right-hand-side of any member is not a copy of the left-hand-side
+identifier, the column needs `values_callable`.
+
+Known wart: `ValidationStatus` (`passed = "pass"`, `failed = "fail"`)
+has names ≠ values BUT its migration mistakenly used the NAMES on
+`CREATE TYPE`, so SQLAlchemy's default (send NAME) accidentally
+matches Postgres's type. It works in production but is semantically
+wrong. Don't fix it without a coordinated migration + frontend
+audit — the API output today is the NAME, not the VALUE.
+
+## Frontend orphans (rewrite-without-rewire)
+
+When a session rewrites a frontend component (e.g. PlanWizard,
+GeneratePlanModal) it MUST either delete the old component or rewire
+its call site. A rewritten file alone isn't enough — Vite happily
+bundles unreferenced components and the dashboard keeps importing
+the old one. Two failure modes:
+
+1. **New component is route-mounted only, dashboard still opens old
+   modal.** The new code is in the bundle but unreachable. Operator
+   sees no change.
+2. **Two components with the same title coexist.** The wrong one
+   wins because nothing wires the new one in.
+
+Before declaring "I rewrote X":
+
+1. `grep -rn 'OldComponentName\|<distinctive title string>' frontend/src/`
+   to find every reference. If anything outside the rewritten file
+   matches, decide: delete it, or rewire it.
+2. Verify by clicking through the deployed UI, not by checking that
+   the bundle's hash changed or that a new string is present in the
+   minified output. Bundle changes don't prove the new code is on
+   the operator's screen.
+
 ## Deployment template edits (Helm + Containerfiles)
 
 These traps were caught on the first real OpenShift deployment.
