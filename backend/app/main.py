@@ -37,6 +37,12 @@ from app.models import (
     storage_review as _storage_review_models,  # noqa: F401  (register models on Base)
 )
 from app.models import target as _target_models  # noqa: F401  (register models on Base)
+from app.models import (
+    target_network as _target_network_models,  # noqa: F401  (register models on Base)
+)
+from app.models import (
+    target_storage_class as _target_storage_class_models,  # noqa: F401  (register models on Base)
+)
 from app.models import validation as _validation_models  # noqa: F401  (register models on Base)
 from app.models import (
     validation_cache as _validation_cache_models,  # noqa: F401  (register models on Base)

@@ -23,6 +23,8 @@ from app.models import (  # noqa: F401  (register models on Base)
     settings,
     storage_review,
     target,
+    target_network,
+    target_storage_class,
     validation,
     validation_cache,
     validation_schedule,
