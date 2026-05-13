@@ -584,9 +584,25 @@ def delete_mapping(
     shape used by ``target_entities.delete_network`` so the frontend
     can render referencing rows consistently."""
     mapping = _get_mapping_or_404(db, mapping_id)
-    referencing = list(
-        db.scalars(select(MigrationPlan).where(MigrationPlan.mapping_id == mapping.id)).all()
+    # Catch references via BOTH columns. ``mapping_id`` is the legacy
+    # singular FK; ``mapping_ids`` is the multi-mapping JSON list. A
+    # plan with this mapping anywhere in mapping_ids should still
+    # block deletion — the YAML emitter looks them up by id at export
+    # time. JSON-contains semantics vary across dialects so we filter
+    # in Python; plan count is bounded by operator usage and this
+    # endpoint isn't on a hot path.
+    candidate_plans = list(
+        db.scalars(
+            select(MigrationPlan).where(
+                (MigrationPlan.mapping_id == mapping.id) | (MigrationPlan.mapping_ids.is_not(None))
+            )
+        ).all()
     )
+    referencing = [
+        p
+        for p in candidate_plans
+        if p.mapping_id == mapping.id or mapping.id in (p.mapping_ids or [])
+    ]
     if referencing:
         raise HTTPException(
             status_code=409,

@@ -1439,6 +1439,7 @@ const DATA = {
               "summary",
               "model",
               "mapping_id",
+              "mapping_ids",
               "status",
               "progress_message",
               "progress_percent",
@@ -1528,6 +1529,7 @@ const DATA = {
               "wave_number",
               "name",
               "vm_ids",
+              "vm_names",
               "rationale",
               "estimated_duration",
               "estimated_risk",
@@ -1551,6 +1553,7 @@ const DATA = {
               "summary",
               "model",
               "mapping_id",
+              "mapping_ids",
               "created_at",
               "status",
               "progress_message",
@@ -1573,6 +1576,7 @@ const DATA = {
             "fields": [
               "vm_ids",
               "name",
+              "mapping_ids",
               "mapping_id",
               "preclassification_enabled",
               "ha_strategy"
@@ -4112,7 +4116,8 @@ const DATA = {
               "risk_rationale",
               "notable_concerns",
               "method",
-              "mtv_yaml"
+              "mtv_yaml",
+              "vm_names"
             ],
             "methods": [
               {
@@ -6997,6 +7002,10 @@ const DATA = {
             "kind": "component"
           },
           {
+            "name": "MappingMultiSelect",
+            "kind": "component"
+          },
+          {
             "name": "FilterBar",
             "kind": "component"
           },
@@ -7584,8 +7593,6 @@ const DATA = {
         "api_calls": [
           "/api/audit?{id}",
           "/api/network-reviews",
-          "/api/plans",
-          "/api/plans/{id}",
           "/api/plans/{id}/waves/{id}/mtv-yaml",
           "/api/plans?limit=1",
           "/api/snapshots/capture-all",
@@ -7664,10 +7671,6 @@ const DATA = {
           },
           {
             "name": "BulkDeleteVMsModal",
-            "kind": "component"
-          },
-          {
-            "name": "GeneratePlanModal",
             "kind": "component"
           },
           {

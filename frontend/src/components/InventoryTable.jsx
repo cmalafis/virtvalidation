@@ -28,6 +28,17 @@ const STATUS_OPTIONS = [
   { value: "failed", label: "Failed" },
 ];
 
+// Plan-membership lifecycle. Parallel state machine to VMStatus —
+// "Plan" filter answers "is this VM available to add to a new plan?"
+// while "Status" answers the validation lifecycle.
+const LIFECYCLE_OPTIONS = [
+  { value: "available", label: "Available" },
+  { value: "planned", label: "Planned" },
+  { value: "migrated", label: "Migrated" },
+  { value: "rolled_back", label: "Rolled Back" },
+  { value: "unmanageable", label: "Unmanageable" },
+];
+
 const STATUS_COLOR = {
   discovered: "#9ca3ff",
   baseline_captured: "#4488ff",
@@ -164,6 +175,7 @@ function readStateFromUrl(searchParams) {
     sortOrder: searchParams.get("sortOrder") === "desc" ? "desc" : "asc",
     search: searchParams.get("search") || "",
     status: arr("status"),
+    lifecycle_state: arr("lifecycle_state"),
     environment: arr("environment"),
     os_family: arr("os_family"),
     application_hint: arr("application_hint"),
@@ -180,6 +192,7 @@ function writeStateToUrl(state) {
   if (state.search) params.set("search", state.search);
   for (const [key, values] of [
     ["status", state.status],
+    ["lifecycle_state", state.lifecycle_state],
     ["environment", state.environment],
     ["os_family", state.os_family],
     ["application_hint", state.application_hint],
@@ -199,6 +212,7 @@ function buildQueryString(state) {
   if (state.search) params.set("search", state.search);
   for (const [key, values] of [
     ["status", state.status],
+    ["lifecycle_state", state.lifecycle_state],
     ["environment", state.environment],
     ["os_family", state.os_family],
     ["application_hint", state.application_hint],
@@ -378,6 +392,7 @@ export default function InventoryTable({
   const [searchInput, setSearchInput] = useState(initial.search);
   const [search, setSearch] = useState(initial.search);
   const [statusFilter, setStatusFilter] = useState(initial.status);
+  const [lifecycleStateFilter, setLifecycleStateFilter] = useState(initial.lifecycle_state);
   const [environmentFilter, setEnvironmentFilter] = useState(initial.environment);
   const [osFamilyFilter, setOsFamilyFilter] = useState(initial.os_family);
   const [applicationFilter, setApplicationFilter] = useState(initial.application_hint);
@@ -406,19 +421,20 @@ export default function InventoryTable({
     setPage(0);
   }, [
     search, sortBy, sortOrder, pageSize,
-    statusFilter, environmentFilter, osFamilyFilter,
+    statusFilter, lifecycleStateFilter, environmentFilter, osFamilyFilter,
     applicationFilter, vcenterFilter,
   ]);
 
   // Build the query state once per dependent value change.
   const queryState = useMemo(() => ({
     page, pageSize, sortBy, sortOrder, search,
-    status: statusFilter, environment: environmentFilter,
+    status: statusFilter, lifecycle_state: lifecycleStateFilter,
+    environment: environmentFilter,
     os_family: osFamilyFilter, application_hint: applicationFilter,
     vcenter_source_id: vcenterFilter,
   }), [
     page, pageSize, sortBy, sortOrder, search,
-    statusFilter, environmentFilter, osFamilyFilter,
+    statusFilter, lifecycleStateFilter, environmentFilter, osFamilyFilter,
     applicationFilter, vcenterFilter,
   ]);
 
@@ -453,6 +469,7 @@ export default function InventoryTable({
       const params = new URLSearchParams();
       for (const [key, values] of [
         ["status", statusFilter],
+        ["lifecycle_state", lifecycleStateFilter],
         ["environment", environmentFilter],
         ["os_family", osFamilyFilter],
         ["application_hint", applicationFilter],
@@ -466,7 +483,7 @@ export default function InventoryTable({
       // Facets are advisory — failure shouldn't block the table.
       setFacets(null);
     }
-  }, [statusFilter, environmentFilter, osFamilyFilter, applicationFilter, vcenterFilter]);
+  }, [statusFilter, lifecycleStateFilter, environmentFilter, osFamilyFilter, applicationFilter, vcenterFilter]);
 
   useEffect(() => { loadItems(); }, [loadItems, refreshSignal]);
   useEffect(() => { loadFacets(); }, [loadFacets, refreshSignal]);
@@ -515,6 +532,7 @@ export default function InventoryTable({
     setSearchInput("");
     setSearch("");
     setStatusFilter([]);
+    setLifecycleStateFilter([]);
     setEnvironmentFilter([]);
     setOsFamilyFilter([]);
     setApplicationFilter([]);
@@ -528,6 +546,7 @@ export default function InventoryTable({
       params.set("confirm", "true");
       for (const [key, values] of [
         ["status", statusFilter],
+        ["lifecycle_state", lifecycleStateFilter],
         ["environment", environmentFilter],
         ["os_family", osFamilyFilter],
         ["application_hint", applicationFilter],
@@ -552,7 +571,7 @@ export default function InventoryTable({
       setDeletingAll(false);
     }
   }, [
-    statusFilter, environmentFilter, osFamilyFilter, applicationFilter,
+    statusFilter, lifecycleStateFilter, environmentFilter, osFamilyFilter, applicationFilter,
     vcenterFilter, search, loadItems, loadFacets, onMutate,
   ]);
 
@@ -613,6 +632,9 @@ export default function InventoryTable({
       status: STATUS_OPTIONS.map((o) => ({
         ...o, count: facets?.status?.[o.value],
       })),
+      lifecycle_state: LIFECYCLE_OPTIONS.map((o) => ({
+        ...o, count: facets?.lifecycle_state?.[o.value],
+      })),
       environment: opt("environment"),
       os_family: opt("os_family"),
       application_hint: opt("application_hint"),
@@ -631,6 +653,7 @@ export default function InventoryTable({
   const filterDescription = useMemo(() => {
     const parts = [];
     if (statusFilter.length) parts.push(`status: ${statusFilter.join(", ")}`);
+    if (lifecycleStateFilter.length) parts.push(`plan: ${lifecycleStateFilter.join(", ")}`);
     if (environmentFilter.length) parts.push(`environment: ${environmentFilter.join(", ")}`);
     if (osFamilyFilter.length) parts.push(`os_family: ${osFamilyFilter.join(", ")}`);
     if (applicationFilter.length) parts.push(`application: ${applicationFilter.join(", ")}`);
@@ -638,7 +661,7 @@ export default function InventoryTable({
     if (search) parts.push(`search: "${search}"`);
     return parts.length === 0 ? "no filters — every VM in inventory" : parts.join(" · ");
   }, [
-    statusFilter, environmentFilter, osFamilyFilter, applicationFilter,
+    statusFilter, lifecycleStateFilter, environmentFilter, osFamilyFilter, applicationFilter,
     vcenterFilter, search,
   ]);
 
@@ -674,6 +697,12 @@ export default function InventoryTable({
           options={facetOptions.status}
           selected={statusFilter}
           onChange={setStatusFilter}
+        />
+        <FacetDropdown
+          label="Plan"
+          options={facetOptions.lifecycle_state}
+          selected={lifecycleStateFilter}
+          onChange={setLifecycleStateFilter}
         />
         <FacetDropdown
           label="Environment"

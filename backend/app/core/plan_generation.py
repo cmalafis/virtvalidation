@@ -141,11 +141,21 @@ def run_simple_plan_generation(
         plan_row = db.get(MigrationPlan, plan_id)
         if plan_row is None:
             return
-        mapping = (
-            db.get(ResourceMapping, plan_row.mapping_id)
-            if plan_row.mapping_id is not None
-            else None
-        )
+        # Load every mapping referenced by the plan. ``mapping_ids`` is
+        # the canonical list post-migration; ``mapping_id`` is the
+        # legacy singular alias used only when ``mapping_ids`` is
+        # missing (pre-migration rows or callers that haven't switched
+        # over).
+        mapping_id_list = list(plan_row.mapping_ids or [])
+        if not mapping_id_list and plan_row.mapping_id is not None:
+            mapping_id_list = [plan_row.mapping_id]
+        mappings: list[ResourceMapping] = []
+        if mapping_id_list:
+            mappings = list(
+                db.scalars(
+                    select(ResourceMapping).where(ResourceMapping.id.in_(mapping_id_list))
+                ).all()
+            )
 
         def _progress_cb(stage: str) -> None:
             status_value, pct = _PIPELINE_STAGE_TO_STATUS.get(stage, (stage, None))
@@ -161,7 +171,7 @@ def run_simple_plan_generation(
             pipeline_result = asyncio.run(
                 run_pipeline(
                     vms,
-                    mapping,
+                    mappings,
                     plan_id=plan_id,
                     backend=backend,
                     progress_cb=_progress_cb,

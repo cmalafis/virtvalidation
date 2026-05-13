@@ -11,7 +11,7 @@ Two layers:
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.plan import (
     ApplicationAtomicity,
@@ -71,6 +71,10 @@ class WaveRead(BaseModel):
     wave_number: int
     name: str = ""
     vm_ids: list[int] = Field(default_factory=list)
+    # Parallel-indexed to ``vm_ids`` — hostnames rendered in the wave
+    # detail. Empty for legacy plans generated before the field was
+    # added; the frontend falls back to ``/api/vms`` lookups.
+    vm_names: list[str] = Field(default_factory=list)
     rationale: str = ""
     estimated_duration: str = ""
     estimated_risk: str = ""  # legacy field name kept for back-compat
@@ -99,8 +103,19 @@ class PlanRead(BaseModel):
     waves: list[dict]
     summary: str | None = None
     model: str
+    # ``mapping_ids`` is the canonical list; ``mapping_id`` is kept for
+    # one release as a legacy alias = mapping_ids[0] if mapping_ids
+    # else None. Both surfaced so existing UI bindings keep rendering
+    # while the wizard switches over. Coerce None → [] for pre-multi-
+    # mapping rows whose mapping_ids column hasn't been backfilled.
     mapping_id: int | None = None
+    mapping_ids: list[int] = Field(default_factory=list)
     created_at: datetime
+
+    @field_validator("mapping_ids", mode="before")
+    @classmethod
+    def _coerce_null_mapping_ids(cls, v):
+        return v if v is not None else []
 
     # Async-lifecycle fields the rewritten POST /api/plans writes to
     # via its BackgroundTask. ``status`` is the source of truth for the
@@ -136,11 +151,21 @@ class PlanCreate(BaseModel):
     # Operator-facing plan label. Falls back to "Untitled plan" when
     # not supplied so the legacy synchronous-create tests still pass.
     name: str = Field(default="Untitled plan", min_length=1, max_length=255)
-    # Resource mapping that drives target namespace + network +
-    # storage resolution. Required to pass Stage 0 in practice — the
-    # background task fails fast if any VM references unmapped source
-    # resources. Optional in the schema so existing tests that don't
-    # set vm.vsphere_networks / vsphere_datastores still pass.
+    # Resource mappings that drive target namespace + network +
+    # storage resolution. Each VM is routed to the mapping whose
+    # ``vcenter_source_id`` matches the VM's source vCenter. Semantics:
+    #   * field omitted (None)   → auto-resolve active mappings per
+    #     vCenter touched by the selection (preserves CLI / pre-wizard
+    #     behavior)
+    #   * empty list ``[]``      → operator explicitly opted out; only
+    #     per-VM target fields cover Stage 0 validation
+    #   * ``[id1, id2, ...]``    → use these mappings, route per-VM by
+    #     vcenter
+    mapping_ids: list[int] | None = Field(default=None)
+    # Singular legacy alias kept for one release so existing CLI /
+    # test callers don't break. When provided ALONE (no mapping_ids),
+    # treated as ``mapping_ids=[mapping_id]``. Ignored when
+    # ``mapping_ids`` is also set.
     mapping_id: int | None = Field(default=None)
     # Retained for back-compat with the synchronous tests; the new
     # pipeline ignores them. The mechanical pre-classifier always

@@ -59,8 +59,10 @@ def _complete_mapping() -> ResourceMapping:
     )
 
 
-def _run(vms, mapping=None, plan_id: int = 1):
-    return asyncio.run(run_pipeline(vms, mapping or _complete_mapping(), plan_id=plan_id))
+def _run(vms, mappings=None, plan_id: int = 1):
+    if mappings is None:
+        mappings = [_complete_mapping()]
+    return asyncio.run(run_pipeline(vms, mappings, plan_id=plan_id))
 
 
 class TestPipelineScale:
@@ -107,11 +109,32 @@ class TestPipelineScale:
     def test_cross_vcenter_distinct_concurrency_groups(self):
         # 3 VMs in vc=10, 3 in vc=20 — Stage 5 should assign different
         # vcenter waves to (potentially) same color but never two vc=10
-        # waves to the same color.
+        # waves to the same color. Two mappings, one per vcenter,
+        # exercises the multi-mapping per-vcenter routing.
         vms = [_vm(i, f"app-{i:03d}", vcenter_id=10, application_hint="a") for i in range(1, 4)] + [
             _vm(i, f"app-{i:03d}", vcenter_id=20, application_hint="b") for i in range(4, 7)
         ]
-        result = _run(vms)
+        m10 = ResourceMapping(
+            name="m10",
+            vcenter_source_id=10,
+            ocp_target_id=1,
+            network_mappings=[
+                {"source_network": "vlan-100", "target_network_name": "vlan-100-nad"}
+            ],
+            storage_mappings=[{"source_datastore": "tier1", "target_storage_class": "ocs-rbd"}],
+            namespace_mappings=[],
+        )
+        m20 = ResourceMapping(
+            name="m20",
+            vcenter_source_id=20,
+            ocp_target_id=1,
+            network_mappings=[
+                {"source_network": "vlan-100", "target_network_name": "vlan-100-nad"}
+            ],
+            storage_mappings=[{"source_datastore": "tier1", "target_storage_class": "ocs-rbd"}],
+            namespace_mappings=[],
+        )
+        result = _run(vms, [m10, m20])
         # Should have at least 2 waves (one per vcenter, different
         # primary partitions).
         vc_per_wave = {
@@ -127,7 +150,7 @@ class TestPipelineValidation:
         vm = _vm(1, "app-01", networks=("vlan-999",))
         # Mapping covers vlan-100 only.
         with pytest.raises(PlanValidationError) as exc:
-            _run([vm], _complete_mapping())
+            _run([vm], [_complete_mapping()])
         # Gap should call out vlan-999.
         assert any(
             g.source_value == "vlan-999" and g.kind == "network" for g in exc.value.result.gaps
@@ -137,7 +160,7 @@ class TestPipelineValidation:
         vm = _vm(1, "app-01", target_namespace=None)
         # Mapping has no namespace strategy.
         with pytest.raises(PlanValidationError):
-            _run([vm], _complete_mapping())
+            _run([vm], [_complete_mapping()])
 
 
 class TestPipelinePerformance:

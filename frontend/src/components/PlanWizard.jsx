@@ -6,14 +6,18 @@ import { fetchJSON } from "../utils/fetchJSON";
 // Per-VM plan creation page. Two steps:
 //
 //   1. Plan name + mapping selection — operator picks the
-//      ResourceMapping that drives target namespace / network /
-//      storage resolution.
+//      ResourceMappings that drive target namespace / network /
+//      storage resolution. Multi-select because mappings are scoped
+//      per source vCenter and a plan covering multiple vCenters
+//      needs one mapping per vcenter. Defaults to all-selected so
+//      the common case (operator just wants every applicable
+//      mapping considered) is one click.
 //   2. VM selector — filters + checkbox-per-VM list, capped at
 //      MAX_VMS_PER_PLAN (250). The selector hides VMs that are
 //      already in another active plan by default; toggles expose
 //      planned + migrated rows for auditing (not selectable).
 //
-// Submission POSTs to /api/plans with {name, mapping_id, vm_ids}
+// Submission POSTs to /api/plans with {name, mapping_ids, vm_ids}
 // and polls /api/plans/{id} every 2s until status reaches
 // "complete" or "failed". The new pipeline is deterministic for
 // stages 1-5+7 and LLM-bounded for stage 6 (~25 parallel calls
@@ -48,7 +52,10 @@ export default function PlanWizard() {
 
   // Step 1 state
   const [name, setName] = useState("");
-  const [mappingId, setMappingId] = useState("");
+  // Set of selected mapping ids (numbers). Default-populated with
+  // every available mapping after fetch so the operator's common
+  // case is one click.
+  const [mappingIds, setMappingIds] = useState(() => new Set());
   const [mappings, setMappings] = useState([]);
   const [step, setStep] = useState(1);
 
@@ -83,7 +90,14 @@ export default function PlanWizard() {
   // ---------------------------------------------------------------
   useEffect(() => {
     fetchJSON("/api/mappings")
-      .then((data) => setMappings(Array.isArray(data) ? data : []))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        setMappings(list);
+        // Default: all selected. Operator deselects what they want
+        // to exclude; the validator routes each VM to the mapping
+        // whose vcenter matches.
+        setMappingIds(new Set(list.map((m) => m.id)));
+      })
       .catch(() => setMappings([]));
   }, []);
 
@@ -198,8 +212,10 @@ export default function PlanWizard() {
       const body = {
         name: name.trim(),
         vm_ids: Array.from(selected.keys()),
+        // Always send the list (even empty) so the backend can
+        // distinguish "operator opted out" from "field omitted".
+        mapping_ids: Array.from(mappingIds),
       };
-      if (mappingId) body.mapping_id = parseInt(mappingId, 10);
       const plan = await fetchJSON("/api/plans", { method: "POST", body });
       toast("Generating plan…", { ...TOAST_OPTS, icon: "🤖" });
 
@@ -270,22 +286,17 @@ export default function PlanWizard() {
               autoFocus
             />
 
-            <label style={{ ...labelStyle, marginTop: 18 }}>Resource mapping</label>
-            <select
-              style={inputStyle}
-              value={mappingId}
-              onChange={(e) => setMappingId(e.target.value)}
-            >
-              <option value="">— No mapping (per-VM target fields only) —</option>
-              {mappings.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name} · {m.status} {m.is_active ? "· active" : ""}
-                </option>
-              ))}
-            </select>
+            <label style={{ ...labelStyle, marginTop: 18 }}>Resource mappings</label>
+            <MappingMultiSelect
+              mappings={mappings}
+              selected={mappingIds}
+              onChange={setMappingIds}
+            />
             <div style={{ fontSize: 12, color: "#888899", marginTop: 6 }}>
-              Mapping resolves source vSphere resources to target cluster
-              resources. Plan creation refuses VMs with unmapped resources.
+              Mappings resolve source vSphere resources to target cluster
+              resources. Each VM is routed to the mapping whose source
+              vCenter matches the VM's. Plan creation refuses VMs whose
+              vCenter isn't covered by any selected mapping.
             </div>
 
             <div
@@ -460,6 +471,103 @@ function StepBar({ current }) {
     </div>
   );
 }
+
+function MappingMultiSelect({ mappings, selected, onChange }) {
+  if (!mappings || mappings.length === 0) {
+    return (
+      <div
+        style={{
+          padding: "12px 14px",
+          border: "1px solid #2a2a44",
+          background: "#07070f",
+          color: "#888899",
+          fontSize: 13,
+        }}
+      >
+        No resource mappings defined yet. The plan will rely entirely
+        on per-VM target fields.
+      </div>
+    );
+  }
+  const selectAll = () => onChange(new Set(mappings.map((m) => m.id)));
+  const clearAll = () => onChange(new Set());
+  const toggle = (id) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange(next);
+  };
+  return (
+    <div
+      style={{
+        border: "1px solid #2a2a44",
+        background: "#07070f",
+        padding: "10px 12px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 8,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 11,
+            color: "#888899",
+            fontFamily: "'Share Tech Mono', monospace",
+            letterSpacing: "0.06em",
+          }}
+        >
+          {selected.size} of {mappings.length} selected
+        </span>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button type="button" style={btnGhost} onClick={selectAll}>
+            Select all
+          </button>
+          <button type="button" style={btnGhost} onClick={clearAll}>
+            Clear all
+          </button>
+        </div>
+      </div>
+      <div style={{ maxHeight: 220, overflow: "auto" }}>
+        {mappings.map((m) => {
+          const checked = selected.has(m.id);
+          return (
+            <label
+              key={m.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "6px 4px",
+                cursor: "pointer",
+                color: "#ccccee",
+                fontSize: 13,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggle(m.id)}
+              />
+              <span style={{ flex: 1 }}>
+                <span style={{ fontWeight: 600 }}>{m.name}</span>
+                <span style={{ color: "#888899", marginLeft: 8, fontSize: 12 }}>
+                  · {m.status}
+                  {m.is_active ? " · active" : ""}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 
 function FilterBar({ filters, facets, onChange }) {
   const setMulti = (key, value) => {

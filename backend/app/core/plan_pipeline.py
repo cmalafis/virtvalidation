@@ -68,6 +68,12 @@ class AnnotatedWave:
     mechanical fallback). The YAML field is populated by Stage 7.
     The pipeline never returns a wave without all of these set —
     every operator-facing wave is rendered with full context.
+
+    ``vm_names`` is parallel-indexed to ``wave.vm_ids`` and is
+    populated by the pipeline before serialization so the frontend
+    can render hostnames without a separate /api/vms round-trip.
+    Operators recognize ``backup-s-app-013.corp.local``; ``vm-2243``
+    is just a row id.
     """
 
     wave: Wave
@@ -77,12 +83,14 @@ class AnnotatedWave:
     notable_concerns: list[str] = field(default_factory=list)
     method: str = "mechanical_fallback"  # llm | llm_retry_N | mechanical_fallback
     mtv_yaml: str = ""
+    vm_names: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Render to the JSON shape persisted in MigrationPlan.waves[]."""
         return {
             "wave_number": self.wave.wave_number,
             "vm_ids": list(self.wave.vm_ids),
+            "vm_names": list(self.vm_names),
             "group_ids": [g.key.as_string() for g in self.wave.groups],
             "vm_count": self.wave.vm_count,
             "estimated_risk": self.wave.estimated_risk,
@@ -136,6 +144,31 @@ def _build_resolver(mapping: ResourceMapping | None) -> MappingResolver | None:
     )
 
 
+def _mapping_for_wave(
+    wave: Wave,
+    mappings: list[ResourceMapping],
+    vm_by_id: dict[int, VM],
+) -> ResourceMapping | None:
+    """Pick the mapping whose vCenter covers this wave's VMs.
+
+    Per the partition rule, every VM in a wave shares one
+    ``source_vcenter_id`` — so the lookup is unambiguous and we can
+    return the first match. Returns None if the wave's VMs have no
+    vcenter (legacy data) or no mapping in the list covers it.
+    """
+    if not mappings:
+        return None
+    for vid in wave.vm_ids:
+        vm = vm_by_id.get(vid)
+        if vm is None or vm.source_vcenter_id is None:
+            continue
+        for m in mappings:
+            if m.vcenter_source_id == vm.source_vcenter_id:
+                return m
+        return None
+    return None
+
+
 def emit_wave_yaml(
     plan_id: int,
     wave: Wave,
@@ -172,7 +205,7 @@ def emit_wave_yaml(
 
 async def run_pipeline(
     vms: list[VM],
-    mapping: ResourceMapping | None,
+    mappings: list[ResourceMapping],
     *,
     plan_id: int,
     backend=None,
@@ -204,7 +237,7 @@ async def run_pipeline(
 
     # Stage 0 — validate mapping coverage.
     _progress("validating")
-    coverage = validate_plan_inputs(vms, mapping)
+    coverage = validate_plan_inputs(vms, mappings)
     if not coverage.ok:
         raise PlanValidationError(coverage)
 
@@ -231,11 +264,16 @@ async def run_pipeline(
     _progress("annotating")
     annotated = await annotate_waves(waves, backend=backend, max_attempts=max_llm_attempts)
 
-    # Stage 7 — emit MTV YAML per wave.
+    # Stage 7 — emit MTV YAML per wave + stamp parallel-indexed vm_names
+    # so the frontend can render hostnames without a /api/vms join.
+    # Each wave gets the mapping whose vCenter matches the wave's VMs;
+    # per the partition rule, exactly one mapping is in play per wave.
     _progress("emitting_yaml")
     vm_by_id = {vm.id: vm for vm in vms}
-    resolver = _build_resolver(mapping)
     for aw in annotated:
+        aw.vm_names = [name_lookup.get(vid, f"vm-{vid}") for vid in aw.wave.vm_ids]
+        wave_mapping = _mapping_for_wave(aw.wave, mappings, vm_by_id)
+        resolver = _build_resolver(wave_mapping)
         try:
             aw.mtv_yaml = emit_wave_yaml(plan_id, aw.wave, aw.description, vm_by_id, resolver)
         except MTVGenerationError as exc:
