@@ -1715,6 +1715,12 @@ export default function VirtValidate() {
   const [planModalOpen, setPlanModalOpen] = useState(false);
   const [editingVM, setEditingVM] = useState(null);
   const [vmToDelete, setVMToDelete] = useState(null);
+  // Lifecycle revert affordances. Two-step on migrated → rolled_back →
+  // available so an operator can't accidentally re-open a half-rolled-
+  // back VM for fresh plans. ``revertingVM`` carries the VM + a refresh
+  // callback the InventoryTable supplies so we can re-fetch on success.
+  const [revertingVM, setRevertingVM] = useState(null);
+  const [makingAvailable, setMakingAvailable] = useState(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // Inventory multi-select. The Set is keyed by VM id.
@@ -2905,6 +2911,8 @@ export default function VirtValidate() {
               onCapture={(vm) => onCaptureSingle(vm)}
               onEdit={(vm) => setEditingVM(vm)}
               onDelete={(vm) => setVMToDelete(vm)}
+              onRevertToVMware={(vm, refresh) => setRevertingVM({ vm, refresh })}
+              onMakeAvailable={(vm, refresh) => setMakingAvailable({ vm, refresh })}
               onBulkDelete={(targets) => {
                 // Stash the bulk target list so BulkDeleteVMsModal can
                 // render the same confirmation UX it already supports.
@@ -3362,6 +3370,180 @@ export default function VirtValidate() {
         onClose={() => setBulkDeleteOpen(false)}
         onConfirmed={onBulkDeleteConfirmed}
       />
+      <RevertToVmwareModal
+        open={Boolean(revertingVM)}
+        vm={revertingVM?.vm}
+        onClose={() => setRevertingVM(null)}
+        onConfirmed={() => {
+          revertingVM?.refresh?.();
+          setRevertingVM(null);
+        }}
+      />
+      <MakeAvailableModal
+        open={Boolean(makingAvailable)}
+        vm={makingAvailable?.vm}
+        onClose={() => setMakingAvailable(null)}
+        onConfirmed={() => {
+          makingAvailable?.refresh?.();
+          setMakingAvailable(null);
+        }}
+      />
     </div>
+  );
+}
+
+
+function RevertToVmwareModal({ open, vm, onClose, onConfirmed }) {
+  // Two-step revert: migrated → rolled_back, then operator can choose
+  // to also re-open the VM for new plans (rolled_back → available).
+  // Splitting the action across two confirmations keeps the destructive
+  // re-open path deliberate.
+  const [step, setStep] = useState(1);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { setStep(1); }, [vm?.id]);
+
+  if (!open || !vm) return null;
+
+  const submitRollback = async () => {
+    setBusy(true);
+    try {
+      await toast.promise(
+        fetchJSON(`/api/vms/${vm.id}`, {
+          method: "PATCH",
+          body: { lifecycle_state: "rolled_back" },
+        }),
+        {
+          loading: `Marking ${vm.name} as rolled back…`,
+          success: `${vm.name} → rolled_back`,
+          error: (e) => e.message || "Revert failed",
+        },
+        TOAST_OPTS,
+      );
+      setStep(2);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitAvailable = async () => {
+    setBusy(true);
+    try {
+      await toast.promise(
+        fetchJSON(`/api/vms/${vm.id}`, {
+          method: "PATCH",
+          body: { lifecycle_state: "available" },
+        }),
+        {
+          loading: `Re-opening ${vm.name} for plans…`,
+          success: `${vm.name} → available`,
+          error: (e) => e.message || "Make available failed",
+        },
+        TOAST_OPTS,
+      );
+      onConfirmed?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (step === 1) {
+    return (
+      <Modal
+        open={open}
+        onClose={onClose}
+        title="Revert to VMware"
+        footer={
+          <>
+            <SecondaryButton onClick={onClose} disabled={busy}>Cancel</SecondaryButton>
+            <PrimaryButton onClick={submitRollback} disabled={busy}>
+              Mark rolled back
+            </PrimaryButton>
+          </>
+        }
+      >
+        <p style={{ marginBottom: 10 }}>
+          Mark <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>{vm.name}</code> as rolled back?
+        </p>
+        <p style={{ color: "#aaaacc", fontSize: 13 }}>
+          Use this when the VM has been restored on VMware (the OCP-Virt
+          migration was reverted). The VM moves out of <code>migrated</code>
+          but stays out of the plan selector until the second confirmation.
+        </p>
+      </Modal>
+    );
+  }
+  return (
+    <Modal
+      open={open}
+      onClose={() => { onConfirmed?.(); }}
+      title="VM is now rolled_back"
+      footer={
+        <>
+          <SecondaryButton onClick={() => { onConfirmed?.(); }} disabled={busy}>
+            Leave as rolled_back
+          </SecondaryButton>
+          <PrimaryButton onClick={submitAvailable} disabled={busy}>
+            Make available
+          </PrimaryButton>
+        </>
+      }
+    >
+      <p style={{ marginBottom: 10 }}>
+        <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>{vm.name}</code> has been marked rolled
+        back. Make it available for new plans?
+      </p>
+      <p style={{ color: "#aaaacc", fontSize: 13 }}>
+        Two-step on purpose — once a VM is <code>available</code> it can
+        be picked into a new migration plan immediately.
+      </p>
+    </Modal>
+  );
+}
+
+
+function MakeAvailableModal({ open, vm, onClose, onConfirmed }) {
+  const [busy, setBusy] = useState(false);
+  if (!open || !vm) return null;
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await toast.promise(
+        fetchJSON(`/api/vms/${vm.id}`, {
+          method: "PATCH",
+          body: { lifecycle_state: "available" },
+        }),
+        {
+          loading: `Re-opening ${vm.name} for plans…`,
+          success: `${vm.name} → available`,
+          error: (e) => e.message || "Make available failed",
+        },
+        TOAST_OPTS,
+      );
+      onConfirmed?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Make available"
+      footer={
+        <>
+          <SecondaryButton onClick={onClose} disabled={busy}>Cancel</SecondaryButton>
+          <PrimaryButton onClick={submit} disabled={busy}>Make available</PrimaryButton>
+        </>
+      }
+    >
+      <p style={{ marginBottom: 10 }}>
+        Mark <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>{vm.name}</code> as available?
+      </p>
+      <p style={{ color: "#aaaacc", fontSize: 13 }}>
+        The VM will appear in the plan selector again and is eligible for
+        new migration plans.
+      </p>
+    </Modal>
   );
 }
