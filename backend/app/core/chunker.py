@@ -164,20 +164,25 @@ def _target_namespace_for(
     Falls back to the VM's per-row ``target_namespace`` (legacy column)
     or "default" when nothing is configured. Used as a hard partition:
     different namespaces never share a chunk.
+
+    Routes through :class:`app.core.mtv.MappingResolver` so the
+    new dict-shaped NamespaceStrategy and the legacy list-of-criteria
+    rows resolve identically here and at MTV YAML generation.
     """
     if mappings is not None:
-        for entry in mappings.namespace_mappings or []:
-            crit = entry.get("criteria") or "default"
-            value = entry.get("criteria_value") or ""
-            ns = entry.get("target_namespace") or ""
-            if not ns:
-                continue
-            if crit == "default":
-                return ns
-            if crit == "environment" and (vm.environment or "") == value:
-                return ns
-            if crit == "application" and (vm.application_hint or "") == value:
-                return ns
+        from app.core.mtv import MappingResolver
+
+        resolver = MappingResolver(
+            namespace_mappings=mappings.namespace_mappings or [],
+        )
+        vm_payload = {
+            "environment": vm.environment or "",
+            "application_hint": vm.application_hint or "",
+            "vcenter_folder": vm.vsphere_folder or "",
+        }
+        resolved = resolver.resolve_namespace(vm_payload)
+        if resolved:
+            return resolved
     return vm.target_namespace or "default"
 
 
@@ -394,14 +399,14 @@ def _split_by_network_or_evenly(
             if len(members) <= max_size:
                 emitted.append(
                     _make_chunk(
-                        members, partition_dict, sub_with_net,
+                        members,
+                        partition_dict,
+                        sub_with_net,
                         reason=f"primary_network={net}",
                     )
                 )
             else:
-                emitted.extend(
-                    _even_splits(members, partition_dict, sub_with_net, max_size)
-                )
+                emitted.extend(_even_splits(members, partition_dict, sub_with_net, max_size))
         return emitted
 
     return _even_splits(vms, partition_dict, sub_dict, max_size)
@@ -458,9 +463,7 @@ def _explode_partition_key(key: tuple) -> dict:
     }
 
 
-def _chunk_label(
-    vms: list[VM], partition_dict: dict, sub_dict: dict, *, foundation: bool
-) -> str:
+def _chunk_label(vms: list[VM], partition_dict: dict, sub_dict: dict, *, foundation: bool) -> str:
     """Human-readable label the UI surfaces in the chunk navigation."""
     if foundation:
         return "Foundation Services"
@@ -521,9 +524,7 @@ def _combine_undersized(chunks: list[Chunk]) -> list[Chunk]:
     by_partition: dict[tuple, list[Chunk]] = {}
     for c in chunks:
         if c.sub_key.get("is_foundation"):
-            foundation_groups.setdefault(
-                _partition_tuple(c.partition_key), []
-            ).append(c)
+            foundation_groups.setdefault(_partition_tuple(c.partition_key), []).append(c)
         else:
             by_partition.setdefault(_partition_tuple(c.partition_key), []).append(c)
 
@@ -577,9 +578,7 @@ def _combine_undersized(chunks: list[Chunk]) -> list[Chunk]:
             # Trailing leftover: ship as its own small chunk rather
             # than dropping. The per-chunk LLM call still works for
             # 2-3 VMs; the planner just gets an extra small chunk.
-            out.append(
-                _make_combined(current_vms, small[0].partition_key, sub_apps)
-            )
+            out.append(_make_combined(current_vms, small[0].partition_key, sub_apps))
     return out
 
 
@@ -617,9 +616,7 @@ def _flatten_foundation(chunks: list[Chunk]) -> Chunk | None:
     )
 
 
-def _make_combined(
-    vm_ids: list[int], partition_key: dict, sub_apps: list[str]
-) -> Chunk:
+def _make_combined(vm_ids: list[int], partition_key: dict, sub_apps: list[str]) -> Chunk:
     label = " + ".join(sub_apps[:3])
     if len(sub_apps) > 3:
         label += f" + {len(sub_apps) - 3} more"
@@ -730,7 +727,14 @@ def _ordering_key(c: Chunk) -> tuple:
     tier_order = {"db": 0, "cache": 1, "queue": 1, "app": 2, "lb": 3, "web": 4, "_misc_": 9}
     tier_rank = tier_order.get(c.sub_key.get("tier") or "", 5)
     label = c.sub_key.get("label") or ""
-    return (foundation, partition, env_rank, c.sub_key.get("application_hint") or "", tier_rank, label)
+    return (
+        foundation,
+        partition,
+        env_rank,
+        c.sub_key.get("application_hint") or "",
+        tier_rank,
+        label,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -749,15 +753,11 @@ def validate_chunks(chunks: Iterable[Chunk], expected_vm_ids: set[int]) -> None:
             raise AssertionError(f"Chunk {c.chunk_id} has no VMs")
         for vm_id in c.vm_ids:
             if vm_id in seen:
-                raise AssertionError(
-                    f"vm_id {vm_id} appears in multiple chunks"
-                )
+                raise AssertionError(f"vm_id {vm_id} appears in multiple chunks")
             seen.add(vm_id)
     missing = expected_vm_ids - seen
     if missing:
-        raise AssertionError(
-            f"Chunks miss vm_ids: {sorted(missing)[:10]}"
-        )
+        raise AssertionError(f"Chunks miss vm_ids: {sorted(missing)[:10]}")
     extra = seen - expected_vm_ids
     if extra:
         raise AssertionError(f"Chunks contain unknown vm_ids: {sorted(extra)[:10]}")

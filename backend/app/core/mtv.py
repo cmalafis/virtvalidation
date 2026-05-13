@@ -47,11 +47,16 @@ class MappingResolver:
     per-VM ``target_*`` fields. The resolver is intentionally a plain
     dataclass so the MTV generator stays free of database-layer
     coupling and is easy to fake in tests.
+
+    ``namespace_mappings`` accepts either shape:
+      - list[dict] — legacy criteria-row schema (first match wins)
+      - dict      — new NamespaceStrategy ({strategy, single_namespace,
+                    per_env_namespaces, per_app_prefix})
     """
 
     network_mappings: list[dict] = field(default_factory=list)
     storage_mappings: list[dict] = field(default_factory=list)
-    namespace_mappings: list[dict] = field(default_factory=list)
+    namespace_mappings: list[dict] | dict = field(default_factory=list)
     default_target_namespace: str = ""
 
     def resolve_network(self, source_network: str) -> dict | None:
@@ -73,8 +78,24 @@ class MappingResolver:
         return None
 
     def resolve_namespace(self, vm: dict) -> str | None:
-        """Walk namespace_mappings in order; first matching criteria wins."""
-        for entry in self.namespace_mappings:
+        """Dispatch on the namespace_mappings shape.
+
+        New shape (dict, NamespaceStrategy):
+          - "single": every VM lands in ``single_namespace``.
+          - "per_environment": dispatch on ``vm["environment"]`` →
+            ``per_env_namespaces[env]``; falls back to
+            ``default_target_namespace`` when the env is missing.
+          - "per_application": derives ``<prefix>-<slug>-vms`` from
+            ``vm["application_hint"]``; ``unassigned-vms`` when no tag.
+
+        Legacy shape (list of criteria rows):
+          - walks in order, first matching criteria wins.
+        """
+        nm = self.namespace_mappings
+        if isinstance(nm, dict):
+            return self._resolve_strategy(nm, vm)
+        # Legacy list of criteria rows.
+        for entry in nm:
             crit = entry.get("criteria") or "default"
             value = entry.get("criteria_value") or ""
             target_ns = entry.get("target_namespace") or ""
@@ -89,6 +110,48 @@ class MappingResolver:
             if crit == "vcenter_folder" and (vm.get("vcenter_folder") or "") == value:
                 return target_ns
         return None
+
+    @staticmethod
+    def _resolve_strategy(strategy: dict, vm: dict) -> str | None:
+        kind = (strategy.get("strategy") or "").lower()
+        if kind == "single":
+            return strategy.get("single_namespace") or None
+        if kind == "per_environment":
+            env = (vm.get("environment") or "").strip().lower()
+            per_env = strategy.get("per_env_namespaces") or {}
+            # Case-insensitive lookup so "Prod" and "production" don't
+            # mysteriously land in different namespaces — the
+            # environment detector already normalizes, but operators
+            # editing the strategy in the UI may have used title case.
+            for key, ns in per_env.items():
+                if (key or "").strip().lower() == env:
+                    return ns or None
+            return None
+        if kind == "per_application":
+            prefix = strategy.get("per_app_prefix") or "app"
+            app = (vm.get("application_hint") or "").strip()
+            if not app:
+                return "unassigned-vms"
+            slug = _slugify(app)
+            return f"{prefix}-{slug}-vms"
+        return None
+
+
+def _slugify(value: str) -> str:
+    """Lower-case, dash-separated, only [a-z0-9-]. Used for the
+    per-application namespace strategy so the resulting namespace is
+    DNS-1123 compliant (the validation OCP applies)."""
+    out = []
+    last_dash = False
+    for ch in value.lower():
+        if ch.isalnum():
+            out.append(ch)
+            last_dash = False
+        elif not last_dash:
+            out.append("-")
+            last_dash = True
+    slug = "".join(out).strip("-")
+    return slug or "unassigned"
 
 
 @dataclass(frozen=True)
@@ -293,6 +356,46 @@ def generate_wave_yaml(
     """
     if not vms:
         raise MTVGenerationError("Cannot generate a plan for an empty wave")
+
+    # Pre-check: if a mapping is supplied, every distinct source
+    # network and datastore referenced by an in-scope VM must resolve
+    # to a target. Without this, we silently fall back to placeholder
+    # YAML and operators discover the failure at ``oc apply`` time.
+    # The error message lists the unmapped names so the operator
+    # opens the mapping editor and assigns targets.
+    if resolver is not None:
+        unmapped_nets: list[str] = []
+        unmapped_ds: list[str] = []
+        seen_nets: set[str] = set()
+        seen_ds: set[str] = set()
+        for vm in vms:
+            for src in vm.get("vsphere_networks") or []:
+                if not src or src in seen_nets:
+                    continue
+                seen_nets.add(src)
+                if resolver.resolve_network(src) is None:
+                    unmapped_nets.append(src)
+            for src in vm.get("vsphere_datastores") or []:
+                if not src or src in seen_ds:
+                    continue
+                seen_ds.add(src)
+                if resolver.resolve_storage(src) is None:
+                    unmapped_ds.append(src)
+        problems: list[str] = []
+        if unmapped_nets:
+            sample = ", ".join(sorted(unmapped_nets)[:5])
+            extra = f" (+{len(unmapped_nets) - 5} more)" if len(unmapped_nets) > 5 else ""
+            problems.append(f"{len(unmapped_nets)} source network(s) unmapped ({sample}{extra})")
+        if unmapped_ds:
+            sample = ", ".join(sorted(unmapped_ds)[:5])
+            extra = f" (+{len(unmapped_ds) - 5} more)" if len(unmapped_ds) > 5 else ""
+            problems.append(f"{len(unmapped_ds)} source datastore(s) unmapped ({sample}{extra})")
+        if problems:
+            raise MTVGenerationError(
+                "Cannot generate plan: "
+                + "; ".join(problems)
+                + ". Open the mapping editor and assign target resources."
+            )
 
     netmap = _build_network_map(ctx, vms, resolver)
     storagemap = _build_storage_map(ctx, vms, resolver)

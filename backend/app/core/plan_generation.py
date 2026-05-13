@@ -151,6 +151,42 @@ class PlanGenerationTaskStore:
 task_store = PlanGenerationTaskStore()
 
 
+def _unmapped_source_resources(
+    mapping: ResourceMapping, vms: list[VM]
+) -> tuple[list[str], list[str]]:
+    """Return (unmapped_networks, unmapped_datastores) — source vSphere
+    resources referenced by an in-scope VM that the mapping doesn't
+    resolve to a target. Same pre-check the MTV YAML emitter runs at
+    download time; lifting it earlier means plan generation fails
+    fast with a clear error instead of persisting a plan that can't
+    produce valid YAML."""
+    mapped_nets: set[str] = set()
+    for r in mapping.network_mappings or []:
+        src = (r or {}).get("source_network")
+        tgt = ((r or {}).get("target_network_name") or "").strip()
+        if src and tgt:
+            mapped_nets.add(src)
+    mapped_ds: set[str] = set()
+    for r in mapping.storage_mappings or []:
+        src = (r or {}).get("source_datastore")
+        tgt = ((r or {}).get("target_storage_class") or "").strip()
+        if src and tgt:
+            mapped_ds.add(src)
+    referenced_nets: set[str] = set()
+    referenced_ds: set[str] = set()
+    for vm in vms:
+        for n in vm.vsphere_networks or []:
+            if n:
+                referenced_nets.add(n)
+        for d in vm.vsphere_datastores or []:
+            if d:
+                referenced_ds.add(d)
+    return (
+        sorted(referenced_nets - mapped_nets),
+        sorted(referenced_ds - mapped_ds),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Scope resolution
 # ---------------------------------------------------------------------------
@@ -230,18 +266,13 @@ def run_plan_generation(
             task_store.mark_failed(task_id, error=f"Strategy {strategy_id} not found")
             return
         mapping_warnings: list[str] = []
+        mapping: ResourceMapping | None = None
         if mapping_id is not None:
             mapping = db.get(ResourceMapping, mapping_id)
             if mapping is None:
                 task_store.mark_failed(task_id, error=f"Resource mapping {mapping_id} not found")
                 return
-            if mapping.status.value == "incomplete":
-                mapping_warnings.append(
-                    f"Mapping {mapping.id} ({mapping.name!r}) is incomplete — "
-                    "MTV YAML export may produce entries with missing target "
-                    "resources. Complete the mapping before applying."
-                )
-            elif mapping.status.value == "needs_review":
+            if mapping.status.value == "needs_review":
                 mapping_warnings.append(
                     f"Mapping {mapping.id} ({mapping.name!r}) needs review — "
                     "drift detected against the target cluster's discovered "
@@ -257,6 +288,42 @@ def run_plan_generation(
         if not vms:
             task_store.mark_failed(task_id, error="Scope filter matched zero VMs")
             return
+
+        # Hard-fail when an attached mapping leaves source resources
+        # unmapped. The prior behavior emitted a warning and produced
+        # placeholder YAML; that surfaced as a confusing ``oc apply``
+        # failure later. Fail-fast at generation time so the operator
+        # can fix the mapping before any plan persists.
+        if mapping is not None:
+            unmapped_nets, unmapped_ds = _unmapped_source_resources(mapping, vms)
+            if unmapped_nets or unmapped_ds:
+                parts: list[str] = []
+                if unmapped_nets:
+                    sample = ", ".join(sorted(unmapped_nets)[:5])
+                    extra = f" (+{len(unmapped_nets) - 5} more)" if len(unmapped_nets) > 5 else ""
+                    parts.append(
+                        f"{len(unmapped_nets)} source networks unmapped " f"({sample}{extra})"
+                    )
+                if unmapped_ds:
+                    sample = ", ".join(sorted(unmapped_ds)[:5])
+                    extra = f" (+{len(unmapped_ds) - 5} more)" if len(unmapped_ds) > 5 else ""
+                    parts.append(
+                        f"{len(unmapped_ds)} source datastores unmapped " f"({sample}{extra})"
+                    )
+                msg = (
+                    "Cannot generate plan: "
+                    + "; ".join(parts)
+                    + ". Open the mapping editor and assign target "
+                    + (
+                        "networks."
+                        if unmapped_nets and not unmapped_ds
+                        else "datastores."
+                        if unmapped_ds and not unmapped_nets
+                        else "resources."
+                    )
+                )
+                task_store.mark_failed(task_id, error=msg)
+                return
         profiles = assemble_vm_profiles(db, vms)
 
         # Build a vcenter-id → classification lookup so the chunker
