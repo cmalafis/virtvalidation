@@ -15,6 +15,35 @@ class VMStatus(str, enum.Enum):
     failed = "failed"
 
 
+class VMLifecycleState(str, enum.Enum):
+    """Plan-membership lifecycle, orthogonal to ``VMStatus``.
+
+    ``VMStatus`` answers "is this VM operational?" (baseline captured,
+    validated, etc.). ``VMLifecycleState`` answers "is this VM available
+    to be assigned to a new plan?" — driven by plan membership, not
+    technical health.
+
+    Transitions are server-enforced:
+
+      available  → planned          on POST /api/plans
+      planned    → migrated         on POST /api/plans/{id}/mark-succeeded
+      planned    → available        on DELETE /api/plans/{id} or plan→failed
+      migrated   → rolled_back      on PATCH /api/vms/{id}
+      rolled_back → available       on PATCH /api/vms/{id}
+      (any)      → unmanageable     informational; not produced by hooks
+
+    The selector UI shows only ``available`` VMs by default; toggling
+    other states is allowed for auditing but those rows are not
+    selectable.
+    """
+
+    available = "available"
+    planned = "planned"
+    migrated = "migrated"
+    rolled_back = "rolled_back"
+    unmanageable = "unmanageable"
+
+
 class VM(Base):
     __tablename__ = "vms"
 
@@ -35,6 +64,20 @@ class VM(Base):
     owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[VMStatus] = mapped_column(
         Enum(VMStatus, name="vm_status"), default=VMStatus.discovered, nullable=False
+    )
+    # Plan-membership lifecycle. See VMLifecycleState docstring; the
+    # selector hides anything not ``available`` by default.
+    lifecycle_state: Mapped[VMLifecycleState] = mapped_column(
+        Enum(VMLifecycleState, name="vm_lifecycle_state"),
+        default=VMLifecycleState.available,
+        server_default=VMLifecycleState.available.value,
+        nullable=False,
+        index=True,
+    )
+    lifecycle_state_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
     )
     notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 

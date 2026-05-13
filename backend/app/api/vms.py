@@ -13,9 +13,10 @@ from app.core.db import get_db
 from app.core.limits import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.core.validation import run_validation_task
 from app.core.validation import task_store as validation_task_store
+from app.core.vm_lifecycle import LifecycleTransitionError, patch_transition
 from app.models.validation import ValidationResult
 from app.models.vcenter import VCenterSource
-from app.models.vm import VM, BaselineSnapshot, VMStatus
+from app.models.vm import VM, BaselineSnapshot, VMLifecycleState, VMStatus
 from app.schemas.validation import (
     LatestValidationResponse,
     ValidationTaskRead,
@@ -49,6 +50,7 @@ from app.schemas.vm import (
 SortableColumn = Literal[
     "name",
     "status",
+    "lifecycle_state",
     "environment",
     "os_family",
     "application_hint",
@@ -148,6 +150,7 @@ def _apply_vm_filters(
     stmt: Select,
     *,
     statuses: list[VMStatus] | None,
+    lifecycle_states: list[VMLifecycleState] | None,
     vcenter_source_ids: list[int] | None,
     environments: list[str] | None,
     application_hints: list[str] | None,
@@ -164,6 +167,8 @@ def _apply_vm_filters(
     """
     if statuses:
         stmt = stmt.where(VM.status.in_(statuses))
+    if lifecycle_states:
+        stmt = stmt.where(VM.lifecycle_state.in_(lifecycle_states))
     if vcenter_source_ids:
         stmt = stmt.where(VM.source_vcenter_id.in_(vcenter_source_ids))
     if environments:
@@ -200,6 +205,7 @@ def _apply_vm_filters(
 _SORT_COLUMNS = {
     "name": VM.name,
     "status": VM.status,
+    "lifecycle_state": VM.lifecycle_state,
     "environment": VM.environment,
     "os_family": VM.os_family,
     "application_hint": VM.application_hint,
@@ -217,6 +223,7 @@ def list_vms(
     sort_by: SortableColumn = Query(default="name"),
     sort_order: SortOrder = Query(default="asc"),
     status_filter: list[VMStatus] | None = Query(default=None, alias="status"),
+    lifecycle_state: list[VMLifecycleState] | None = Query(default=None),
     vcenter_source_id: list[int] | None = Query(default=None),
     environment: list[str] | None = Query(default=None),
     application_hint: list[str] | None = Query(default=None),
@@ -241,6 +248,7 @@ def list_vms(
     base = _apply_vm_filters(
         base,
         statuses=status_filter,
+        lifecycle_states=lifecycle_state,
         vcenter_source_ids=vcenter_source_id,
         environments=environment,
         application_hints=application_hint,
@@ -265,6 +273,7 @@ def list_vms(
 def vm_facets(
     db: Session = Depends(get_db),
     status_filter: list[VMStatus] | None = Query(default=None, alias="status"),
+    lifecycle_state: list[VMLifecycleState] | None = Query(default=None),
     vcenter_source_id: list[int] | None = Query(default=None),
     environment: list[str] | None = Query(default=None),
     application_hint: list[str] | None = Query(default=None),
@@ -284,6 +293,7 @@ def vm_facets(
     base = _apply_vm_filters(
         base,
         statuses=status_filter,
+        lifecycle_states=lifecycle_state,
         vcenter_source_ids=vcenter_source_id,
         environments=environment,
         application_hints=application_hint,
@@ -328,6 +338,7 @@ def vm_facets(
 
     return {
         "status": _facet("status"),
+        "lifecycle_state": _facet("lifecycle_state"),
         "environment": _facet("environment"),
         "os_family": _facet("os_family"),
         "application_hint": _facet("application_hint"),
@@ -366,6 +377,7 @@ def delete_all_vms(
     db: Session = Depends(get_db),
     confirm: bool = Query(default=False),
     status_filter: list[VMStatus] | None = Query(default=None, alias="status"),
+    lifecycle_state: list[VMLifecycleState] | None = Query(default=None),
     vcenter_source_id: list[int] | None = Query(default=None),
     environment: list[str] | None = Query(default=None),
     application_hint: list[str] | None = Query(default=None),
@@ -402,6 +414,7 @@ def delete_all_vms(
     base = _apply_vm_filters(
         base,
         statuses=status_filter,
+        lifecycle_states=lifecycle_state,
         vcenter_source_ids=vcenter_source_id,
         environments=environment,
         application_hints=application_hint,
@@ -428,6 +441,7 @@ def delete_all_vms(
             "deleted_count": deleted_count,
             "filters": {
                 "status": [s.value for s in (status_filter or [])],
+                "lifecycle_state": [s.value for s in (lifecycle_state or [])],
                 "vcenter_source_id": vcenter_source_id or [],
                 "environment": environment or [],
                 "application_hint": application_hint or [],
@@ -683,23 +697,38 @@ def update_vm(
         request.state.skip_audit_log = True
         return vm
 
-    before = {k: getattr(vm, k) for k in updates}
-    for field, value in updates.items():
-        setattr(vm, field, value)
-    db.flush()
-    after = {k: getattr(vm, k) for k in updates}
+    # Lifecycle transitions go through the service so the state machine
+    # is enforced server-side and the audit row is the structured
+    # ``vm.lifecycle_state.transition`` shape (not the generic
+    # ``vm.update`` diff). The route accepts only ``migrated →
+    # rolled_back`` and ``rolled_back → available``; anything else
+    # raises 422.
+    actor = request.headers.get("x-actor", "user")
+    lifecycle_target = updates.pop("lifecycle_state", None)
+    if lifecycle_target is not None:
+        try:
+            patch_transition(vm, lifecycle_target, db, actor=actor)
+        except LifecycleTransitionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    record_audit(
-        db,
-        action="vm.update",
-        actor=request.headers.get("x-actor", "user"),
-        resource_type="vm",
-        resource_id=vm.id,
-        details={
-            "vm_name": vm.name,
-            "diff": _diff_for_audit(before, after),
-        },
-    )
+    if updates:
+        before = {k: getattr(vm, k) for k in updates}
+        for field, value in updates.items():
+            setattr(vm, field, value)
+        db.flush()
+        after = {k: getattr(vm, k) for k in updates}
+
+        record_audit(
+            db,
+            action="vm.update",
+            actor=actor,
+            resource_type="vm",
+            resource_id=vm.id,
+            details={
+                "vm_name": vm.name,
+                "diff": _diff_for_audit(before, after),
+            },
+        )
     db.commit()
     db.refresh(vm)
     request.state.skip_audit_log = True

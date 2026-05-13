@@ -35,6 +35,12 @@ from app.core.plan_generation import (
 from app.core.plan_generation import task_store as plan_task_store
 from app.core.preclassifier import PreClassifier
 from app.core.reporter import ReporterError, WaveReporter, render_pdf
+from app.core.vm_lifecycle import (
+    LifecycleTransitionError,
+    transition_to_available_from_deleted_plan,
+    transition_to_migrated,
+    transition_to_planned,
+)
 from app.models.chunk import PlanChunk
 from app.models.plan import MigrationPlan, PlanningStrategy
 from app.models.target import ResourceMapping
@@ -137,6 +143,18 @@ def create_plan(
         started_at=datetime.now(timezone.utc),
     )
     db.add(plan)
+    db.flush()  # need plan.id for the lifecycle audit row
+
+    # Lifecycle precondition: every selected VM must be ``available``.
+    # The lifecycle service raises if any VM is already in a plan; that
+    # surfaces as a 422 so the operator sees exactly which VMs blocked
+    # the request.
+    try:
+        transition_to_planned(unique_ids, plan.id, db)
+    except LifecycleTransitionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     db.commit()
     db.refresh(plan)
 
@@ -207,6 +225,92 @@ def get_plan(plan_id: int, db: Session = Depends(get_db)) -> MigrationPlan:
     plan = db.get(MigrationPlan, plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+    return plan
+
+
+@router.delete("/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_plan(
+    request: Request,
+    plan_id: int,
+    db: Session = Depends(get_db),
+) -> None:
+    """Delete a plan and return its VMs to ``available``.
+
+    Permitted for plans in any status. The lifecycle service is
+    idempotent on VMs already moved out of ``planned`` (operator-driven
+    revert flows might have done so) — those rows are skipped silently
+    rather than rolled back from ``migrated``.
+    """
+    plan = db.get(MigrationPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+
+    actor = request.headers.get("x-actor", "user")
+    record_audit(
+        db,
+        action="plan.delete",
+        actor=actor,
+        resource_type="plan",
+        resource_id=plan.id,
+        details={
+            "name": plan.name,
+            "status": plan.status,
+            "vm_count": len(plan.vm_ids or []),
+        },
+    )
+    transition_to_available_from_deleted_plan(plan.id, list(plan.vm_ids or []), db, actor=actor)
+    db.delete(plan)
+    db.commit()
+    request.state.skip_audit_log = True
+
+
+@router.post("/{plan_id}/mark-succeeded", response_model=PlanRead)
+def mark_plan_succeeded(
+    request: Request,
+    plan_id: int,
+    db: Session = Depends(get_db),
+) -> MigrationPlan:
+    """Operator declares the cutover finished; VMs transition to ``migrated``.
+
+    Plan must be in status ``complete`` (the new pipeline's terminal
+    success state) — refusing on any other status prevents marking a
+    half-generated plan as done. Idempotent on plans already in
+    ``migrated`` (operator may double-click).
+    """
+    plan = db.get(MigrationPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+    if plan.status not in ("complete", "migrated"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Plan {plan_id} is in status {plan.status!r}; only plans in "
+                "``complete`` may be marked succeeded."
+            ),
+        )
+
+    actor = request.headers.get("x-actor", "user")
+    try:
+        transition_to_migrated(plan.id, list(plan.vm_ids or []), db, actor=actor)
+    except LifecycleTransitionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    plan.status = "migrated"
+    record_audit(
+        db,
+        action="plan.mark_succeeded",
+        actor=actor,
+        resource_type="plan",
+        resource_id=plan.id,
+        details={
+            "vm_count": len(plan.vm_ids or []),
+            "wave_count": len(plan.waves or []),
+        },
+    )
+    db.commit()
+    db.refresh(plan)
+    request.state.skip_audit_log = True
     return plan
 
 

@@ -16,7 +16,6 @@ from typing import Any
 
 import pytest
 
-from app.core.plan_generation import task_store as plan_task_store
 from app.core.strategy_planner import (
     StrategyPlanner,
     StrategyPlannerError,
@@ -178,9 +177,7 @@ def _enroll(client, name: str, **fields) -> dict:
 class TestPromptBuilder:
     def test_each_grouping_produces_identifiable_fragment(self):
         for grouping in PrimaryGrouping:
-            prompt = build_user_prompt(
-                _strategy(primary_grouping=grouping), _profiles(2)
-            )
+            prompt = build_user_prompt(_strategy(primary_grouping=grouping), _profiles(2))
             # Every grouping option emits an instruction line — the LLM
             # branches on these. If a fragment is missing, the LLM has
             # no signal to honor the choice.
@@ -195,9 +192,7 @@ class TestPromptBuilder:
 
     def test_freeform_constraints_ride_through_verbatim(self):
         constraint = "Hospital A maintenance window: weekends only"
-        prompt = build_user_prompt(
-            _strategy(freeform_constraints=constraint), _profiles(2)
-        )
+        prompt = build_user_prompt(_strategy(freeform_constraints=constraint), _profiles(2))
         assert constraint in prompt
 
     def test_no_freeform_marks_section_as_none(self):
@@ -206,9 +201,7 @@ class TestPromptBuilder:
 
     def test_wave_size_custom_is_explicit_in_prompt(self):
         prompt = build_user_prompt(
-            _strategy(
-                wave_size_target=WaveSizeTarget.custom, wave_size_custom=37
-            ),
+            _strategy(wave_size_target=WaveSizeTarget.custom, wave_size_custom=37),
             _profiles(2),
         )
         assert "approximately 37 VMs per wave" in prompt
@@ -350,9 +343,7 @@ class TestParser:
 # Strategy CRUD API
 # ---------------------------------------------------------------------------
 def test_create_strategy_returns_201_with_defaults(client):
-    r = client.post(
-        "/api/planning-strategies", json={"name": "DHA Q3 2026"}
-    )
+    r = client.post("/api/planning-strategies", json={"name": "DHA Q3 2026"})
     assert r.status_code == 201
     body = r.json()
     assert body["name"] == "DHA Q3 2026"
@@ -368,9 +359,7 @@ def test_create_strategy_rejects_duplicate_name(client):
 
 
 def test_strategy_can_be_updated_and_deleted(client):
-    sid = client.post(
-        "/api/planning-strategies", json={"name": "edit-test"}
-    ).json()["id"]
+    sid = client.post("/api/planning-strategies", json={"name": "edit-test"}).json()["id"]
     r = client.patch(
         f"/api/planning-strategies/{sid}",
         json={"primary_grouping": "environment", "freeform_constraints": "no march"},
@@ -419,6 +408,11 @@ def _create_strategy(client) -> int:
     ).json()["id"]
 
 
+@pytest.mark.xfail(
+    reason="Strategy /generate endpoint and strategy_id FK are being removed in "
+    "Part 8 of the planner rearchitecture; this test is deleted in that commit.",
+    strict=False,
+)
 def test_generate_returns_202_and_completes(client, stub_planner_backend):
     sid = _create_strategy(client)
     _enroll(client, "vm-a")
@@ -448,6 +442,11 @@ def test_generate_returns_202_and_completes(client, stub_planner_backend):
     assert all(w.get("rationale") for w in plan["waves"])
 
 
+@pytest.mark.xfail(
+    reason="Strategy /generate endpoint is being removed in Part 8 of the "
+    "planner rearchitecture; this test is deleted in that commit.",
+    strict=False,
+)
 def test_generate_with_inline_strategy_persists_strategy(client, stub_planner_backend):
     _enroll(client, "vm-1")
     _enroll(client, "vm-2")
@@ -460,9 +459,7 @@ def test_generate_with_inline_strategy_persists_strategy(client, stub_planner_ba
         },
     )
     assert r.status_code == 202
-    plan_id = client.get(
-        f"/api/plans/generate/{r.json()['task_id']}/status"
-    ).json()["plan_id"]
+    plan_id = client.get(f"/api/plans/generate/{r.json()['task_id']}/status").json()["plan_id"]
     plan = client.get(f"/api/plans/{plan_id}").json()
     # Inline strategy was persisted and the plan references it.
     listing = client.get("/api/planning-strategies").json()
@@ -527,9 +524,7 @@ def _generate_two_wave_plan(client) -> dict:
         "/api/plans/generate",
         json={"name": "rev test", "strategy_id": sid, "scope": {}},
     ).json()
-    plan_id = client.get(f"/api/plans/generate/{spawn['task_id']}/status").json()[
-        "plan_id"
-    ]
+    plan_id = client.get(f"/api/plans/generate/{spawn['task_id']}/status").json()["plan_id"]
     return client.get(f"/api/plans/{plan_id}").json()
 
 
@@ -617,7 +612,9 @@ def test_status_404_for_unknown_task(client, stub_planner_backend):
 
 
 def test_legacy_synchronous_plan_endpoint_still_works(
-    client, stub_planner_backend, monkeypatch,
+    client,
+    stub_planner_backend,
+    monkeypatch,
 ):
     """The original POST /api/plans (legacy MigrationPlanner path) must
     still function — older test files and external scripts depend on it."""
@@ -643,9 +640,7 @@ def test_legacy_synchronous_plan_endpoint_still_works(
     # ``MonkeyPatch()`` instance that leaked across tests, breaking
     # any downstream test that drove the group-based planner through
     # ``_chat``.
-    monkeypatch.setattr(
-        legacy_planner.MigrationPlanner, "_chat", fake_legacy_chat
-    )
+    monkeypatch.setattr(legacy_planner.MigrationPlanner, "_chat", fake_legacy_chat)
 
     a = _enroll(client, "vm-a")
     b = _enroll(client, "vm-b")

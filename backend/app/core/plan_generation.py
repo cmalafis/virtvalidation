@@ -33,6 +33,7 @@ from app.core.chunked_planner import (
     generate_plan as run_hierarchical_plan,
 )
 from app.core.strategy_planner import StrategyPlannerError
+from app.core.vm_lifecycle import transition_to_available_from_failed_plan
 from app.models.chunk import PlanChunk
 from app.models.plan import MigrationPlan, PlanningStrategy
 from app.models.target import ResourceMapping
@@ -379,7 +380,6 @@ def run_plan_generation(
             waves=result.waves,
             summary=result.plan_summary or None,
             model=result.model or "",
-            strategy_id=strategy.id,
             mapping_id=mapping_id,
             generation_prompt=result.generation_prompt or None,
             generation_response=result.generation_response or None,
@@ -484,6 +484,31 @@ def _update_plan_status(
         db.close()
 
 
+def _fail_plan_with_lifecycle_release(plan_id: int, error: str) -> None:
+    """Mark the plan ``failed`` and release its VMs from ``planned``.
+
+    Single helper so both branches of run_simple_plan_generation (and
+    the new pipeline once it lands) take the exact same recovery path:
+    the failure surface in ``error_message`` matches what's in
+    ``plan.error_message``, AND the VMs go back to ``available`` so
+    operators can immediately retry.
+    """
+    db = _db_module.SessionLocal()
+    try:
+        plan = db.get(MigrationPlan, plan_id)
+        if plan is None:
+            return
+        plan.status = "failed"
+        plan.error_message = error
+        plan.completed_at = datetime.now(timezone.utc)
+        transition_to_available_from_failed_plan(
+            plan.id, list(plan.vm_ids or []), db, actor="system"
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
 def run_simple_plan_generation(
     plan_id: int,
     *,
@@ -520,12 +545,7 @@ def run_simple_plan_generation(
         vms = list(db.scalars(select(VM).where(VM.id.in_(unique_ids))).all())
         missing = [vid for vid in unique_ids if vid not in {v.id for v in vms}]
         if missing:
-            _update_plan_status(
-                plan_id,
-                status_value="failed",
-                error_message=f"Unknown vm_ids: {missing}",
-                completed_at=datetime.now(timezone.utc),
-            )
+            _fail_plan_with_lifecycle_release(plan_id, f"Unknown vm_ids: {missing}")
             return
         planner = MigrationPlanner()
 
@@ -553,12 +573,7 @@ def run_simple_plan_generation(
                 # unreachable vs timeout vs response error). Don't
                 # rewrap it.
                 logger.warning("Plan %d generation failed: %s", plan_id, e)
-                _update_plan_status(
-                    plan_id,
-                    status_value="failed",
-                    error_message=str(e),
-                    completed_at=datetime.now(timezone.utc),
-                )
+                _fail_plan_with_lifecycle_release(plan_id, str(e))
                 return
         else:
             _update_plan_status(
@@ -597,12 +612,7 @@ def run_simple_plan_generation(
                 result = planner.plan(profiles)
             except (PlannerError, LLMBackendError) as e:
                 logger.warning("Plan %d generation failed: %s", plan_id, e)
-                _update_plan_status(
-                    plan_id,
-                    status_value="failed",
-                    error_message=str(e),
-                    completed_at=datetime.now(timezone.utc),
-                )
+                _fail_plan_with_lifecycle_release(plan_id, str(e))
                 return
 
         _update_plan_status(
@@ -725,7 +735,6 @@ def apply_move_vm(
         waves=waves,
         summary=plan.summary,
         model=plan.model,
-        strategy_id=plan.strategy_id,
         generation_prompt=plan.generation_prompt,
         generation_response=plan.generation_response,
         plan_summary=plan.plan_summary,

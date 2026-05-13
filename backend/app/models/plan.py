@@ -27,7 +27,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base, JSONType
 
@@ -161,10 +161,6 @@ class MigrationPlan(Base):
     summary: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    # ---- strategy-driven planning fields (nullable for legacy plans) ----
-    strategy_id: Mapped[int | None] = mapped_column(
-        ForeignKey("planning_strategies.id", ondelete="SET NULL"), nullable=True
-    )
     # Resource mapping referenced at generation time. Captured on the
     # plan row so MTV YAML export resolves source→target resource names
     # against the same mapping the operator chose during planning,
@@ -201,12 +197,18 @@ class MigrationPlan(Base):
     # ---- Async generation lifecycle ----
     # Populated by the BackgroundTask that the POST endpoint kicks off.
     # ``status`` is a plain string (not an enum) so adding a new stage
-    # doesn't need a DB migration — the planner pipeline gained two
-    # stages (chunking, llm_grouping) since the planning rewrite and
-    # the operator-facing string set is still in flux. Controlled
-    # vocabulary (used by the UI for progress steps):
-    #   pending → validating → chunking → llm_grouping → assembling
-    #            → complete | failed
+    # doesn't need a DB migration — the pipeline gained Stage 0-7
+    # since the original async refactor. Controlled vocabulary used
+    # by the UI for progress steps:
+    #   pending → partitioning → subpartitioning → splitting →
+    #             packing → analyzing_concurrency → annotating →
+    #             emitting_yaml → complete → (operator) migrated
+    #   any stage → failed (with error_message)
+    #
+    # ``migrated`` is set by POST /api/plans/{id}/mark-succeeded once
+    # the operator confirms the cutover finished. The VM lifecycle
+    # service transitions every VM in plan.vm_ids to
+    # ``VMLifecycleState.migrated`` in the same transaction.
     #
     # ``error_message`` carries the verbatim ``str(e)`` from the
     # typed-exception layer (LLMUnreachableError, LLMAuthError, etc.)
@@ -227,8 +229,4 @@ class MigrationPlan(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-    strategy: Mapped["PlanningStrategy | None"] = relationship(
-        "PlanningStrategy", foreign_keys=[strategy_id]
     )

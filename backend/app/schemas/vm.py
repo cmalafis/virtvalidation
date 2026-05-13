@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.limits import MAX_VMS_PER_BULK_CREATE, MAX_VMS_PER_BULK_DELETE
-from app.models.vm import VMStatus
+from app.models.vm import VMLifecycleState, VMStatus
 
 
 class VMBase(BaseModel):
@@ -57,6 +57,11 @@ class VMUpdate(BaseModel):
     environment: str | None = Field(default=None, max_length=64)
     owner: str | None = Field(default=None, max_length=128)
     status: VMStatus | None = None
+    # Operator-driven plan-membership transitions. Only ``migrated →
+    # rolled_back → available`` is accepted by the route; the route
+    # rejects any other delta with 422 so the UI cannot bypass the
+    # server-enforced state machine.
+    lifecycle_state: VMLifecycleState | None = None
     notes: str | None = Field(default=None, max_length=1024)
     vsphere_networks: list[str] | None = None
     vsphere_datastores: list[str] | None = None
@@ -68,10 +73,16 @@ class VMUpdate(BaseModel):
 
 
 class VMRead(VMBase):
-    model_config = ConfigDict(from_attributes=True)
+    # use_enum_values=True so Pydantic serializes both ``status`` and
+    # ``lifecycle_state`` as their string values rather than enum
+    # repr-strings — the frontend filters on plain values, and the
+    # facets endpoint returns the same string form.
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
     id: int
     status: VMStatus
+    lifecycle_state: VMLifecycleState
+    lifecycle_state_changed_at: datetime
     created_at: datetime
     updated_at: datetime
 
@@ -101,6 +112,7 @@ class VMFacetsResponse(BaseModel):
     """
 
     status: dict[str, int]
+    lifecycle_state: dict[str, int]
     environment: dict[str, int]
     os_family: dict[str, int]
     application_hint: dict[str, int]

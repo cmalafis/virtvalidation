@@ -194,7 +194,6 @@ class PlanRead(BaseModel):
     waves: list[dict]
     summary: str | None = None
     model: str
-    strategy_id: int | None = None
     mapping_id: int | None = None
     plan_summary: str | None = None
     rationale: str | None = None

@@ -891,7 +891,6 @@ def test_mtv_yaml_export_uses_active_mapping_when_present(client, db_session):
         vm_ids=[vm.id],
         waves=[{"wave_number": 1, "vm_ids": [vm.id], "rationale": "only wave"}],
         model="test-model",
-        strategy_id=None,
         mapping_id=mapping.id,
     )
     db_session.add(plan)
