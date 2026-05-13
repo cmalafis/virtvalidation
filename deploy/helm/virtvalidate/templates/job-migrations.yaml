@@ -1,0 +1,84 @@
+{{- if .Values.migrations.preUpgrade.enabled }}
+# Pre-upgrade / pre-install migration Job.
+#
+# The backend lifespan also calls apply_migrations on startup, but
+# running it as a Helm hook BEFORE the new backend pods start has
+# two important properties:
+#
+#   1. If the migration fails, the new backend pods never start —
+#      so the old pods keep serving while the operator investigates.
+#      The lifespan-based path crash-loops the new pods instead.
+#
+#   2. Schema changes that affect multiple pods (e.g. new NOT NULL
+#      columns added in this rev) are applied exactly once, before
+#      replicas come up. With lifespan-based migrations, a race is
+#      possible if multiple replicas come up simultaneously — Alembic's
+#      advisory lock catches it, but the failed pod still restarts.
+#
+# Hook order: pre-install,pre-upgrade @ weight 0 — runs after secrets
+# but before the StatefulSet/Deployment. before-hook-creation,
+# hook-succeeded delete policies keep the Job history clean across
+# repeated `helm upgrade` runs.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "virtvalidate.fullname" . }}-migrations
+  labels:
+    {{- include "virtvalidate.componentLabels" (dict "root" . "component" "migrations") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.preUpgrade.backoffLimit }}
+  # Kill the Job rather than letting Alembic hang forever if it
+  # can't reach Postgres. Operators want a fast failure here, not a
+  # five-minute timeout that masks an unreachable database.
+  activeDeadlineSeconds: {{ .Values.migrations.preUpgrade.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "virtvalidate.componentLabels" (dict "root" . "component" "migrations") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "virtvalidate.serviceAccountName" . }}
+      restartPolicy: Never
+      securityContext:
+        {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrations
+          image: {{ include "virtvalidate.image" (dict "root" . "imageRepo" .Values.backend.image.repository "imageTag" .Values.backend.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Run alembic against the same DB the backend will use.
+          # working-dir is the project root inside the UBI image; the
+          # alembic.ini and migrations/ directory ship in the image.
+          command:
+            - alembic
+            - upgrade
+            - head
+          env:
+            # Same env var ordering rationale as deployment-backend.yaml —
+            # POSTGRES_USER + POSTGRES_PASSWORD must precede DATABASE_URL
+            # so kubelet's $(VAR) expansion fires.
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "virtvalidate.postgresSecretName" . }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "virtvalidate.postgresSecretName" . }}
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: {{ include "virtvalidate.databaseUrl" . | quote }}
+            # Alembic env.py reads ALEMBIC_DATABASE_URL when set, else
+            # falls back to the application's DATABASE_URL. Set both
+            # so the Job is robust regardless of which one env.py
+            # picks up.
+            - name: ALEMBIC_DATABASE_URL
+              value: {{ include "virtvalidate.databaseUrl" . | quote }}
+          securityContext:
+            {{- toYaml .Values.security.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrations.preUpgrade.resources | nindent 12 }}
+{{- end }}

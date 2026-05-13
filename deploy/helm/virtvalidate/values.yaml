@@ -287,3 +287,33 @@ config:
 # matches the standard `name`/`value` (or `valueFrom`) shape so secrets
 # and downward-API references work the same as a hand-written Deployment.
 extraEnv: []
+
+# -----------------------------------------------------------------------------
+# Alembic migrations
+#
+# The backend lifespan also applies migrations on pod startup, but the
+# pre-upgrade Job hook is the canonical OCP/Helm pattern: migrations
+# run BEFORE the new pods come up. If the schema change fails, the
+# old replicas keep serving and the operator gets a clear, isolated
+# failure to investigate instead of a crash-looping backend.
+#
+# Disable preUpgrade.enabled if you want the legacy lifespan-only
+# path — e.g., dev / podman-compose where there is no Helm release.
+# -----------------------------------------------------------------------------
+migrations:
+  preUpgrade:
+    enabled: true
+    # Two attempts. The first usually succeeds; the second covers the
+    # case where Postgres was mid-promotion when the Job started.
+    backoffLimit: 2
+    # 5 minutes — Alembic upgrades on the current schema take seconds.
+    # The deadline is here so an unreachable database fails fast
+    # instead of hanging the helm upgrade.
+    activeDeadlineSeconds: 300
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi

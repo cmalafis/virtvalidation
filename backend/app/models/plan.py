@@ -186,9 +186,7 @@ class MigrationPlan(Base):
     # between customer constraints and inventory shape (e.g., "you said
     # max 10 VMs/wave but app X has 23 indivisible VMs").
     warnings: Mapped[list[str]] = mapped_column(JSONType, default=list, nullable=False)
-    next_actions: Mapped[list[str]] = mapped_column(
-        JSONType, default=list, nullable=False
-    )
+    next_actions: Mapped[list[str]] = mapped_column(JSONType, default=list, nullable=False)
 
     # Plan revisioning. supersedes_plan_id chains backwards to the
     # previous revision; revision_number increments. The chain lets
@@ -199,6 +197,33 @@ class MigrationPlan(Base):
     revision_number: Mapped[int] = mapped_column(
         Integer, default=1, server_default="1", nullable=False
     )
+
+    # ---- Async generation lifecycle ----
+    # Populated by the BackgroundTask that the POST endpoint kicks off.
+    # ``status`` is a plain string (not an enum) so adding a new stage
+    # doesn't need a DB migration — the planner pipeline gained two
+    # stages (chunking, llm_grouping) since the planning rewrite and
+    # the operator-facing string set is still in flux. Controlled
+    # vocabulary (used by the UI for progress steps):
+    #   pending → validating → chunking → llm_grouping → assembling
+    #            → complete | failed
+    #
+    # ``error_message`` carries the verbatim ``str(e)`` from the
+    # typed-exception layer (LLMUnreachableError, LLMAuthError, etc.)
+    # so the failure surface seen on the plan detail page matches
+    # exactly what shows up in pod logs — no second-guessing for the
+    # operator about whether "network failure" really means DNS or
+    # really means auth.
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending", nullable=False
+    )
+    progress_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    progress_percent: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
