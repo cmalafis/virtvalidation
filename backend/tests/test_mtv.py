@@ -214,5 +214,10 @@ def test_wave_without_storage_class_raises(ctx):
             "target_network_attachment": "nad-a",
         },
     ]
-    with pytest.raises(MTVGenerationError, match="storageclass mappings"):
+    # The pre-check catches this with a VM-named message before the
+    # downstream empty-map error fires; both are valid signals but the
+    # new shape is what the operator sees.
+    with pytest.raises(MTVGenerationError) as excinfo:
         generate_wave_yaml(ctx, vms)
+    assert "stray" in str(excinfo.value)
+    assert "target storage class" in str(excinfo.value)

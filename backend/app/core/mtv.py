@@ -357,45 +357,91 @@ def generate_wave_yaml(
     if not vms:
         raise MTVGenerationError("Cannot generate a plan for an empty wave")
 
-    # Pre-check: if a mapping is supplied, every distinct source
-    # network and datastore referenced by an in-scope VM must resolve
-    # to a target. Without this, we silently fall back to placeholder
-    # YAML and operators discover the failure at ``oc apply`` time.
-    # The error message lists the unmapped names so the operator
-    # opens the mapping editor and assigns targets.
-    if resolver is not None:
-        unmapped_nets: list[str] = []
-        unmapped_ds: list[str] = []
-        seen_nets: set[str] = set()
-        seen_ds: set[str] = set()
-        for vm in vms:
+    # Pre-check: every VM must resolve to a target namespace, every
+    # distinct source network must resolve to a target, and every
+    # distinct source datastore must resolve to a storage class.
+    # Without these checks, we silently emit placeholder YAML and the
+    # operator discovers the failure at ``oc apply`` time. Error
+    # messages name BOTH the unmapped resource AND a sample VM using
+    # it so the operator can jump straight to the fix.
+    unmapped_nets: dict[str, list[str]] = {}
+    unmapped_ds: dict[str, list[str]] = {}
+    vms_without_namespace: list[str] = []
+    for vm in vms:
+        vm_name = vm.get("name") or "<unnamed VM>"
+
+        # Namespace resolution. With a resolver, ask it; without,
+        # fall back to the per-VM target_namespace + the wave-level
+        # default. If nothing resolves, the YAML's targetNamespace
+        # would be "" which fails ``oc apply``.
+        resolved_ns: str | None = None
+        if resolver is not None:
+            resolved_ns = resolver.resolve_namespace(vm)
+        if not resolved_ns:
+            resolved_ns = vm.get("target_namespace") or ctx.default_target_namespace
+        if not resolved_ns:
+            vms_without_namespace.append(vm_name)
+
+        # Network resolution. Only enforced when a resolver is
+        # supplied — the legacy per-VM target_network_attachment is
+        # checked downstream by _build_network_map's fallback chain.
+        sc_fallback = vm.get("target_storage_class") or ""
+        if resolver is not None:
             for src in vm.get("vsphere_networks") or []:
-                if not src or src in seen_nets:
+                if not src:
                     continue
-                seen_nets.add(src)
                 if resolver.resolve_network(src) is None:
-                    unmapped_nets.append(src)
+                    unmapped_nets.setdefault(src, []).append(vm_name)
             for src in vm.get("vsphere_datastores") or []:
-                if not src or src in seen_ds:
+                if not src:
                     continue
-                seen_ds.add(src)
-                if resolver.resolve_storage(src) is None:
-                    unmapped_ds.append(src)
-        problems: list[str] = []
-        if unmapped_nets:
-            sample = ", ".join(sorted(unmapped_nets)[:5])
-            extra = f" (+{len(unmapped_nets) - 5} more)" if len(unmapped_nets) > 5 else ""
-            problems.append(f"{len(unmapped_nets)} source network(s) unmapped ({sample}{extra})")
-        if unmapped_ds:
-            sample = ", ".join(sorted(unmapped_ds)[:5])
-            extra = f" (+{len(unmapped_ds) - 5} more)" if len(unmapped_ds) > 5 else ""
-            problems.append(f"{len(unmapped_ds)} source datastore(s) unmapped ({sample}{extra})")
-        if problems:
-            raise MTVGenerationError(
-                "Cannot generate plan: "
-                + "; ".join(problems)
-                + ". Open the mapping editor and assign target resources."
-            )
+                if not (resolver.resolve_storage(src) or sc_fallback):
+                    unmapped_ds.setdefault(src, []).append(vm_name)
+        else:
+            # No resolver — legacy plans depend on per-VM target_*
+            # fields. Catch the storage gap with a VM-named message
+            # before _build_storage_map silently skips the row.
+            if (vm.get("vsphere_datastores") or []) and not sc_fallback:
+                ds_sample = (vm.get("vsphere_datastores") or [""])[0]
+                unmapped_ds.setdefault(ds_sample, []).append(vm_name)
+
+    problems: list[str] = []
+    if vms_without_namespace:
+        sample = ", ".join(sorted(set(vms_without_namespace))[:5])
+        extra = (
+            f" (+{len(set(vms_without_namespace)) - 5} more)"
+            if len(set(vms_without_namespace)) > 5
+            else ""
+        )
+        problems.append(
+            f"{len(set(vms_without_namespace))} VM(s) have no resolved target_namespace "
+            f"({sample}{extra}) — set a namespace strategy on the resource mapping or "
+            "fill target_namespace on the affected VMs"
+        )
+    if unmapped_nets:
+        sample_pairs = [
+            f"{src!r} (used by {affected[0]})"
+            for src, affected in sorted(unmapped_nets.items())[:5]
+        ]
+        sample = "; ".join(sample_pairs)
+        extra = f" (+{len(unmapped_nets) - 5} more)" if len(unmapped_nets) > 5 else ""
+        problems.append(f"{len(unmapped_nets)} source network(s) unmapped: {sample}{extra}")
+    if unmapped_ds:
+        sample_pairs = [
+            f"{src!r} (used by {affected[0]})" for src, affected in sorted(unmapped_ds.items())[:5]
+        ]
+        sample = "; ".join(sample_pairs)
+        extra = f" (+{len(unmapped_ds) - 5} more)" if len(unmapped_ds) > 5 else ""
+        problems.append(
+            f"{len(unmapped_ds)} source datastore(s) without a target storage class: "
+            f"{sample}{extra}"
+        )
+    if problems:
+        raise MTVGenerationError(
+            "Cannot generate plan: "
+            + "; ".join(problems)
+            + ". Open the mapping editor and assign target resources."
+        )
 
     netmap = _build_network_map(ctx, vms, resolver)
     storagemap = _build_storage_map(ctx, vms, resolver)

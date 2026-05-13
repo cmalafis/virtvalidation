@@ -191,3 +191,115 @@ def test_no_resolver_still_falls_back_to_per_vm_fields(ctx):
     yaml_text = generate_wave_yaml(ctx, vms, resolver=None)
     assert "legacy-nad" in yaml_text
     assert "legacy-sc" in yaml_text
+
+
+# ---------------------------------------------------------------------------
+# VM-named error messages — the operator must know which VM to fix.
+# ---------------------------------------------------------------------------
+def test_unmapped_network_error_names_the_affected_vm(ctx):
+    resolver = MappingResolver(
+        network_mappings=[],
+        storage_mappings=[{"source_datastore": "ds-1", "target_storage_class": "ocs-rbd"}],
+        namespace_mappings={"strategy": "single", "single_namespace": "ns"},
+    )
+    vms = [
+        {
+            "name": "ehr-stag-db-01",
+            "vsphere_networks": ["prod-vlan-100"],
+            "vsphere_datastores": ["ds-1"],
+        }
+    ]
+    with pytest.raises(MTVGenerationError) as excinfo:
+        generate_wave_yaml(ctx, vms, resolver=resolver)
+    msg = str(excinfo.value)
+    assert "prod-vlan-100" in msg
+    assert "ehr-stag-db-01" in msg
+
+
+def test_unmapped_datastore_error_names_the_affected_vm(ctx):
+    resolver = MappingResolver(
+        network_mappings=[
+            {
+                "source_network": "n1",
+                "target_network_name": "tenant-net",
+                "target_network_type": "nad",
+                "target_namespace": "ns",
+            }
+        ],
+        storage_mappings=[],
+        namespace_mappings={"strategy": "single", "single_namespace": "ns"},
+    )
+    vms = [
+        {
+            "name": "billing-app-03",
+            "vsphere_networks": ["n1"],
+            "vsphere_datastores": ["ds-x"],
+        }
+    ]
+    with pytest.raises(MTVGenerationError) as excinfo:
+        generate_wave_yaml(ctx, vms, resolver=resolver)
+    msg = str(excinfo.value)
+    assert "ds-x" in msg
+    assert "billing-app-03" in msg
+
+
+def test_unresolved_namespace_raises_clear_error_named_by_vm():
+    """When a per_environment strategy has no entry for the VM's
+    environment AND the wave-level default is empty, the operator
+    must see a message naming the VMs so they can fix the strategy."""
+    ctx = WaveContext(
+        plan_id=1,
+        wave_number=1,
+        rationale="wave one",
+        namespace="openshift-mtv",
+        source_provider="vmware",
+        destination_provider="ocpv",
+        default_target_namespace="",  # no fallback
+    )
+    resolver = MappingResolver(
+        network_mappings=[
+            {
+                "source_network": "prod-vlan-100",
+                "target_network_name": "tenant-prod-net",
+                "target_network_type": "nad",
+                "target_namespace": "openshift-multus",
+            }
+        ],
+        storage_mappings=[{"source_datastore": "ds-prod-01", "target_storage_class": "ocs-rbd"}],
+        namespace_mappings={
+            "strategy": "per_environment",
+            "per_env_namespaces": {"production": "prod-vms"},
+        },
+    )
+    vms = [
+        {
+            "name": "qa-app-01",
+            "vsphere_networks": ["prod-vlan-100"],
+            "vsphere_datastores": ["ds-prod-01"],
+            "environment": "qa",  # not in per_env_namespaces
+        }
+    ]
+    with pytest.raises(MTVGenerationError) as excinfo:
+        generate_wave_yaml(ctx, vms, resolver=resolver)
+    msg = str(excinfo.value)
+    assert "qa-app-01" in msg
+    assert "target_namespace" in msg
+
+
+def test_legacy_no_resolver_storage_gap_names_the_affected_vm(ctx):
+    """resolver=None path: a VM with vsphere_datastores but no
+    target_storage_class triggers the named-gap error rather than
+    silently producing a wave with an empty storage map."""
+    vms = [
+        {
+            "name": "ad-dc-02",
+            "vsphere_networks": ["prod-vlan-100"],
+            "vsphere_datastores": ["ds-prod-01"],
+            "target_namespace": "legacy-ns",
+            "target_network_attachment": "legacy-nad",
+            # no target_storage_class — must surface
+        }
+    ]
+    with pytest.raises(MTVGenerationError) as excinfo:
+        generate_wave_yaml(ctx, vms, resolver=None)
+    assert "ad-dc-02" in str(excinfo.value)
