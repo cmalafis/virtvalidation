@@ -13,7 +13,7 @@
 // line can render without a second round-trip.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { fetchJSON } from "../utils/fetchJSON";
@@ -875,9 +875,20 @@ export default function InventoryTable({
                     />
                   </td>
                   <td style={{ padding: "10px 14px" }}>
-                    <Link to={`/vms/${vm.id}`} style={{
-                      color: "#aaccff", textDecoration: "none", fontWeight: 600,
-                    }}>{vm.name}</Link>
+                    {onEdit ? (
+                      <button
+                        type="button"
+                        onClick={() => onEdit(vm)}
+                        title="Edit VM"
+                        style={{
+                          background: "transparent", border: "none", padding: 0,
+                          color: "#aaccff", fontWeight: 600,
+                          fontFamily: "inherit", fontSize: "inherit",
+                          cursor: "pointer", textAlign: "left",
+                        }}>{vm.name}</button>
+                    ) : (
+                      <span style={{ color: "#aaccff", fontWeight: 600 }}>{vm.name}</span>
+                    )}
                     <div style={{ color: "#777799", fontSize: 11, marginTop: 2 }}>
                       {fmt(vm.ip_address)}
                     </div>
