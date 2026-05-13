@@ -887,3 +887,76 @@ def test_mtv_yaml_export_409_when_referenced_mapping_deleted(client, db_session)
     r = client.get(f"/api/plans/{plan.id}/waves/1/mtv-yaml")
     assert r.status_code == 409
     assert "mapping" in r.json()["detail"].lower()
+
+
+def test_mtv_yaml_export_handles_dict_shape_namespace_strategy(client, db_session):
+    """Regression: mapping.namespace_mappings stored as a dict
+    (NamespaceStrategy) used to be coerced via ``list(...)`` in the
+    endpoint, which turns the dict into a list of its KEYS. The
+    MappingResolver then iterated strings and raised
+    ``AttributeError: 'str' object has no attribute 'get'`` —
+    surfacing as a bare 500 to operators. The fix preserves the
+    dict shape so the resolver dispatches correctly."""
+    from app.models.plan import MigrationPlan
+    from app.models.target import OCPTarget, ResourceMapping
+    from app.models.vcenter import VCenterSource
+    from app.models.vm import VM
+
+    vc = VCenterSource(name="vc-dict", hostname="vc-dict.local")
+    db_session.add(vc)
+    target = OCPTarget(name="ocp-dict", api_endpoint="https://api:6443", verify_ssl=False)
+    db_session.add(target)
+    db_session.flush()
+    vm = VM(
+        name="vm-dict",
+        source_hostname="vm-dict.local",
+        ip_address="10.0.0.5",
+        source_vcenter_id=vc.id,
+        vsphere_networks=["src-prod"],
+        vsphere_datastores=["src-tier1"],
+        environment="production",
+    )
+    db_session.add(vm)
+    db_session.flush()
+    mapping = ResourceMapping(
+        name="m-dict",
+        vcenter_source_id=vc.id,
+        ocp_target_id=target.id,
+        network_mappings=[
+            {
+                "source_network": "src-prod",
+                "target_network_name": "prod-vlan-100",
+                "target_namespace": "openshift-multus",
+                "target_network_type": "nad",
+            }
+        ],
+        storage_mappings=[{"source_datastore": "src-tier1", "target_storage_class": "ocs-rbd"}],
+        # New-style namespace strategy: dict, NOT a list.
+        namespace_mappings={
+            "strategy": "per_environment",
+            "per_env_namespaces": {
+                "production": "prod-vms",
+                "staging": "stg-vms",
+            },
+        },
+        is_active=True,
+    )
+    db_session.add(mapping)
+    db_session.flush()
+    plan = MigrationPlan(
+        name="p-dict",
+        vm_ids=[vm.id],
+        waves=[{"wave_number": 1, "vm_ids": [vm.id], "rationale": "only wave"}],
+        model="test-model",
+        mapping_id=mapping.id,
+    )
+    db_session.add(plan)
+    db_session.commit()
+
+    r = client.get(f"/api/plans/{plan.id}/waves/1/mtv-yaml")
+    assert r.status_code == 200, r.text
+    body = r.text
+    # The dict strategy resolved this VM (environment=production) → prod-vms.
+    assert "prod-vms" in body
+    assert "prod-vlan-100" in body
+    assert "ocs-rbd" in body
