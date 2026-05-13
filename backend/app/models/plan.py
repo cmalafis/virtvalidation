@@ -161,12 +161,28 @@ class MigrationPlan(Base):
     summary: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    # Resource mapping referenced at generation time. Captured on the
+    # Resource mappings referenced at generation time. Captured on the
     # plan row so MTV YAML export resolves source→target resource names
-    # against the same mapping the operator chose during planning,
-    # even if the mapping is later edited or deactivated.
+    # against the same mapping(s) the operator chose during planning,
+    # even if a mapping is later edited or deactivated.
+    #
+    # ``mapping_ids`` is the canonical list (one per source vCenter the
+    # plan touches; per-VM routing picks the matching mapping by
+    # ``vcenter_source_id``). ``mapping_id`` is the legacy singular
+    # column kept for one release of back-compat with pre-multi-mapping
+    # rows — new writes populate ``mapping_id = mapping_ids[0] if
+    # mapping_ids else None`` and readers prefer ``mapping_ids``.
     mapping_id: Mapped[int | None] = mapped_column(
         ForeignKey("resource_mappings.id", ondelete="SET NULL"), nullable=True
+    )
+    # Nullable in the DB to keep the migration portable (Postgres
+    # JSONB rejects a string server_default; other JSON columns in
+    # this schema follow the same nullable-but-Python-default
+    # convention). Read sites guard with ``plan_row.mapping_ids or []``.
+    mapping_ids: Mapped[list[int] | None] = mapped_column(
+        JSONType,
+        default=list,
+        nullable=True,
     )
 
     # ---- Async generation lifecycle ----

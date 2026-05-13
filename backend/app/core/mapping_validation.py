@@ -110,22 +110,97 @@ def _has_target_namespace(vm: VM, mapping: ResourceMapping | None) -> bool:
     return False
 
 
+def _pick_mapping_for_vm(
+    vm: VM,
+    mappings: list[ResourceMapping],
+) -> ResourceMapping | None:
+    """Find the mapping whose ``vcenter_source_id`` matches ``vm``.
+
+    Returns ``None`` if no mapping covers that vCenter. The caller
+    decides whether a no-match is a coverage gap or fine (per-VM
+    target fields might still resolve everything). VMs with no
+    ``source_vcenter_id`` are handled separately by the validator
+    via union-of-mappings, not by this lookup.
+    """
+    if vm.source_vcenter_id is None:
+        return None
+    for m in mappings:
+        if m.vcenter_source_id == vm.source_vcenter_id:
+            return m
+    return None
+
+
+def _has_target_namespace_via_any(vm: VM, mappings: list[ResourceMapping]) -> bool:
+    """Namespace strategy can come from ANY selected mapping when the
+    VM has no vcenter to pin it to."""
+    if vm.target_namespace:
+        return True
+    for m in mappings:
+        nm = m.namespace_mappings
+        if isinstance(nm, dict) and nm:
+            return True
+        if isinstance(nm, list) and nm:
+            return True
+    return False
+
+
 def validate_plan_inputs(
     vms: list[VM],
-    mapping: ResourceMapping | None,
+    mappings: list[ResourceMapping],
 ) -> ValidationResult:
     """Verify every VM has complete mapping coverage.
 
-    The validator walks each VM's source resources and confirms a
-    target exists either in the mapping payload or as a per-VM field.
-    Gaps are collected, not raised — the caller decides whether to
-    surface as 422 or to log + continue.
+    Each VM is validated against the mapping whose
+    ``vcenter_source_id`` matches the VM's source vCenter. When the
+    operator has selected mappings (``mappings`` non-empty) but a VM's
+    vCenter isn't covered by any of them, that's a ``no_mapping``
+    gap surfaced as-is. When ``mappings`` is empty (operator opted
+    out of mapping-driven coverage), every VM is validated as if
+    ``mapping=None`` — only per-VM target fields count.
+
+    VMs with no ``source_vcenter_id`` (test fixtures, legacy imports
+    pre-dating the source_vcenter_id column) can't be routed by
+    vcenter, so the validator falls back to the union of every
+    selected mapping's coverage for those VMs. In production, the
+    RVTools import always populates source_vcenter_id and the
+    per-vcenter routing kicks in.
     """
-    mapped_nets = _mapped_networks(mapping)
-    mapped_ds = _mapped_datastores(mapping)
     gaps: list[MappingGap] = []
 
+    # Pre-compute the union once for the no-vcenter fallback path.
+    all_nets: set[str] = set()
+    all_ds: set[str] = set()
+    for m in mappings:
+        all_nets |= _mapped_networks(m)
+        all_ds |= _mapped_datastores(m)
+
     for vm in vms:
+        if vm.source_vcenter_id is None:
+            # Can't route by vcenter — use the union of every selected
+            # mapping's coverage. When mappings is empty both sets are
+            # empty so this still produces per-resource gaps (matches
+            # pre-multi-mapping ``mapping=None`` semantics).
+            mapped_nets = all_nets
+            mapped_ds = all_ds
+            has_namespace = _has_target_namespace_via_any(vm, mappings)
+        else:
+            vm_mapping = _pick_mapping_for_vm(vm, mappings) if mappings else None
+            if mappings and vm_mapping is None:
+                gaps.append(
+                    MappingGap(
+                        vm_id=vm.id,
+                        vm_name=vm.name,
+                        kind="no_mapping",
+                        source_value=(
+                            f"no selected mapping covers source vcenter " f"{vm.source_vcenter_id}"
+                        ),
+                    )
+                )
+                continue
+            mapped_nets = _mapped_networks(vm_mapping)
+            mapped_ds = _mapped_datastores(vm_mapping)
+            has_namespace = _has_target_namespace(vm, vm_mapping)
+
         # Networks
         for src in vm.vsphere_networks or []:
             if not src:
@@ -150,7 +225,7 @@ def validate_plan_inputs(
             )
 
         # Namespace
-        if not _has_target_namespace(vm, mapping):
+        if not has_namespace:
             gaps.append(
                 MappingGap(
                     vm_id=vm.id,

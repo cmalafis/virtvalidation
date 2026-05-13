@@ -345,7 +345,7 @@ Depends on: `app.core.db`
   - Customer intent captured by the planning wizard.
   - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
 - **`MigrationPlan`** (SQLAlchemy model · table `migration_plans`)
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_id`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `created_at`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_id`, `mapping_ids`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `created_at`
 
 </details>
 
@@ -363,12 +363,12 @@ Depends on: `app.models.plan`
 - **`PlanningStrategyRead`** (Pydantic schema)
   - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
 - **`WaveRead`** (Pydantic schema)
-  - Fields: `wave_number`, `name`, `vm_ids`, `rationale`, `estimated_duration`, `estimated_risk`, `risk_level`, `considerations`, `applications_included`, `applications_split_warning`
+  - Fields: `wave_number`, `name`, `vm_ids`, `vm_names`, `rationale`, `estimated_duration`, `estimated_risk`, `risk_level`, `considerations`, `applications_included`, `applications_split_warning`
 - **`PlanRead`** (Pydantic schema)
   - API response shape for a stored plan.
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_id`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_id`, `mapping_ids`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`
 - **`PlanCreate`** (Pydantic schema)
-  - Fields: `vm_ids`, `name`, `mapping_id`, `preclassification_enabled`, `ha_strategy`
+  - Fields: `vm_ids`, `name`, `mapping_ids`, `mapping_id`, `preclassification_enabled`, `ha_strategy`
 - **`PreviewGroupsResponse`** (Pydantic schema)
   - Result of POST /api/plans/preview-groups — no plan persisted.
   - Fields: `vm_count`, `groups_formed`, `groups`, `over_ceiling`, `ceiling`
@@ -1174,7 +1174,7 @@ Depends on: `app.models.target`, `app.models.vm`
 
 **Functions**
 
-- `validate_plan_inputs(vms, mapping)` — Verify every VM has complete mapping coverage.
+- `validate_plan_inputs(vms, mappings)` — Verify every VM has complete mapping coverage.
 
 </details>
 
@@ -1285,7 +1285,7 @@ Depends on: `app.core.concurrency`, `app.core.family`, `app.core.mapping_validat
   - Raised by Stage 0 when mapping coverage is incomplete.
 - **`AnnotatedWave`** (Class)
   - A wave plus its Stage-6 annotation and Stage-7 YAML.
-  - Fields: `wave`, `description`, `risk_score`, `risk_rationale`, `notable_concerns`, `method`, `mtv_yaml`
+  - Fields: `wave`, `description`, `risk_score`, `risk_rationale`, `notable_concerns`, `method`, `mtv_yaml`, `vm_names`
   - Methods:
     - `to_dict(self)` — Render to the JSON shape persisted in MigrationPlan.waves[].
 - **`PlanPipelineResult`** (Class)
@@ -1295,7 +1295,7 @@ Depends on: `app.core.concurrency`, `app.core.family`, `app.core.mapping_validat
 **Functions**
 
 - `emit_wave_yaml(plan_id, wave, description, vm_by_id, resolver)` — Stage 7 — render one wave's MTV YAML.
-- `run_pipeline(vms, mapping)` — Walk the seven stages and return an end-to-end annotated plan.
+- `run_pipeline(vms, mappings)` — Walk the seven stages and return an end-to-end annotated plan.
 
 </details>
 
@@ -2127,6 +2127,7 @@ API calls:
 Exports / inner components:
 - **`PlanWizard`** (component)
 - **`StepBar`** (component)
+- **`MappingMultiSelect`** (component)
 - **`FilterBar`** (component)
 - **`FacetDropdown`** (component)
 - **`Toggle`** (component)
@@ -2351,8 +2352,6 @@ Exports / inner components:
 API calls:
 - `/api/audit?{id}`
 - `/api/network-reviews`
-- `/api/plans`
-- `/api/plans/{id}`
 - `/api/plans/{id}/waves/{id}/mtv-yaml`
 - `/api/plans?limit=1`
 - `/api/snapshots/capture-all`
@@ -2388,7 +2387,6 @@ Exports / inner components:
 - **`EnrollVMsModal`** (component)
 - **`DeleteVMModal`** (component)
 - **`BulkDeleteVMsModal`** (component)
-- **`GeneratePlanModal`** (component)
 - **`VirtValidate`** (component)
 - **`RevertToVmwareModal`** (component)
 - **`MakeAvailableModal`** (component)
