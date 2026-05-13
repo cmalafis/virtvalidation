@@ -37,6 +37,8 @@ from app.models.target import (
     ResourceMapping,
     ResourceMappingStatus,
 )
+from app.models.target_network import TargetNetwork
+from app.models.target_storage_class import TargetStorageClass
 from app.models.vcenter import VCenterSource
 from app.models.vm import VM
 from app.schemas.target import (
@@ -319,19 +321,55 @@ def _compute_mapping_status(mapping: ResourceMapping, db: Session) -> ResourceMa
         return ResourceMappingStatus.incomplete
 
     target = db.get(OCPTarget, mapping.ocp_target_id)
-    if target is not None and target.storage_classes is not None:
-        target_sc_names = {sc.get("name") for sc in target.storage_classes}
-        for m in mapping.storage_mappings or []:
-            referenced = m.get("target_storage_class")
-            if referenced and referenced not in target_sc_names:
-                return ResourceMappingStatus.needs_review
-        target_net_names = {n.get("name") for n in (target.network_attachments or [])}
-        for m in mapping.network_mappings or []:
-            referenced = m.get("target_network_name")
-            if referenced and referenced not in target_net_names:
-                return ResourceMappingStatus.needs_review
+    if target is not None:
+        target_sc_names = _target_sc_names(db, target)
+        target_net_names = _target_net_names(db, target)
+        # Only flag drift when we have an authoritative list. Empty
+        # catalogs are legitimate (operator hasn't populated them yet);
+        # we don't want to flip every mapping to needs_review just
+        # because the catalogs are blank.
+        if target_sc_names is not None:
+            for m in mapping.storage_mappings or []:
+                referenced = m.get("target_storage_class")
+                if referenced and referenced not in target_sc_names:
+                    return ResourceMappingStatus.needs_review
+        if target_net_names is not None:
+            for m in mapping.network_mappings or []:
+                referenced = m.get("target_network_name")
+                if referenced and referenced not in target_net_names:
+                    return ResourceMappingStatus.needs_review
 
     return ResourceMappingStatus.complete
+
+
+def _target_net_names(db: Session, target: OCPTarget) -> set[str] | None:
+    """Authoritative set of valid target network names for a cluster.
+
+    Prefers operator-declared TargetNetwork rows; falls back to the
+    legacy discovery cache only when no rows have been declared.
+    Returns None when neither source has data so callers can skip
+    drift checks rather than spuriously flagging needs_review."""
+    declared = list(
+        db.scalars(select(TargetNetwork).where(TargetNetwork.ocp_target_id == target.id)).all()
+    )
+    if declared:
+        return {n.name for n in declared}
+    if target.network_attachments:
+        return {n.get("name") for n in target.network_attachments if n.get("name")}
+    return None
+
+
+def _target_sc_names(db: Session, target: OCPTarget) -> set[str] | None:
+    declared = list(
+        db.scalars(
+            select(TargetStorageClass).where(TargetStorageClass.ocp_target_id == target.id)
+        ).all()
+    )
+    if declared:
+        return {s.name for s in declared}
+    if target.storage_classes:
+        return {s.get("name") for s in target.storage_classes if s.get("name")}
+    return None
 
 
 @mappings_router.get("", response_model=list[ResourceMappingRead])
@@ -358,13 +396,22 @@ def create_mapping(
             detail=f"OCP target {payload.ocp_target_id} not found",
         )
 
+    # namespace_mappings is either a NamespaceStrategy (dict) or a list
+    # of NamespaceMappingItem rows. Serialize each shape verbatim into
+    # the JSON column.
+    ns_payload: list | dict
+    if isinstance(payload.namespace_mappings, list):
+        ns_payload = [m.model_dump() for m in payload.namespace_mappings]
+    else:
+        ns_payload = payload.namespace_mappings.model_dump()
+
     mapping = ResourceMapping(
         name=payload.name,
         vcenter_source_id=payload.vcenter_source_id,
         ocp_target_id=payload.ocp_target_id,
         network_mappings=[m.model_dump() for m in payload.network_mappings],
         storage_mappings=[m.model_dump() for m in payload.storage_mappings],
-        namespace_mappings=[m.model_dump() for m in payload.namespace_mappings],
+        namespace_mappings=ns_payload,
         is_active=payload.is_active,
     )
     db.add(mapping)
@@ -427,12 +474,50 @@ def update_mapping(
 ) -> ResourceMapping:
     mapping = _get_mapping_or_404(db, mapping_id)
     updates = payload.model_dump(exclude_unset=True)
+
+    # Validate every referenced target_network_name / target_storage_class
+    # exists in the operator-declared catalog (or in the legacy discovery
+    # cache as a fallback) before persisting. Mapping editor reviews
+    # depend on this — without it, the save can succeed with a stale
+    # target name that plan generation then fails on at YAML-render time.
+    target = db.get(OCPTarget, mapping.ocp_target_id)
+    if target is not None:
+        valid_nets = _target_net_names(db, target)
+        valid_scs = _target_sc_names(db, target)
+        if "network_mappings" in updates and updates["network_mappings"] is not None:
+            for row in updates["network_mappings"]:
+                ref = (row or {}).get("target_network_name")
+                if ref and valid_nets is not None and ref not in valid_nets:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"target_network_name {ref!r} is not defined on "
+                            f"cluster {target.name!r}. Add it under "
+                            "OCP Targets → Networks first."
+                        ),
+                    )
+        if "storage_mappings" in updates and updates["storage_mappings"] is not None:
+            for row in updates["storage_mappings"]:
+                ref = (row or {}).get("target_storage_class")
+                if ref and valid_scs is not None and ref not in valid_scs:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"target_storage_class {ref!r} is not defined on "
+                            f"cluster {target.name!r}. Add it under "
+                            "OCP Targets → Storage Classes first."
+                        ),
+                    )
+
     if "network_mappings" in updates and updates["network_mappings"] is not None:
-        mapping.network_mappings = [m for m in updates["network_mappings"]]
+        mapping.network_mappings = list(updates["network_mappings"])
     if "storage_mappings" in updates and updates["storage_mappings"] is not None:
-        mapping.storage_mappings = [m for m in updates["storage_mappings"]]
+        mapping.storage_mappings = list(updates["storage_mappings"])
     if "namespace_mappings" in updates and updates["namespace_mappings"] is not None:
-        mapping.namespace_mappings = [m for m in updates["namespace_mappings"]]
+        # JSON column accepts either a list (legacy criteria rows) or a
+        # dict (new NamespaceStrategy shape). Pass through verbatim;
+        # the resolver dispatches on shape at plan-generation time.
+        mapping.namespace_mappings = updates["namespace_mappings"]
     if "name" in updates and updates["name"] is not None:
         mapping.name = updates["name"]
     if "is_active" in updates and updates["is_active"] is not None:
@@ -499,22 +584,45 @@ def _vcenter_source_signals(db: Session, mapping: ResourceMapping) -> tuple[list
 
 @mappings_router.post("/{mapping_id}/suggest-network", response_model=MappingSuggestionResponse)
 def suggest_networks(mapping_id: int, db: Session = Depends(get_db)) -> dict:
+    """Ask the LLM to match source vSphere networks onto the operator's
+    declared TargetNetwork rows. The legacy discovery-cache path
+    (target.network_attachments) is read as a fallback for clusters
+    that never moved off live discovery, but the TargetNetwork table
+    is the source of truth going forward."""
     mapping = _get_mapping_or_404(db, mapping_id)
     target = db.get(OCPTarget, mapping.ocp_target_id)
-    if target is None or not target.network_attachments:
+    if target is None:
+        raise HTTPException(status_code=404, detail="OCP target not found")
+
+    declared = list(
+        db.scalars(select(TargetNetwork).where(TargetNetwork.ocp_target_id == target.id)).all()
+    )
+    if not declared and not (target.network_attachments or []):
         raise HTTPException(
-            status_code=409,
-            detail="Run discovery on the target cluster before requesting suggestions.",
+            status_code=400,
+            detail="Define target networks for this cluster first.",
         )
+
     networks, _ = _vcenter_source_signals(db, mapping)
-    target_payload = [
-        {
-            "name": n.get("name"),
-            "type": n.get("type"),
-            "namespace": n.get("namespace"),
-        }
-        for n in target.network_attachments
-    ]
+    target_payload = (
+        [
+            {
+                "name": n.name,
+                "type": n.network_type.value,
+                "namespace": n.namespace,
+            }
+            for n in declared
+        ]
+        if declared
+        else [
+            {
+                "name": n.get("name"),
+                "type": n.get("type"),
+                "namespace": n.get("namespace"),
+            }
+            for n in (target.network_attachments or [])
+        ]
+    )
     try:
         result = suggest_network_mappings(sources=networks, targets=target_payload)
     except SuggestionError as e:
@@ -526,21 +634,42 @@ def suggest_networks(mapping_id: int, db: Session = Depends(get_db)) -> dict:
 def suggest_storage(mapping_id: int, db: Session = Depends(get_db)) -> dict:
     mapping = _get_mapping_or_404(db, mapping_id)
     target = db.get(OCPTarget, mapping.ocp_target_id)
-    if target is None or not target.storage_classes:
+    if target is None:
+        raise HTTPException(status_code=404, detail="OCP target not found")
+
+    declared = list(
+        db.scalars(
+            select(TargetStorageClass).where(TargetStorageClass.ocp_target_id == target.id)
+        ).all()
+    )
+    if not declared and not (target.storage_classes or []):
         raise HTTPException(
-            status_code=409,
-            detail="Run discovery on the target cluster before requesting suggestions.",
+            status_code=400,
+            detail="Define target storage classes for this cluster first.",
         )
+
     _, datastores = _vcenter_source_signals(db, mapping)
-    target_payload = [
-        {
-            "name": s.get("name"),
-            "provisioner": s.get("provisioner"),
-            "is_default": s.get("is_default"),
-            "access_modes": s.get("access_modes") or [],
-        }
-        for s in target.storage_classes
-    ]
+    target_payload = (
+        [
+            {
+                "name": s.name,
+                "provisioner": "operator-declared",
+                "is_default": s.is_default,
+                "access_modes": [s.access_mode.value],
+            }
+            for s in declared
+        ]
+        if declared
+        else [
+            {
+                "name": s.get("name"),
+                "provisioner": s.get("provisioner"),
+                "is_default": s.get("is_default"),
+                "access_modes": s.get("access_modes") or [],
+            }
+            for s in (target.storage_classes or [])
+        ]
+    )
     try:
         result = suggest_storage_mappings(sources=datastores, targets=target_payload)
     except SuggestionError as e:
@@ -593,16 +722,18 @@ def preflight(mapping_id: int, db: Session = Depends(get_db)) -> dict:
         # operator-declared and don't depend on the auth-based
         # discovery lifecycle. A non-active status no longer implies
         # a broken mapping.
-        sc_names = {sc.get("name") for sc in (target.storage_classes or [])}
-        net_names = {n.get("name") for n in (target.network_attachments or [])}
-        for m in mapping.storage_mappings or []:
-            ref = m.get("target_storage_class")
-            if ref and ref not in sc_names:
-                missing_storage_classes_on_target.append(ref)
-        for m in mapping.network_mappings or []:
-            ref = m.get("target_network_name")
-            if ref and ref not in net_names:
-                missing_networks_on_target.append(ref)
+        sc_names = _target_sc_names(db, target)
+        net_names = _target_net_names(db, target)
+        if sc_names is not None:
+            for m in mapping.storage_mappings or []:
+                ref = m.get("target_storage_class")
+                if ref and ref not in sc_names:
+                    missing_storage_classes_on_target.append(ref)
+        if net_names is not None:
+            for m in mapping.network_mappings or []:
+                ref = m.get("target_network_name")
+                if ref and ref not in net_names:
+                    missing_networks_on_target.append(ref)
     else:
         warnings.append("OCP target row not found — re-create the mapping or fix the target.")
 

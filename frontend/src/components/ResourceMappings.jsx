@@ -194,16 +194,59 @@ function CreateModal({ vcenters, targets, onClose, onSaved }) {
 // ---------------------------------------------------------------------------
 // Detail / editor
 // ---------------------------------------------------------------------------
+const DEFAULT_NS_STRATEGY = {
+  strategy: "per_environment",
+  single_namespace: "migrated-vms",
+  per_env_namespaces: {
+    production: "prod-vms",
+    staging: "staging-vms",
+    development: "dev-vms",
+  },
+  per_app_prefix: "app",
+};
+
+// Normalise namespace_mappings as it comes off the wire: legacy list
+// shape gets folded into the default strategy; new dict shape passes
+// through; null/empty gets the default. Resolves once at load so the
+// editor only ever deals with the dict.
+function normaliseNamespaceStrategy(raw) {
+  if (!raw) return { ...DEFAULT_NS_STRATEGY };
+  if (Array.isArray(raw)) {
+    // Best-effort migration from the legacy criteria-row schema:
+    // if a "default" row exists, promote it to single_namespace and
+    // switch the strategy. Anything more nuanced gets reset to the
+    // default; the operator was always going to re-make the decision
+    // in this UI anyway.
+    const defaultRow = raw.find((r) => (r?.criteria || "default") === "default" && r?.target_namespace);
+    if (defaultRow) {
+      return {
+        ...DEFAULT_NS_STRATEGY,
+        strategy: "single",
+        single_namespace: defaultRow.target_namespace,
+      };
+    }
+    return { ...DEFAULT_NS_STRATEGY };
+  }
+  // Dict shape — merge over defaults so missing keys don't crash the UI.
+  return {
+    ...DEFAULT_NS_STRATEGY,
+    ...raw,
+    per_env_namespaces: { ...DEFAULT_NS_STRATEGY.per_env_namespaces, ...(raw.per_env_namespaces || {}) },
+  };
+}
+
 export function ResourceMappingDetail() {
   const { id } = useParams();
   const [mapping, setMapping] = useState(null);
   const [target, setTarget] = useState(null);
+  const [targetNetworks, setTargetNetworks] = useState([]);   // TargetNetwork rows
+  const [targetSCs, setTargetSCs] = useState([]);             // TargetStorageClass rows
   const [sourceSignals, setSourceSignals] = useState({ networks: [], datastores: [] });
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [networkRows, setNetworkRows] = useState([]);
   const [storageRows, setStorageRows] = useState([]);
-  const [namespaceRows, setNamespaceRows] = useState([]);
+  const [nsStrategy, setNsStrategy] = useState(DEFAULT_NS_STRATEGY);
   const [name, setName] = useState("");
   const [active, setActive] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -214,14 +257,13 @@ export function ResourceMappingDetail() {
     try {
       const m = await fetchJSON(`/api/mappings/${id}`);
       const t = await fetchJSON(`/api/sources/targets/${m.ocp_target_id}`);
-      // Build source-signal lists by walking VMs in scope. limit=1000
-      // matches the backend MAX_PAGE_SIZE cap (previously
-      // limit=10000 here triggered a 422 against the mapping page).
-      // For vCenters with >1000 VMs, the aggregation under-counts
-      // signals that only appear on later pages — a dedicated
-      // /api/sources/vcenters/{id}/source-signals endpoint that
-      // aggregates server-side is the open follow-on; this cap
-      // unblocks the mapping page today.
+      const [nets, scs] = await Promise.all([
+        fetchJSON(`/api/ocp-targets/${m.ocp_target_id}/networks`),
+        fetchJSON(`/api/ocp-targets/${m.ocp_target_id}/storage-classes`),
+      ]);
+      // Source signals: walk VMs in this vCenter to count distinct
+      // network names and datastore names. limit=1000 matches the
+      // backend MAX_PAGE_SIZE cap.
       const vmsResp = await fetchJSON(`/api/vms?source_vcenter_id=${m.vcenter_source_id}&limit=1000`);
       const netCount = {}; const dsCount = {};
       for (const vm of (Array.isArray(vmsResp) ? vmsResp : (vmsResp?.items || []))) {
@@ -229,10 +271,11 @@ export function ResourceMappingDetail() {
         for (const d of vm.vsphere_datastores || []) dsCount[d] = (dsCount[d] || 0) + 1;
       }
       setMapping(m); setTarget(t);
-      setName(m.name); setActive(m.is_active);
+      setTargetNetworks(nets); setTargetSCs(scs);
+      setName(m.name); setActive(!!m.is_active);
       setNetworkRows(m.network_mappings || []);
       setStorageRows(m.storage_mappings || []);
-      setNamespaceRows(m.namespace_mappings || []);
+      setNsStrategy(normaliseNamespaceStrategy(m.namespace_mappings));
       setSourceSignals({
         networks: Object.entries(netCount).sort((a, b) => b[1] - a[1]).map(([n, c]) => ({ name: n, count: c })),
         datastores: Object.entries(dsCount).sort((a, b) => b[1] - a[1]).map(([n, c]) => ({ name: n, count: c })),
@@ -242,40 +285,66 @@ export function ResourceMappingDetail() {
   }, [id]);
   useEffect(() => { load(); }, [load]);
 
-  const ensureRow = (rows, key, value) => {
-    const existing = rows.find((r) => r[key] === value);
-    if (existing) return rows;
-    return [...rows, { [key]: value }];
-  };
-
-  // Synthesize editor rows from union(source signals + existing rows).
-  // Operator deletes a source-row only by clearing the target.
+  // Render one row per distinct source network/datastore (signal-driven).
+  // Existing mapping rows are merged so saved-but-no-longer-seen sources
+  // remain visible to the operator until they explicitly clear them.
   const allNetworkRows = useMemo(() => {
-    const rows = [...networkRows];
+    const byName = new Map();
+    for (const r of networkRows) byName.set(r.source_network, { ...r });
     for (const s of sourceSignals.networks) {
-      if (!rows.find((r) => r.source_network === s.name)) rows.push({ source_network: s.name });
+      if (!byName.has(s.name)) byName.set(s.name, { source_network: s.name });
     }
-    return rows;
+    return Array.from(byName.values());
   }, [networkRows, sourceSignals.networks]);
 
   const allStorageRows = useMemo(() => {
-    const rows = [...storageRows];
+    const byName = new Map();
+    for (const r of storageRows) byName.set(r.source_datastore, { ...r });
     for (const s of sourceSignals.datastores) {
-      if (!rows.find((r) => r.source_datastore === s.name)) rows.push({ source_datastore: s.name });
+      if (!byName.has(s.name)) byName.set(s.name, { source_datastore: s.name });
     }
-    return rows;
+    return Array.from(byName.values());
   }, [storageRows, sourceSignals.datastores]);
 
-  const updateNetworkRow = (sourceName, patch) => {
+  const mappedNetworkCount = allNetworkRows.filter((r) => r.target_network_name).length;
+  const mappedStorageCount = allStorageRows.filter((r) => r.target_storage_class).length;
+
+  // Pick the chosen target's metadata so we can auto-fill the read-only
+  // type + namespace columns when the operator picks a target.
+  const networkByName = useMemo(() => {
+    const m = {};
+    for (const n of targetNetworks) m[n.name] = n;
+    return m;
+  }, [targetNetworks]);
+
+  const updateNetworkTarget = (sourceName, targetName) => {
     setNetworkRows((rows) => {
-      const next = ensureRow(rows, "source_network", sourceName);
-      return next.map((r) => r.source_network === sourceName ? { ...r, ...patch } : r);
+      const idx = rows.findIndex((r) => r.source_network === sourceName);
+      const meta = targetName ? networkByName[targetName] : null;
+      const patched = {
+        source_network: sourceName,
+        target_network_name: targetName || null,
+        target_network_type: meta?.network_type || null,
+        target_namespace: meta?.namespace || null,
+      };
+      if (idx === -1) return [...rows, patched];
+      const out = rows.slice();
+      out[idx] = { ...out[idx], ...patched };
+      return out;
     });
   };
-  const updateStorageRow = (sourceName, patch) => {
+
+  const updateStorageTarget = (sourceName, targetName) => {
     setStorageRows((rows) => {
-      const next = ensureRow(rows, "source_datastore", sourceName);
-      return next.map((r) => r.source_datastore === sourceName ? { ...r, ...patch } : r);
+      const idx = rows.findIndex((r) => r.source_datastore === sourceName);
+      const patched = {
+        source_datastore: sourceName,
+        target_storage_class: targetName || null,
+      };
+      if (idx === -1) return [...rows, patched];
+      const out = rows.slice();
+      out[idx] = { ...out[idx], ...patched };
+      return out;
     });
   };
 
@@ -287,9 +356,29 @@ export function ResourceMappingDetail() {
         body: {
           name: name.trim(),
           is_active: active,
-          network_mappings: networkRows.filter((r) => r.target_network_name),
-          storage_mappings: storageRows.filter((r) => r.target_storage_class),
-          namespace_mappings: namespaceRows.filter((r) => r.target_namespace),
+          network_mappings: networkRows
+            .filter((r) => r.target_network_name)
+            .map((r) => {
+              const meta = networkByName[r.target_network_name];
+              return {
+                source_network: r.source_network,
+                target_network_name: r.target_network_name,
+                target_network_type: meta?.network_type || r.target_network_type || "nad",
+                target_namespace: meta?.namespace || r.target_namespace || null,
+                confidence: r.confidence,
+                rationale: r.rationale,
+              };
+            }),
+          storage_mappings: storageRows
+            .filter((r) => r.target_storage_class)
+            .map((r) => ({
+              source_datastore: r.source_datastore,
+              target_storage_class: r.target_storage_class,
+              access_mode: r.access_mode || null,
+              confidence: r.confidence,
+              rationale: r.rationale,
+            })),
+          namespace_mappings: nsStrategy,
         },
       });
       toast.success(`Saved · status: ${patched.status}`, TOAST_OPTS);
@@ -304,30 +393,39 @@ export function ResourceMappingDetail() {
     } catch (e) { toast.error(e.message, TOAST_OPTS); }
   };
 
+  // AI Suggest fills the dropdowns but does NOT save — operator
+  // reviews and clicks Save.
   const suggestNetwork = async () => {
     try {
       const r = await fetchJSON(`/api/mappings/${id}/suggest-network`, { method: "POST" });
-      const merged = networkRows.slice();
-      for (const s of r.suggestions || []) {
-        const existing = merged.find((m) => m.source_network === s.source_network);
-        if (existing) Object.assign(existing, s);
-        else merged.push(s);
-      }
-      setNetworkRows(merged);
-      toast.success(r.rationale_summary || "Suggestions applied", TOAST_OPTS);
+      setNetworkRows((prev) => {
+        const byName = new Map();
+        for (const row of prev) byName.set(row.source_network, { ...row });
+        for (const s of r.suggestions || []) {
+          if (!s.source_network) continue;
+          const existing = byName.get(s.source_network) || { source_network: s.source_network };
+          byName.set(s.source_network, { ...existing, ...s });
+        }
+        return Array.from(byName.values());
+      });
+      toast.success(r.rationale_summary || "Network suggestions applied", TOAST_OPTS);
     } catch (e) { toast.error(e.message, TOAST_OPTS); }
   };
+
   const suggestStorage = async () => {
     try {
       const r = await fetchJSON(`/api/mappings/${id}/suggest-storage`, { method: "POST" });
-      const merged = storageRows.slice();
-      for (const s of r.suggestions || []) {
-        const existing = merged.find((m) => m.source_datastore === s.source_datastore);
-        if (existing) Object.assign(existing, s);
-        else merged.push(s);
-      }
-      setStorageRows(merged);
-      toast.success(r.rationale_summary || "Suggestions applied", TOAST_OPTS);
+      setStorageRows((prev) => {
+        const byName = new Map();
+        for (const row of prev) byName.set(row.source_datastore, { ...row });
+        for (const s of r.suggestions || []) {
+          if (!s.source_datastore) continue;
+          const existing = byName.get(s.source_datastore) || { source_datastore: s.source_datastore };
+          byName.set(s.source_datastore, { ...existing, ...s });
+        }
+        return Array.from(byName.values());
+      });
+      toast.success(r.rationale_summary || "Storage suggestions applied", TOAST_OPTS);
     } catch (e) { toast.error(e.message, TOAST_OPTS); }
   };
 
@@ -338,9 +436,8 @@ export function ResourceMappingDetail() {
     </Shell>
   );
 
-  const targetNetworks = (target?.network_attachments || []).map((n) => n.name);
-  const targetSCs = (target?.storage_classes || []).map((s) => s.name);
-  const targetNamespaces = (target?.namespaces || []).map((n) => n.name);
+  const noTargetNetworks = targetNetworks.length === 0;
+  const noTargetSCs = targetSCs.length === 0;
 
   return (
     <Shell>
@@ -350,7 +447,11 @@ export function ResourceMappingDetail() {
           <input style={{ ...inputStyle, fontWeight: 700, fontSize: 18, padding: "6px 8px", width: 360 }}
             value={name} onChange={(e) => setName(e.target.value)} />
           <div style={{ color: "#aaaacc", fontSize: 12, marginTop: 4, fontFamily: "'Share Tech Mono', monospace" }}>
-            {target?.name || "?"} · status: <span style={{ color: STATUS_COLORS[mapping.status] || "#aaaacc" }}>
+            <Link to={`/sources/targets/${mapping.ocp_target_id}`} style={{ color: "#88aaff", textDecoration: "none" }}>
+              {target?.name || "?"}
+            </Link>
+            {" "}· status:{" "}
+            <span style={{ color: STATUS_COLORS[mapping.status] || "#aaaacc" }}>
               {mapping.status}
             </span>
           </div>
@@ -371,88 +472,207 @@ export function ResourceMappingDetail() {
       <main style={{ maxWidth: 1280, margin: "0 auto", padding: 32, display: "grid", gap: 28 }}>
         {preflight && <PreflightPanel result={preflight} onClose={() => setPreflight(null)} />}
 
-        <Section title={`Network mappings (${allNetworkRows.length} source rows)`}
-          action={<button style={btnGhost} onClick={suggestNetwork}>🤖 Suggest</button>}>
-          <RowGrid headers={["Source network", "VMs", "Target NAD/CUDN", "Target NS", "Confidence"]}>
-            {allNetworkRows.map((row) => {
-              const signal = sourceSignals.networks.find((n) => n.name === row.source_network);
-              return (
-                <div key={row.source_network} style={editorRow}>
-                  <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 12 }}>{row.source_network}</span>
-                  <span style={{ color: "#aaaacc", fontSize: 12 }}>{signal?.count ?? "—"}</span>
-                  <select style={inputStyle} value={row.target_network_name || ""}
-                    onChange={(e) => updateNetworkRow(row.source_network, { target_network_name: e.target.value || null })}>
-                    <option value="">—</option>
-                    {targetNetworks.map((n) => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                  <input style={inputStyle} value={row.target_namespace || ""}
-                    placeholder="openshift-multus"
-                    onChange={(e) => updateNetworkRow(row.source_network, { target_namespace: e.target.value || null })} />
-                  <ConfidencePill value={row.confidence} />
-                </div>
-              );
-            })}
-          </RowGrid>
+        <NamespaceStrategySection strategy={nsStrategy} setStrategy={setNsStrategy} />
+
+        <Section
+          title={`Network mappings — ${mappedNetworkCount} of ${allNetworkRows.length} source networks mapped`}
+          action={
+            <button
+              style={{ ...btnGhost, opacity: noTargetNetworks ? 0.5 : 1 }}
+              onClick={suggestNetwork}
+              disabled={noTargetNetworks}
+              title={noTargetNetworks ? "Define target networks on the cluster first" : "Ask the LLM for matches"}
+            >
+              🤖 AI Suggest
+            </button>
+          }
+        >
+          {noTargetNetworks ? (
+            <NoCatalogBanner kind="networks" targetId={mapping.ocp_target_id} />
+          ) : (
+            <RowGrid
+              template={netEditorRow.gridTemplateColumns}
+              headers={["", "Source network", "VMs", "Target network", "Type", "Namespace", "Confidence"]}>
+              {allNetworkRows.map((row) => {
+                const signal = sourceSignals.networks.find((n) => n.name === row.source_network);
+                const meta = row.target_network_name ? networkByName[row.target_network_name] : null;
+                const mapped = !!row.target_network_name;
+                return (
+                  <div key={row.source_network} style={netEditorRow}>
+                    <StatusDot mapped={mapped} />
+                    <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 12, color: "#eeeeff" }}>
+                      {row.source_network}
+                    </span>
+                    <span style={{ color: "#aaaacc", fontSize: 12 }}>{signal?.count ?? "—"}</span>
+                    <select style={inputStyle}
+                      value={row.target_network_name || ""}
+                      onChange={(e) => updateNetworkTarget(row.source_network, e.target.value)}>
+                      <option value="">— None selected —</option>
+                      {targetNetworks.map((n) => (
+                        <option key={n.id} value={n.name}>
+                          {n.name} ({n.network_type}{n.namespace ? ` · ${n.namespace}` : ""})
+                        </option>
+                      ))}
+                    </select>
+                    <span style={{ color: "#aaaacc", fontSize: 12, fontFamily: "'Share Tech Mono', monospace" }}>
+                      {meta?.network_type || "—"}
+                    </span>
+                    <span style={{ color: "#aaaacc", fontSize: 12, fontFamily: "'Share Tech Mono', monospace" }}>
+                      {meta?.namespace || "—"}
+                    </span>
+                    <ConfidencePill value={row.confidence} />
+                  </div>
+                );
+              })}
+            </RowGrid>
+          )}
         </Section>
 
-        <Section title={`Storage mappings (${allStorageRows.length} source rows)`}
-          action={<button style={btnGhost} onClick={suggestStorage}>🤖 Suggest</button>}>
-          <RowGrid headers={["Source datastore", "VMs", "Target StorageClass", "Access mode", "Confidence"]}>
-            {allStorageRows.map((row) => {
-              const signal = sourceSignals.datastores.find((d) => d.name === row.source_datastore);
-              return (
-                <div key={row.source_datastore} style={editorRow}>
-                  <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 12 }}>{row.source_datastore}</span>
-                  <span style={{ color: "#aaaacc", fontSize: 12 }}>{signal?.count ?? "—"}</span>
-                  <select style={inputStyle} value={row.target_storage_class || ""}
-                    onChange={(e) => updateStorageRow(row.source_datastore, { target_storage_class: e.target.value || null })}>
-                    <option value="">—</option>
-                    {targetSCs.map((n) => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                  <select style={inputStyle} value={row.access_mode || ""}
-                    onChange={(e) => updateStorageRow(row.source_datastore, { access_mode: e.target.value || null })}>
-                    <option value="">—</option>
-                    <option value="ReadWriteOnce">ReadWriteOnce</option>
-                    <option value="ReadWriteMany">ReadWriteMany</option>
-                    <option value="ReadOnlyMany">ReadOnlyMany</option>
-                  </select>
-                  <ConfidencePill value={row.confidence} />
-                </div>
-              );
-            })}
-          </RowGrid>
-        </Section>
-
-        <Section title={`Namespace mappings (${namespaceRows.length})`}
-          action={<button style={btnGhost} onClick={() => setNamespaceRows([...namespaceRows,
-            { criteria: "default", target_namespace: targetNamespaces[0] || "" }])}>
-              + Row
-            </button>}>
-          <RowGrid headers={["Criteria", "Value", "Target namespace", ""]}>
-            {namespaceRows.map((row, i) => (
-              <div key={i} style={editorRow}>
-                <select style={inputStyle} value={row.criteria}
-                  onChange={(e) => setNamespaceRows((rs) => rs.map((r, j) => i === j ? { ...r, criteria: e.target.value } : r))}>
-                  <option value="default">default</option>
-                  <option value="environment">environment</option>
-                  <option value="application">application</option>
-                  <option value="vcenter_folder">vcenter_folder</option>
-                </select>
-                <input style={inputStyle} value={row.criteria_value || ""} disabled={row.criteria === "default"}
-                  onChange={(e) => setNamespaceRows((rs) => rs.map((r, j) => i === j ? { ...r, criteria_value: e.target.value } : r))} />
-                <select style={inputStyle} value={row.target_namespace}
-                  onChange={(e) => setNamespaceRows((rs) => rs.map((r, j) => i === j ? { ...r, target_namespace: e.target.value } : r))}>
-                  <option value="">—</option>
-                  {targetNamespaces.map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-                <button style={{ ...btnGhost, color: "#ff99aa" }}
-                  onClick={() => setNamespaceRows((rs) => rs.filter((_, j) => i !== j))}>×</button>
-              </div>
-            ))}
-          </RowGrid>
+        <Section
+          title={`Storage mappings — ${mappedStorageCount} of ${allStorageRows.length} source datastores mapped`}
+          action={
+            <button
+              style={{ ...btnGhost, opacity: noTargetSCs ? 0.5 : 1 }}
+              onClick={suggestStorage}
+              disabled={noTargetSCs}
+              title={noTargetSCs ? "Define target storage classes on the cluster first" : "Ask the LLM for matches"}
+            >
+              🤖 AI Suggest
+            </button>
+          }
+        >
+          {noTargetSCs ? (
+            <NoCatalogBanner kind="storage classes" targetId={mapping.ocp_target_id} />
+          ) : (
+            <RowGrid
+              template={storageEditorRow.gridTemplateColumns}
+              headers={["", "Source datastore", "VMs", "Target StorageClass", "Access mode", "Confidence"]}>
+              {allStorageRows.map((row) => {
+                const signal = sourceSignals.datastores.find((d) => d.name === row.source_datastore);
+                const mapped = !!row.target_storage_class;
+                const sc = targetSCs.find((s) => s.name === row.target_storage_class);
+                return (
+                  <div key={row.source_datastore} style={storageEditorRow}>
+                    <StatusDot mapped={mapped} />
+                    <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: 12, color: "#eeeeff" }}>
+                      {row.source_datastore}
+                    </span>
+                    <span style={{ color: "#aaaacc", fontSize: 12 }}>{signal?.count ?? "—"}</span>
+                    <select style={inputStyle}
+                      value={row.target_storage_class || ""}
+                      onChange={(e) => updateStorageTarget(row.source_datastore, e.target.value)}>
+                      <option value="">— None selected —</option>
+                      {targetSCs.map((s) => (
+                        <option key={s.id} value={s.name}>{s.name} ({s.access_mode})</option>
+                      ))}
+                    </select>
+                    <span style={{ color: "#aaaacc", fontSize: 12, fontFamily: "'Share Tech Mono', monospace" }}>
+                      {sc?.access_mode || row.access_mode || "—"}
+                    </span>
+                    <ConfidencePill value={row.confidence} />
+                  </div>
+                );
+              })}
+            </RowGrid>
+          )}
         </Section>
       </main>
     </Shell>
+  );
+}
+
+function NamespaceStrategySection({ strategy, setStrategy }) {
+  const choose = (s) => setStrategy({ ...strategy, strategy: s });
+  return (
+    <Section title="Namespace strategy">
+      <div style={{ border: "1px solid #1a1a2e", background: "#0a0a18", padding: "18px 22px" }}>
+        <div style={{ display: "flex", gap: 18, marginBottom: 14 }}>
+          {[
+            ["single", "Single namespace"],
+            ["per_environment", "Per-environment"],
+            ["per_application", "Per-application"],
+          ].map(([key, label]) => (
+            <label key={key} style={{ display: "flex", gap: 8, alignItems: "center", color: "#ccccee", fontSize: 13, cursor: "pointer" }}>
+              <input type="radio" name="ns-strategy"
+                checked={strategy.strategy === key}
+                onChange={() => choose(key)} />
+              {label}
+            </label>
+          ))}
+        </div>
+
+        {strategy.strategy === "single" && (
+          <Field label="Target namespace" hint="All VMs land in this namespace">
+            <input style={{ ...inputStyle, maxWidth: 320 }}
+              value={strategy.single_namespace || ""}
+              placeholder="migrated-vms"
+              onChange={(e) => setStrategy({ ...strategy, single_namespace: e.target.value })}
+              maxLength={253} />
+          </Field>
+        )}
+
+        {strategy.strategy === "per_environment" && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, maxWidth: 720 }}>
+            {["production", "staging", "development"].map((env) => (
+              <Field key={env} label={env}>
+                <input style={inputStyle}
+                  value={strategy.per_env_namespaces?.[env] || ""}
+                  onChange={(e) => setStrategy({
+                    ...strategy,
+                    per_env_namespaces: { ...(strategy.per_env_namespaces || {}), [env]: e.target.value },
+                  })}
+                  maxLength={253} />
+              </Field>
+            ))}
+          </div>
+        )}
+
+        {strategy.strategy === "per_application" && (
+          <div style={{ color: "#ccccee", fontSize: 13, lineHeight: 1.6 }}>
+            VMs will be grouped into namespaces based on detected application
+            tags. Defaults to{" "}
+            <code style={{ background: "#1a1a2e", padding: "2px 6px", color: "#88aaff" }}>
+              {`${strategy.per_app_prefix || "app"}-<name>-vms`}
+            </code>.
+            <div style={{ marginTop: 12, maxWidth: 320 }}>
+              <Field label="Prefix" hint="Used as the namespace name prefix">
+                <input style={inputStyle}
+                  value={strategy.per_app_prefix || ""}
+                  onChange={(e) => setStrategy({ ...strategy, per_app_prefix: e.target.value })}
+                  maxLength={64} />
+              </Field>
+            </div>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+function NoCatalogBanner({ kind, targetId }) {
+  return (
+    <div style={{ border: "1px dashed #2a2a44", background: "#0a0a18", padding: "24px 22px", textAlign: "center" }}>
+      <div style={{ color: "#eeeeff", fontSize: 14, marginBottom: 8, fontWeight: 700 }}>
+        No target {kind} defined for this cluster
+      </div>
+      <div style={{ color: "#aaaacc", fontSize: 13, marginBottom: 14 }}>
+        Add some on the OCP target detail page before mapping source resources.
+      </div>
+      <Link to={`/sources/targets/${targetId}`} style={btnPrimary}>
+        Open target →
+      </Link>
+    </div>
+  );
+}
+
+function StatusDot({ mapped }) {
+  return (
+    <span title={mapped ? "Mapped" : "Unmapped"}
+      style={{
+        width: 10, height: 10, borderRadius: "50%",
+        background: mapped ? "#00ff88" : "#ff5577",
+        display: "inline-block",
+      }} />
   );
 }
 
@@ -502,13 +722,17 @@ function Section({ title, action, children }) {
     </section>
   );
 }
-function RowGrid({ headers, children }) {
+function RowGrid({ headers, template, children }) {
+  // template overrides the default equal-column grid when caller
+  // needs widths that match a custom row layout (e.g. status dot
+  // first, then variable-width source/target columns).
+  const gridTemplateColumns = template || `repeat(${headers.length}, 1fr)`;
   return (
     <div style={{ border: "1px solid #1a1a2e", background: "#0a0a18" }}>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${headers.length}, 1fr)`,
+      <div style={{ display: "grid", gridTemplateColumns, gap: 10,
         padding: "10px 14px", borderBottom: "1px solid #1a1a2e", background: "#0a0a16",
         fontSize: 11, color: "#aaaacc", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-        {headers.map((h) => <span key={h}>{h}</span>)}
+        {headers.map((h, i) => <span key={`${h || "col"}-${i}`}>{h}</span>)}
       </div>
       {children}
     </div>
@@ -602,9 +826,15 @@ const tableRowStyle = {
   padding: "14px 18px", borderBottom: "1px solid #0f0f1e",
   alignItems: "center", fontSize: 13, cursor: "pointer",
 };
-const editorRow = {
+const netEditorRow = {
   display: "grid",
-  gridTemplateColumns: "1.5fr 0.5fr 1.5fr 1.2fr 0.7fr",
+  gridTemplateColumns: "30px 1.4fr 0.5fr 1.8fr 0.6fr 1fr 0.7fr",
+  padding: "10px 14px", borderBottom: "1px solid #0f0f1e",
+  alignItems: "center", gap: 10,
+};
+const storageEditorRow = {
+  display: "grid",
+  gridTemplateColumns: "30px 1.4fr 0.5fr 1.8fr 1fr 0.7fr",
   padding: "10px 14px", borderBottom: "1px solid #0f0f1e",
   alignItems: "center", gap: 10,
 };

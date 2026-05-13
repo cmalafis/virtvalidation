@@ -144,13 +144,32 @@ class NamespaceMappingItem(BaseModel):
     target_namespace: str = Field(min_length=1, max_length=253)
 
 
+class NamespaceStrategy(BaseModel):
+    """Newer namespace-mapping shape: instead of a list of criteria
+    rows, the operator picks a single strategy. The plan generator
+    resolves each VM's namespace by dispatching on the strategy.
+
+    Stored as a JSON object on ``ResourceMapping.namespace_mappings``.
+    The column happily holds either this shape or the legacy
+    list[NamespaceMappingItem] — the resolver dispatches at read time.
+    """
+
+    strategy: Literal["single", "per_environment", "per_application"] = "per_environment"
+    single_namespace: str | None = Field(default=None, max_length=253)
+    per_env_namespaces: dict[str, str] = Field(default_factory=dict)
+    per_app_prefix: str = Field(default="app", max_length=64)
+
+
 class ResourceMappingBase(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     vcenter_source_id: int
     ocp_target_id: int
     network_mappings: list[NetworkMappingItem] = Field(default_factory=list)
     storage_mappings: list[StorageMappingItem] = Field(default_factory=list)
-    namespace_mappings: list[NamespaceMappingItem] = Field(default_factory=list)
+    # The namespace mapping is either a list of criteria rows (legacy)
+    # or a strategy dict (new flow). Pydantic resolves the union by
+    # shape; the column type stays JSON either way.
+    namespace_mappings: list[NamespaceMappingItem] | NamespaceStrategy = Field(default_factory=list)
     is_active: bool = False
 
 
@@ -162,14 +181,28 @@ class ResourceMappingUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     network_mappings: list[NetworkMappingItem] | None = None
     storage_mappings: list[StorageMappingItem] | None = None
-    namespace_mappings: list[NamespaceMappingItem] | None = None
+    namespace_mappings: list[NamespaceMappingItem] | NamespaceStrategy | None = None
     is_active: bool | None = None
 
 
-class ResourceMappingRead(ResourceMappingBase):
+class ResourceMappingRead(BaseModel):
+    """Read-side schema. Decouples from ResourceMappingBase because the
+    DB column stores raw JSON (list-or-dict), and we want to surface
+    that without re-validating it through the create/update unions —
+    callers downstream may have written shapes we don't recognize and
+    we don't want to fail the read."""
+
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
     id: int
+    name: str
+    vcenter_source_id: int
+    ocp_target_id: int
+    network_mappings: list[dict] = Field(default_factory=list)
+    storage_mappings: list[dict] = Field(default_factory=list)
+    # JSON column — list (legacy) or dict (new strategy shape).
+    namespace_mappings: list[dict] | dict = Field(default_factory=list)
+    is_active: bool = False
     status: ResourceMappingStatus
     last_used_at: datetime | None = None
     created_at: datetime
