@@ -89,25 +89,42 @@ def _mapped_datastores(mapping: ResourceMapping | None) -> set[str]:
     return out
 
 
-def _has_target_namespace(vm: VM, mapping: ResourceMapping | None) -> bool:
-    """Either the VM carries an explicit target_namespace, or the
-    mapping's namespace strategy resolves to something non-empty.
+def _vm_to_resolver_payload(vm: VM) -> dict:
+    """Shape ``MappingResolver.resolve_namespace`` expects."""
+    return {
+        "environment": (vm.environment or "").strip(),
+        "application_hint": (vm.application_hint or "").strip(),
+        "vcenter_folder": (getattr(vm, "vcenter_folder", "") or "").strip(),
+    }
 
-    The namespace strategy lives in ``mapping.namespace_mappings`` and
-    can be either a list of criteria rows (legacy) or a dict (new
-    NamespaceStrategy shape). We treat any non-empty list/dict as
-    "has a strategy" — the YAML emitter does the final resolution.
+
+def _has_target_namespace(vm: VM, mapping: ResourceMapping | None) -> bool:
+    """True iff the VM will resolve to a non-empty target namespace.
+
+    Old behavior accepted "any non-empty strategy dict" as sufficient
+    — but ``per_environment`` against a VM with no ``environment``
+    field returns None, which used to fall back silently to the
+    ``mtv_default_target_namespace`` setting. That setting is empty
+    by default so the gap surfaces at YAML download. Stage 0 catches
+    the same gap earlier (plan creation time) by actually invoking
+    the resolver against each VM's attributes.
     """
     if vm.target_namespace:
         return True
     if mapping is None:
         return False
-    nm = mapping.namespace_mappings
-    if isinstance(nm, dict) and nm:
-        return True
-    if isinstance(nm, list) and nm:
-        return True
-    return False
+    # Lazy import to avoid a top-level dependency on app.core.mtv
+    # (which would create a cycle for any caller that imports the
+    # validation module from mtv-adjacent code).
+    from app.core.mtv import MappingResolver
+
+    resolver = MappingResolver(
+        network_mappings=list(mapping.network_mappings or []),
+        storage_mappings=list(mapping.storage_mappings or []),
+        namespace_mappings=mapping.namespace_mappings or [],
+    )
+    resolved = resolver.resolve_namespace(_vm_to_resolver_payload(vm))
+    return bool(resolved)
 
 
 def _pick_mapping_for_vm(
@@ -132,14 +149,13 @@ def _pick_mapping_for_vm(
 
 def _has_target_namespace_via_any(vm: VM, mappings: list[ResourceMapping]) -> bool:
     """Namespace strategy can come from ANY selected mapping when the
-    VM has no vcenter to pin it to."""
+    VM has no vcenter to pin it to. Each mapping's strategy is
+    evaluated against the VM's attributes; the first to resolve
+    wins."""
     if vm.target_namespace:
         return True
     for m in mappings:
-        nm = m.namespace_mappings
-        if isinstance(nm, dict) and nm:
-            return True
-        if isinstance(nm, list) and nm:
+        if _has_target_namespace(vm, m):
             return True
     return False
 
