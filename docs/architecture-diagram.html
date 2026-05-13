@@ -1123,7 +1123,7 @@ const DATA = {
             "method": "POST",
             "path": "/api/plans",
             "handler": "create_plan",
-            "summary": "Generate a migration plan."
+            "summary": "Kick off async migration plan generation."
           },
           {
             "method": "POST",
@@ -1232,7 +1232,6 @@ const DATA = {
           "app.core.llm.factory",
           "app.core.mtv",
           "app.core.plan_generation",
-          "app.core.planner",
           "app.core.preclassifier",
           "app.core.reporter",
           "app.models.chunk",
@@ -1283,7 +1282,7 @@ const DATA = {
               },
               {
                 "name": "resolve_namespace",
-                "summary": "Walk namespace_mappings in order; first matching criteria wins."
+                "summary": "Dispatch on the namespace_mappings shape."
               }
             ],
             "summary": "Resolves source vSphere resources to target OCP names via a"
@@ -1454,6 +1453,12 @@ const DATA = {
               "next_actions",
               "supersedes_plan_id",
               "revision_number",
+              "status",
+              "progress_message",
+              "progress_percent",
+              "error_message",
+              "started_at",
+              "completed_at",
               "created_at",
               "strategy"
             ],
@@ -1640,6 +1645,12 @@ const DATA = {
               "supersedes_plan_id",
               "revision_number",
               "created_at",
+              "status",
+              "progress_message",
+              "progress_percent",
+              "error_message",
+              "started_at",
+              "completed_at",
               "groups",
               "groups_formed",
               "method",
@@ -2453,6 +2464,86 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.api.target_entities",
+        "title": "app.api.target_entities",
+        "subtitle": "backend/app/api/target_entities.py",
+        "summary": "CRUD endpoints for operator-defined TargetNetwork / TargetStorageClass.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/sources/targets/{target_id}/networks",
+            "handler": "list_networks",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/targets/{target_id}/networks",
+            "handler": "create_network",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/targets/{target_id}/networks/{net_id}",
+            "handler": "get_network",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/sources/targets/{target_id}/networks/{net_id}",
+            "handler": "update_network",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/sources/targets/{target_id}/networks/{net_id}",
+            "handler": "delete_network",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/targets/{target_id}/storage-classes",
+            "handler": "list_storage_classes",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/targets/{target_id}/storage-classes",
+            "handler": "create_storage_class",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/targets/{target_id}/storage-classes/{sc_id}",
+            "handler": "get_storage_class",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/sources/targets/{target_id}/storage-classes/{sc_id}",
+            "handler": "update_storage_class",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/sources/targets/{target_id}/storage-classes/{sc_id}",
+            "handler": "delete_storage_class",
+            "summary": ""
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.db",
+          "app.models.target",
+          "app.models.target_network",
+          "app.models.target_storage_class",
+          "app.schemas.target_entities"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.api.targets",
         "title": "app.api.targets",
         "subtitle": "backend/app/api/targets.py",
@@ -2529,7 +2620,7 @@ const DATA = {
             "method": "POST",
             "path": "/api/mappings/{mapping_id}/suggest-network",
             "handler": "suggest_networks",
-            "summary": ""
+            "summary": "Ask the LLM to match source vSphere networks onto the operator's"
           },
           {
             "method": "POST",
@@ -2552,6 +2643,8 @@ const DATA = {
           "app.core.mapping_suggester",
           "app.core.ocp_discovery",
           "app.models.target",
+          "app.models.target_network",
+          "app.models.target_storage_class",
           "app.models.vcenter",
           "app.models.vm",
           "app.schemas.target"
@@ -3532,6 +3625,38 @@ const DATA = {
             "summary": "Raised when a backend call fails \u2014 transport, parsing, or auth."
           },
           {
+            "name": "LLMUnreachableError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Connection refused, DNS failure, network partition."
+          },
+          {
+            "name": "LLMAuthError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Authentication failed \u2014 401 / 403 from the inference endpoint."
+          },
+          {
+            "name": "LLMTimeoutError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "The inference call exceeded its read timeout."
+          },
+          {
+            "name": "LLMResponseError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Endpoint returned a non-2xx status or malformed body."
+          },
+          {
             "name": "LLMBackend",
             "kind": "class",
             "table": "",
@@ -4146,6 +4271,10 @@ const DATA = {
           {
             "name": "run_plan_generation",
             "summary": "Body of the FastAPI BackgroundTask the generate endpoint spawns."
+          },
+          {
+            "name": "run_simple_plan_generation",
+            "summary": "Body of the BackgroundTask the POST /api/plans endpoint spawns."
           },
           {
             "name": "apply_move_vm",
@@ -4808,6 +4937,7 @@ const DATA = {
           "app.api.settings",
           "app.api.snapshots",
           "app.api.storage_reviews",
+          "app.api.target_entities",
           "app.api.targets",
           "app.api.templates",
           "app.api.validation_schedules",
@@ -4816,6 +4946,7 @@ const DATA = {
           "app.api.vms",
           "app.core.db",
           "app.core.fips",
+          "app.core.llm.factory",
           "app.core.migrations",
           "app.core.scheduler",
           "app.middleware.audit",
@@ -5294,6 +5425,87 @@ const DATA = {
         "depends_on": [
           "app.core.db",
           "app.models.vcenter"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.target_network",
+        "title": "app.models.target_network",
+        "subtitle": "backend/app/models/target_network.py",
+        "summary": "Operator-defined target network entities on an OCP cluster.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "TargetNetworkType",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetNetwork",
+            "kind": "model",
+            "table": "target_networks",
+            "fields": [
+              "id",
+              "ocp_target_id",
+              "name",
+              "network_type",
+              "namespace",
+              "is_default",
+              "notes",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.target_storage_class",
+        "title": "app.models.target_storage_class",
+        "subtitle": "backend/app/models/target_storage_class.py",
+        "summary": "Operator-defined target StorageClass entities on an OCP cluster.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "StorageAccessMode",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetStorageClass",
+            "kind": "model",
+            "table": "target_storage_classes",
+            "fields": [
+              "id",
+              "ocp_target_id",
+              "name",
+              "access_mode",
+              "is_default",
+              "notes",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
         ]
       },
       {
@@ -6066,6 +6278,19 @@ const DATA = {
             "summary": "How VMs land into target namespaces. ``criteria`` is one of"
           },
           {
+            "name": "NamespaceStrategy",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "strategy",
+              "single_namespace",
+              "per_env_namespaces",
+              "per_app_prefix"
+            ],
+            "methods": [],
+            "summary": "Newer namespace-mapping shape: instead of a list of criteria"
+          },
+          {
             "name": "ResourceMappingBase",
             "kind": "schema",
             "table": "",
@@ -6105,17 +6330,24 @@ const DATA = {
           },
           {
             "name": "ResourceMappingRead",
-            "kind": "class",
+            "kind": "schema",
             "table": "",
             "fields": [
               "id",
+              "name",
+              "vcenter_source_id",
+              "ocp_target_id",
+              "network_mappings",
+              "storage_mappings",
+              "namespace_mappings",
+              "is_active",
               "status",
               "last_used_at",
               "created_at",
               "updated_at"
             ],
             "methods": [],
-            "summary": ""
+            "summary": "Read-side schema. Decouples from ResourceMappingBase because the"
           },
           {
             "name": "MappingSuggestionResponse",
@@ -6151,6 +6383,126 @@ const DATA = {
           "app.models.target",
           "app.models.vcenter"
         ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.target_entities",
+        "title": "app.schemas.target_entities",
+        "subtitle": "backend/app/schemas/target_entities.py",
+        "summary": "Pydantic schemas for operator-defined TargetNetwork /",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "TargetNetworkBase",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "network_type",
+              "namespace",
+              "is_default",
+              "notes"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetNetworkCreate",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetNetworkUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "network_type",
+              "namespace",
+              "is_default",
+              "notes"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetNetworkRead",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "id",
+              "ocp_target_id",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetStorageClassBase",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "access_mode",
+              "is_default",
+              "notes"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetStorageClassCreate",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetStorageClassUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "access_mode",
+              "is_default",
+              "notes"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetStorageClassRead",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "id",
+              "ocp_target_id",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetEntityDeleteConflict",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "detail",
+              "referenced_by"
+            ],
+            "methods": [],
+            "summary": "409 body shape returned when a TargetNetwork or TargetStorageClass"
+          }
+        ],
+        "functions": [],
+        "depends_on": []
       },
       {
         "kind": "module",
@@ -6554,6 +6906,67 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/components/OCPTargetDetail.jsx",
+        "title": "OCPTargetDetail.jsx",
+        "subtitle": "frontend/src/components/OCPTargetDetail.jsx",
+        "summary": "OCP target detail page. Two operator-driven catalogs hang off the",
+        "category": "frontend",
+        "api_calls": [
+          "/api/ocp-targets/{id}/networks",
+          "/api/ocp-targets/{id}/networks/{id}",
+          "/api/ocp-targets/{id}/storage-classes",
+          "/api/ocp-targets/{id}/storage-classes/{id}",
+          "/api/sources/targets/{id}"
+        ],
+        "members": [
+          {
+            "name": "OCPTargetDetail",
+            "kind": "component"
+          },
+          {
+            "name": "NetworksTab",
+            "kind": "component"
+          },
+          {
+            "name": "StorageTab",
+            "kind": "component"
+          },
+          {
+            "name": "NetworkModal",
+            "kind": "component"
+          },
+          {
+            "name": "StorageModal",
+            "kind": "component"
+          },
+          {
+            "name": "Tab",
+            "kind": "component"
+          },
+          {
+            "name": "Empty",
+            "kind": "component"
+          },
+          {
+            "name": "Pill",
+            "kind": "component"
+          },
+          {
+            "name": "Field",
+            "kind": "component"
+          },
+          {
+            "name": "ErrorBlock",
+            "kind": "component"
+          },
+          {
+            "name": "Shell",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/components/OCPTargets.jsx",
         "title": "OCPTargets.jsx",
         "subtitle": "frontend/src/components/OCPTargets.jsx",
@@ -6808,6 +7221,8 @@ const DATA = {
           "/api/mappings/{id}/preflight",
           "/api/mappings/{id}/suggest-network",
           "/api/mappings/{id}/suggest-storage",
+          "/api/ocp-targets/{id}/networks",
+          "/api/ocp-targets/{id}/storage-classes",
           "/api/sources/targets",
           "/api/sources/targets/{id}",
           "/api/sources/vcenters",
@@ -6823,7 +7238,23 @@ const DATA = {
             "kind": "component"
           },
           {
+            "name": "normaliseNamespaceStrategy",
+            "kind": "helper"
+          },
+          {
             "name": "ResourceMappingDetail",
+            "kind": "component"
+          },
+          {
+            "name": "NamespaceStrategySection",
+            "kind": "component"
+          },
+          {
+            "name": "NoCatalogBanner",
+            "kind": "component"
+          },
+          {
+            "name": "StatusDot",
             "kind": "component"
           },
           {
@@ -7206,6 +7637,7 @@ const DATA = {
           "/api/audit?{id}",
           "/api/network-reviews",
           "/api/plans",
+          "/api/plans/{id}",
           "/api/plans/{id}/waves/{id}/mtv-yaml",
           "/api/plans?limit=1",
           "/api/snapshots/capture-all",

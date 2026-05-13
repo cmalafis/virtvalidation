@@ -260,13 +260,13 @@ LLM-driven wave planning + MTV/Forklift YAML generation.
 <details><summary><strong><code>app.api.plans</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/plans.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.chunker`, `app.core.db`, `app.core.llm.factory`, `app.core.mtv`, `app.core.plan_generation`, `app.core.planner`, `app.core.preclassifier`, `app.core.reporter`, `app.models.chunk`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
+Depends on: `app.core.audit`, `app.core.baseline`, `app.core.chunker`, `app.core.db`, `app.core.llm.factory`, `app.core.mtv`, `app.core.plan_generation`, `app.core.preclassifier`, `app.core.reporter`, `app.models.chunk`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
 
 **Routes**
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
-| `POST` | `/api/plans` | `create_plan(payload, db)` | Generate a migration plan. |
+| `POST` | `/api/plans` | `create_plan(payload, background_tasks, db)` | Kick off async migration plan generation. |
 | `POST` | `/api/plans/preview-groups` | `preview_groups(payload, db)` | Show how the pre-classifier WOULD group these VMs — no LLM, no plan. |
 | `GET` | `/api/plans` | `list_plans(db, limit)` | — |
 | `GET` | `/api/plans/{plan_id}` | `get_plan(plan_id, db)` | — |
@@ -301,7 +301,7 @@ Depends on: `app.core.config`
   - Methods:
     - `resolve_network(self, source_network)`
     - `resolve_storage(self, source_datastore)`
-    - `resolve_namespace(self, vm)` — Walk namespace_mappings in order; first matching criteria wins.
+    - `resolve_namespace(self, vm)` — Dispatch on the namespace_mappings shape.
 - **`WaveContext`** (Class)
   - Inputs the YAML generator needs in addition to the per-VM rows.
   - Fields: `plan_id`, `wave_number`, `rationale`, `namespace`, `source_provider`, `destination_provider`, `default_target_namespace`
@@ -346,7 +346,7 @@ Depends on: `app.core.db`
   - Customer intent captured by the planning wizard.
   - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
 - **`MigrationPlan`** (SQLAlchemy model · table `migration_plans`)
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `generation_prompt`, `generation_response`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `created_at`, `strategy`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `generation_prompt`, `generation_response`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `created_at`, `strategy`
 
 </details>
 
@@ -379,7 +379,7 @@ Depends on: `app.core.limits`, `app.models.plan`
   - Fields: `chunk_id`, `sequence_index`, `label`, `reason_for_chunk`, `partition_key`, `sub_key`, `hints`, `vm_ids`, `sequence_dependencies`, `chunk_rationale`, `chunk_risk_level`, `wave_numbers`
 - **`PlanRead`** (Pydantic schema)
   - Strategy-driven plans populate every field; legacy plans leave
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `created_at`, `groups`, `groups_formed`, `method`, `attempts`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `strategy_id`, `mapping_id`, `plan_summary`, `rationale`, `warnings`, `next_actions`, `supersedes_plan_id`, `revision_number`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`
 - **`PlanCreate`** (Pydantic schema)
   - Fields: `vm_ids`, `preclassification_enabled`, `ha_strategy`
 - **`PreviewGroupsResponse`** (Pydantic schema)
@@ -691,10 +691,32 @@ Depends on: `app.core`, `app.core.audit`, `app.core.db`, `app.core.storage_revie
 
 </details>
 
+<details><summary><strong><code>app.api.target_entities</code></strong> — <em>API endpoints</em> · CRUD endpoints for operator-defined TargetNetwork / TargetStorageClass.</summary>
+
+Path: `backend/app/api/target_entities.py`  
+Depends on: `app.core.audit`, `app.core.db`, `app.models.target`, `app.models.target_network`, `app.models.target_storage_class`, `app.schemas.target_entities`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `GET` | `/api/sources/targets/{target_id}/networks` | `list_networks(target_id, db)` | — |
+| `POST` | `/api/sources/targets/{target_id}/networks` | `create_network(request, target_id, payload, db)` | — |
+| `GET` | `/api/sources/targets/{target_id}/networks/{net_id}` | `get_network(target_id, net_id, db)` | — |
+| `PATCH` | `/api/sources/targets/{target_id}/networks/{net_id}` | `update_network(request, target_id, net_id, payload, db)` | — |
+| `DELETE` | `/api/sources/targets/{target_id}/networks/{net_id}` | `delete_network(request, target_id, net_id, db)` | — |
+| `GET` | `/api/sources/targets/{target_id}/storage-classes` | `list_storage_classes(target_id, db)` | — |
+| `POST` | `/api/sources/targets/{target_id}/storage-classes` | `create_storage_class(request, target_id, payload, db)` | — |
+| `GET` | `/api/sources/targets/{target_id}/storage-classes/{sc_id}` | `get_storage_class(target_id, sc_id, db)` | — |
+| `PATCH` | `/api/sources/targets/{target_id}/storage-classes/{sc_id}` | `update_storage_class(request, target_id, sc_id, payload, db)` | — |
+| `DELETE` | `/api/sources/targets/{target_id}/storage-classes/{sc_id}` | `delete_storage_class(request, target_id, sc_id, db)` | — |
+
+</details>
+
 <details><summary><strong><code>app.api.targets</code></strong> — <em>API endpoints</em> · OCP target cluster registry + ResourceMapping CRUD + plan-time mapping resolution.</summary>
 
 Path: `backend/app/api/targets.py`  
-Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.core.ocp_discovery`, `app.models.target`, `app.models.vcenter`, `app.models.vm`, `app.schemas.target`
+Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.core.ocp_discovery`, `app.models.target`, `app.models.target_network`, `app.models.target_storage_class`, `app.models.vcenter`, `app.models.vm`, `app.schemas.target`
 
 **Routes**
 
@@ -711,7 +733,7 @@ Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.
 | `GET` | `/api/mappings/{mapping_id}` | `get_mapping(mapping_id, db)` | — |
 | `PATCH` | `/api/mappings/{mapping_id}` | `update_mapping(request, mapping_id, payload, db)` | — |
 | `DELETE` | `/api/mappings/{mapping_id}` | `delete_mapping(request, mapping_id, db)` | — |
-| `POST` | `/api/mappings/{mapping_id}/suggest-network` | `suggest_networks(mapping_id, db)` | — |
+| `POST` | `/api/mappings/{mapping_id}/suggest-network` | `suggest_networks(mapping_id, db)` | Ask the LLM to match source vSphere networks onto the operator&#x27;s |
 | `POST` | `/api/mappings/{mapping_id}/suggest-storage` | `suggest_storage(mapping_id, db)` | — |
 | `POST` | `/api/mappings/{mapping_id}/preflight` | `preflight(mapping_id, db)` | Validate a mapping is ready to drive plan generation. |
 
@@ -1028,6 +1050,14 @@ Path: `backend/app/core/llm/base.py`
 
 - **`LLMBackendError`** (Class)
   - Raised when a backend call fails — transport, parsing, or auth.
+- **`LLMUnreachableError`** (Class)
+  - Connection refused, DNS failure, network partition.
+- **`LLMAuthError`** (Class)
+  - Authentication failed — 401 / 403 from the inference endpoint.
+- **`LLMTimeoutError`** (Class)
+  - The inference call exceeded its read timeout.
+- **`LLMResponseError`** (Class)
+  - Endpoint returned a non-2xx status or malformed body.
 - **`LLMBackend`** (Class)
   - Abstract base for all LLM inference backends.
   - Fields: `backend_type`, `max_planning_chunk_size`, `max_context_tokens`, `supports_concurrent_calls`, `max_concurrent_calls`
@@ -1270,6 +1300,7 @@ Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.chunked
 - `resolve_scope(db, scope)` — Apply the wizard's scope filter and return the matching VMs.
 - `assemble_vm_profiles(db, vms)` — Build the lightweight VM payload the strategy planner sends to
 - `run_plan_generation(task_id)` — Body of the FastAPI BackgroundTask the generate endpoint spawns.
+- `run_simple_plan_generation(plan_id)` — Body of the BackgroundTask the POST /api/plans endpoint spawns.
 - `apply_move_vm(db, plan)` — Create a new plan revision with one VM moved between waves.
 
 </details>
@@ -1499,7 +1530,7 @@ Depends on: `app.core.config`, `app.core.preclassifier`
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.storage_reviews`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.core.db`, `app.core.fips`, `app.core.migrations`, `app.core.scheduler`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.migrations`, `app.core.scheduler`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -1630,6 +1661,32 @@ Depends on: `app.core.db`, `app.models.vcenter`
 - **`ResourceMapping`** (SQLAlchemy model · table `resource_mappings`)
   - Concrete network/storage/namespace mapping between a vCenter
   - Fields: `id`, `name`, `vcenter_source_id`, `ocp_target_id`, `status`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`, `last_used_at`, `created_at`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.models.target_network</code></strong> — <em>Data models / schemas</em> · Operator-defined target network entities on an OCP cluster.</summary>
+
+Path: `backend/app/models/target_network.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`TargetNetworkType`** (Class)
+- **`TargetNetwork`** (SQLAlchemy model · table `target_networks`)
+  - Fields: `id`, `ocp_target_id`, `name`, `network_type`, `namespace`, `is_default`, `notes`, `created_at`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.models.target_storage_class</code></strong> — <em>Data models / schemas</em> · Operator-defined target StorageClass entities on an OCP cluster.</summary>
+
+Path: `backend/app/models/target_storage_class.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`StorageAccessMode`** (Class)
+- **`TargetStorageClass`** (SQLAlchemy model · table `target_storage_classes`)
+  - Fields: `id`, `ocp_target_id`, `name`, `access_mode`, `is_default`, `notes`, `created_at`, `updated_at`
 
 </details>
 
@@ -1803,18 +1860,48 @@ Depends on: `app.models.target`, `app.models.vcenter`
 - **`NamespaceMappingItem`** (Pydantic schema)
   - How VMs land into target namespaces. ``criteria`` is one of
   - Fields: `criteria`, `criteria_value`, `target_namespace`
+- **`NamespaceStrategy`** (Pydantic schema)
+  - Newer namespace-mapping shape: instead of a list of criteria
+  - Fields: `strategy`, `single_namespace`, `per_env_namespaces`, `per_app_prefix`
 - **`ResourceMappingBase`** (Pydantic schema)
   - Fields: `name`, `vcenter_source_id`, `ocp_target_id`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`
 - **`ResourceMappingCreate`** (Class)
 - **`ResourceMappingUpdate`** (Pydantic schema)
   - Fields: `name`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`
-- **`ResourceMappingRead`** (Class)
-  - Fields: `id`, `status`, `last_used_at`, `created_at`, `updated_at`
+- **`ResourceMappingRead`** (Pydantic schema)
+  - Read-side schema. Decouples from ResourceMappingBase because the
+  - Fields: `id`, `name`, `vcenter_source_id`, `ocp_target_id`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`, `status`, `last_used_at`, `created_at`, `updated_at`
 - **`MappingSuggestionResponse`** (Pydantic schema)
   - Fields: `suggestions`, `rationale_summary`
 - **`PreflightCheckResponse`** (Pydantic schema)
   - Returned by POST /api/mappings/{id}/preflight. Reports every
   - Fields: `ok`, `target_status`, `unmapped_networks`, `unmapped_datastores`, `missing_storage_classes_on_target`, `missing_networks_on_target`, `missing_namespaces_on_target`, `warnings`
+
+</details>
+
+<details><summary><strong><code>app.schemas.target_entities</code></strong> — <em>Data models / schemas</em> · Pydantic schemas for operator-defined TargetNetwork /</summary>
+
+Path: `backend/app/schemas/target_entities.py`  
+
+**Classes**
+
+- **`TargetNetworkBase`** (Pydantic schema)
+  - Fields: `name`, `network_type`, `namespace`, `is_default`, `notes`
+- **`TargetNetworkCreate`** (Class)
+- **`TargetNetworkUpdate`** (Pydantic schema)
+  - Fields: `name`, `network_type`, `namespace`, `is_default`, `notes`
+- **`TargetNetworkRead`** (Class)
+  - Fields: `id`, `ocp_target_id`, `created_at`, `updated_at`
+- **`TargetStorageClassBase`** (Pydantic schema)
+  - Fields: `name`, `access_mode`, `is_default`, `notes`
+- **`TargetStorageClassCreate`** (Class)
+- **`TargetStorageClassUpdate`** (Pydantic schema)
+  - Fields: `name`, `access_mode`, `is_default`, `notes`
+- **`TargetStorageClassRead`** (Class)
+  - Fields: `id`, `ocp_target_id`, `created_at`, `updated_at`
+- **`TargetEntityDeleteConflict`** (Pydantic schema)
+  - 409 body shape returned when a TargetNetwork or TargetStorageClass
+  - Fields: `detail`, `referenced_by`
 
 </details>
 
@@ -1947,6 +2034,30 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/components/OCPTargetDetail.jsx</code></strong> — <em>Frontend component</em> · OCP target detail page. Two operator-driven catalogs hang off the</summary>
+
+API calls:
+- `/api/ocp-targets/{id}/networks`
+- `/api/ocp-targets/{id}/networks/{id}`
+- `/api/ocp-targets/{id}/storage-classes`
+- `/api/ocp-targets/{id}/storage-classes/{id}`
+- `/api/sources/targets/{id}`
+
+Exports / inner components:
+- **`OCPTargetDetail`** (component)
+- **`NetworksTab`** (component)
+- **`StorageTab`** (component)
+- **`NetworkModal`** (component)
+- **`StorageModal`** (component)
+- **`Tab`** (component)
+- **`Empty`** (component)
+- **`Pill`** (component)
+- **`Field`** (component)
+- **`ErrorBlock`** (component)
+- **`Shell`** (component)
+
+</details>
+
 <details><summary><strong><code>frontend/src/components/OCPTargets.jsx</code></strong> — <em>Frontend component</em> · OCP target cluster registry. Operators register the cluster they&#x27;re</summary>
 
 API calls:
@@ -2051,6 +2162,8 @@ API calls:
 - `/api/mappings/{id}/preflight`
 - `/api/mappings/{id}/suggest-network`
 - `/api/mappings/{id}/suggest-storage`
+- `/api/ocp-targets/{id}/networks`
+- `/api/ocp-targets/{id}/storage-classes`
 - `/api/sources/targets`
 - `/api/sources/targets/{id}`
 - `/api/sources/vcenters`
@@ -2059,7 +2172,11 @@ API calls:
 Exports / inner components:
 - **`ResourceMappings`** (component)
 - **`CreateModal`** (component)
+- **`normaliseNamespaceStrategy`** (helper)
 - **`ResourceMappingDetail`** (component)
+- **`NamespaceStrategySection`** (component)
+- **`NoCatalogBanner`** (component)
+- **`StatusDot`** (component)
 - **`PreflightPanel`** (component)
 - **`Section`** (component)
 - **`RowGrid`** (component)
@@ -2209,6 +2326,7 @@ API calls:
 - `/api/audit?{id}`
 - `/api/network-reviews`
 - `/api/plans`
+- `/api/plans/{id}`
 - `/api/plans/{id}/waves/{id}/mtv-yaml`
 - `/api/plans?limit=1`
 - `/api/snapshots/capture-all`
