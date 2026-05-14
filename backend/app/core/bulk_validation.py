@@ -115,9 +115,7 @@ class BulkValidationTaskStore:
             t = self._tasks.get(task_id)
             if t is None:
                 return
-            entry = t.per_vm.get(vm_id) or VMValidationResult(
-                vm_id=vm_id, vm_name=vm_name
-            )
+            entry = t.per_vm.get(vm_id) or VMValidationResult(vm_id=vm_id, vm_name=vm_name)
             entry.status = "running"
             t.per_vm[vm_id] = entry
             t.current_vm = vm_name
@@ -155,9 +153,7 @@ class BulkValidationTaskStore:
                 else:
                     t.llm_calls += 1
 
-    def fail_vm(
-        self, task_id: str, vm_id: int, *, error: str, elapsed_seconds: int
-    ) -> None:
+    def fail_vm(self, task_id: str, vm_id: int, *, error: str, elapsed_seconds: int) -> None:
         with self._lock:
             t = self._tasks.get(task_id)
             if t is None:
@@ -170,9 +166,7 @@ class BulkValidationTaskStore:
             entry.elapsed_seconds = elapsed_seconds
             t.failed += 1
 
-    def finalize(
-        self, task_id: str, *, status: BulkValidationStatus
-    ) -> None:
+    def finalize(self, task_id: str, *, status: BulkValidationStatus) -> None:
         with self._lock:
             t = self._tasks.get(task_id)
             if t is None:
@@ -224,9 +218,7 @@ def run_bulk_validation(
                 if tier == "tier3" and not cached:
                     # We need a way to tell tier3-fresh vs tier3-cached.
                     # The audit row carries this; query it.
-                    tier, cached, needs_manual = _read_last_validation_meta(
-                        db, vm.id
-                    )
+                    tier, cached, needs_manual = _read_last_validation_meta(db, vm.id)
                 task_store.complete_vm(
                     task_id,
                     vm.id,
@@ -277,9 +269,7 @@ def run_bulk_validation(
         db.close()
 
 
-def _read_last_validation_meta(
-    db: Session, vm_id: int
-) -> tuple[str, bool, bool]:
+def _read_last_validation_meta(db: Session, vm_id: int) -> tuple[str, bool, bool]:
     """Pull tier + cached + needs_manual_review off the most recent
     validation.completed audit row for this VM.
 
@@ -288,8 +278,9 @@ def _read_last_validation_meta(
     forcing every caller of ``run_validation`` to thread them back
     through the return type.
     """
-    from app.models.audit import AuditLog
     from sqlalchemy import select
+
+    from app.models.audit import AuditLog
 
     row = db.scalars(
         select(AuditLog)
@@ -312,9 +303,7 @@ def _read_last_validation_meta(
 # ---------------------------------------------------------------------------
 # Preview — runs SSH-collect + diff + classifier but never the LLM.
 # ---------------------------------------------------------------------------
-def preview_tier_distribution(
-    db: Session, *, vm_ids: list[int], actor: str
-) -> dict:
+def preview_tier_distribution(db: Session, *, vm_ids: list[int], actor: str) -> dict:
     """Inspect every VM's diff and report estimated tier counts.
 
     SSH-collects current state for each VM (cheap relative to the
@@ -330,9 +319,9 @@ def preview_tier_distribution(
         }
     """
     from app.core.llm.client import compute_diff
+    from app.core.validation import _baseline_profile_dict, _collect_current_state
     from app.core.validation_cache import lookup as cache_lookup
     from app.core.validation_tiers import classify
-    from app.core.validation import _baseline_profile_dict, _collect_current_state
 
     counts = Counter()
     errors: list[str] = []
@@ -353,9 +342,7 @@ def preview_tier_distribution(
         result = classify(diff, environment=vm.environment)
         counts[result.tier] += 1
         if result.tier == "tier3":
-            os_family = (
-                (baseline.get("meta") or {}).get("os_profile") or {}
-            ).get("distro_family")
+            os_family = ((baseline.get("meta") or {}).get("os_profile") or {}).get("distro_family")
             if cache_lookup(db, diff=diff, os_family=os_family) is not None:
                 likely_cache_hits += 1
 

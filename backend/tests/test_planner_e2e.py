@@ -18,7 +18,6 @@ from __future__ import annotations
 from app.core.llm.mock_backend import MockBackend
 from app.core.planner import MigrationPlanner
 from app.core.preclassifier import PreClassifier
-
 from tests.fixtures.dha_fleet import build_dha_fleet_vms, dha_fleet_specs
 
 
@@ -51,9 +50,7 @@ def test_preclassifier_57_vm_fleet_stays_under_llm_ceiling():
     # 8 apps, ~3 tiers each) we land in the mid-teens — rich
     # per-role splitting on the production-sized apps with small
     # environments (DR / staging) collapsed.
-    assert 5 <= len(groups) <= 16, (
-        f"got {len(groups)} groups: {[g.id for g in groups]}"
-    )
+    assert 5 <= len(groups) <= 16, f"got {len(groups)} groups: {[g.id for g in groups]}"
 
 
 def test_preclassifier_groups_have_populated_shared_attributes():
@@ -70,15 +67,17 @@ def test_preclassifier_groups_have_populated_shared_attributes():
         # tiers — but networks + hints + environments stay populated
         # because they're partition-level signals.
         populated = [
-            dim for dim in (
-                "networks", "datastores", "application_hints", "environments",
+            dim
+            for dim in (
+                "networks",
+                "datastores",
+                "application_hints",
+                "environments",
             )
             if attrs.get(dim)
         ]
         assert populated, f"{g.id} has no populated shared_attributes"
-        assert attrs.get("application_hints"), (
-            f"{g.id} has empty application_hints"
-        )
+        assert attrs.get("application_hints"), f"{g.id} has empty application_hints"
         assert attrs.get("environments"), f"{g.id} has empty environments"
 
 
@@ -89,9 +88,9 @@ def test_preclassifier_separates_apps_into_role_subgroups():
     # EHRPro has web + app + data + worker tiers — should be at least
     # 2 groups (data must be separate from stateless tiers; web/app
     # may or may not coalesce depending on metadata overlap).
-    assert len(ehrpro_groups) >= 2, (
-        f"ehrpro didn't sub-split by role: {[g.id for g in ehrpro_groups]}"
-    )
+    assert (
+        len(ehrpro_groups) >= 2
+    ), f"ehrpro didn't sub-split by role: {[g.id for g in ehrpro_groups]}"
     # The data subgroup should be tagged stateful + high-risk.
     data = [g for g in ehrpro_groups if g.estimated_role == "data"]
     assert data, "no data tier group inferred for ehrpro"

@@ -40,7 +40,7 @@ import logging
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -195,9 +195,7 @@ def upload_multi_vcenter(
                 actor=actor,
             )
         except Exception as e:  # noqa: BLE001 — surface per-vcenter, keep going
-            logger.exception(
-                "multi-vcenter import failed for vc_id=%s: %s", vc_id, e
-            )
+            logger.exception("multi-vcenter import failed for vc_id=%s: %s", vc_id, e)
             errors.append(f"vc_id={vc_id}: {e}")
             continue
         per_results.append(

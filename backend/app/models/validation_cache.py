@@ -48,9 +48,7 @@ class ValidationLLMCache(Base):
     # hit-rate metric; last_hit_at tells operators when a cached
     # entry was last reused.
     hit_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    last_hit_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # The first VM that produced this verdict. Useful for federal
     # reviewers tracing where a cached verdict originally came from.
@@ -63,9 +61,7 @@ class ValidationLLMCache(Base):
     )
     # Hard expiry — entries older than this are deleted on next
     # eviction sweep regardless of hit_count.
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
         Index("ix_validation_llm_cache_key", "cache_key"),

@@ -37,14 +37,10 @@ class _Resp:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise httpx.HTTPStatusError(
-                "boom", request=None, response=self
-            )
+            raise httpx.HTTPStatusError("boom", request=None, response=self)
 
 
-def _mock_async_client(
-    post_response=None, post_raises=None, post_side_effect=None
-):
+def _mock_async_client(post_response=None, post_raises=None, post_side_effect=None):
     """Returns a context-manager mock that yields a client whose
     ``post`` returns ``post_response`` or raises ``post_raises``."""
     from unittest.mock import AsyncMock, MagicMock
@@ -79,9 +75,7 @@ def test_ollama_backend_passes_num_ctx_in_options():
 
 def test_ollama_backend_num_ctx_overridable():
     backend = OllamaBackend(num_ctx=16384, max_retries=0)
-    cm, client = _mock_async_client(
-        post_response=_Resp(200, {"message": {"content": "ok"}})
-    )
+    cm, client = _mock_async_client(post_response=_Resp(200, {"message": {"content": "ok"}}))
     with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=cm):
         asyncio.run(backend.chat(messages=[{"role": "user", "content": "hi"}]))
     assert client.post.call_args.kwargs["json"]["options"]["num_ctx"] == 16384
@@ -100,9 +94,7 @@ def test_ollama_backend_warns_when_prompt_approaches_context(caplog):
     # Threshold is 80% of num_ctx (= 800 tokens). 4 chars/token, so a
     # 4000-char message is exactly 1000 tokens — well over threshold.
     big_message = [{"role": "user", "content": "x" * 4000}]
-    cm, _ = _mock_async_client(
-        post_response=_Resp(200, {"message": {"content": "ok"}})
-    )
+    cm, _ = _mock_async_client(post_response=_Resp(200, {"message": {"content": "ok"}}))
     with caplog.at_level("WARNING"):
         with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=cm):
             asyncio.run(backend.chat(messages=big_message))
@@ -111,15 +103,11 @@ def test_ollama_backend_warns_when_prompt_approaches_context(caplog):
 
 def test_ollama_backend_does_not_warn_for_small_prompts(caplog):
     backend = OllamaBackend(num_ctx=8192, max_retries=0)
-    cm, _ = _mock_async_client(
-        post_response=_Resp(200, {"message": {"content": "ok"}})
-    )
+    cm, _ = _mock_async_client(post_response=_Resp(200, {"message": {"content": "ok"}}))
     with caplog.at_level("WARNING"):
         with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=cm):
             asyncio.run(backend.chat(messages=[{"role": "user", "content": "hi"}]))
-    assert not any(
-        "approaches context window" in r.message for r in caplog.records
-    )
+    assert not any("approaches context window" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +122,10 @@ def test_retry_recovers_after_transient_timeout():
 
     cm, client = _mock_async_client(post_side_effect=side_effects)
     with patch("app.core.llm.ollama_backend.asyncio.sleep") as mock_sleep:
+
         async def _fake_sleep(s):
             return None
+
         mock_sleep.side_effect = _fake_sleep
         with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=cm):
             result = asyncio.run(backend.chat(messages=[]))
@@ -154,8 +144,10 @@ def test_retry_uses_5s_then_30s_backoff_schedule():
         ]
     )
     with patch("app.core.llm.ollama_backend.asyncio.sleep") as mock_sleep:
+
         async def _fake_sleep(s):
             return None
+
         mock_sleep.side_effect = _fake_sleep
         with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=cm):
             asyncio.run(backend.chat(messages=[]))
@@ -168,8 +160,10 @@ def test_retry_gives_up_after_max_retries():
     # Every attempt times out — total 3 attempts (initial + 2 retries).
     cm, client = _mock_async_client(post_raises=httpx.ReadTimeout("always slow"))
     with patch("app.core.llm.ollama_backend.asyncio.sleep") as mock_sleep:
+
         async def _fake_sleep(s):
             return None
+
         mock_sleep.side_effect = _fake_sleep
         with patch("app.core.llm.ollama_backend.httpx.AsyncClient", return_value=cm):
             with pytest.raises(LLMBackendError, match="after 3 attempts"):
@@ -343,13 +337,11 @@ def test_categorizer_token_budget_per_batch_stays_under_num_ctx(db_session):
     }
     user_content = (
         "Categorize the following VMs and return the JSON object "
-        "specified in the system prompt:\n\n"
-        + json.dumps(payload, indent=2, sort_keys=True)
+        "specified in the system prompt:\n\n" + json.dumps(payload, indent=2, sort_keys=True)
     )
     approx_tokens = (len(SYSTEM_PROMPT) + len(user_content)) // 4
     # 80% of the 8192 default num_ctx — staying under this avoids the
     # guardrail warning + leaves ~1600 tokens for the JSON response.
     assert approx_tokens < int(8192 * 0.8), (
-        f"10-VM batch should fit under context budget; got "
-        f"approx_tokens={approx_tokens}"
+        f"10-VM batch should fit under context budget; got " f"approx_tokens={approx_tokens}"
     )

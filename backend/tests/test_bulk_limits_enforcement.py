@@ -9,8 +9,6 @@ here as a 422 on a 1000-VM payload.
 
 from __future__ import annotations
 
-import pytest
-
 from app.core.limits import (
     MAX_VMS_PER_BULK_CREATE,
     MAX_VMS_PER_BULK_DELETE,

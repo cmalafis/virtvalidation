@@ -110,6 +110,7 @@ def test_no_orphan_records_when_one_vcenter_fails(client, monkeypatch):
     mapping = {h: _register(client, h.split(".")[0], h) for h in payload["_hosts"]}
     # Make the import core raise on the second vcenter only.
     from app.api import rvtools as rvtools_api
+
     real_import = rvtools_api.run_rvtools_import
     targeted_vcenter = mapping[payload["_hosts"][1]]
 

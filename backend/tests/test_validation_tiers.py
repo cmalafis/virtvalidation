@@ -23,8 +23,13 @@ def test_completely_empty_diff_classifies_tier1_pass_no_llm():
         "services": {"added": [], "removed": []},
         "ports": {"added": [], "removed": []},
         "mounts": {"added": [], "removed": [], "changed": []},
-        "network": {"interfaces": {}, "routes_added": [], "routes_removed": [],
-                     "dns_added": [], "dns_removed": []},
+        "network": {
+            "interfaces": {},
+            "routes_added": [],
+            "routes_removed": [],
+            "dns_added": [],
+            "dns_removed": [],
+        },
         "cron": {"user_crontabs": {}, "system_added": [], "system_removed": []},
     }
     result = classify(diff)
@@ -104,8 +109,13 @@ def test_only_kubevirt_agent_added_classifies_tier2_pass_no_llm():
         "services": {"added": ["kubevirt-agent.service"], "removed": []},
         "ports": {"added": [], "removed": []},
         "mounts": {"added": [], "removed": [], "changed": []},
-        "network": {"interfaces": {}, "routes_added": [], "routes_removed": [],
-                     "dns_added": [], "dns_removed": []},
+        "network": {
+            "interfaces": {},
+            "routes_added": [],
+            "routes_removed": [],
+            "dns_added": [],
+            "dns_removed": [],
+        },
         "cron": {},
     }
     result = classify(diff)
@@ -120,8 +130,13 @@ def test_critical_service_stopped_on_prod_classifies_tier2_fail_no_llm():
         "services": {"added": [], "removed": ["postgresql.service"]},
         "ports": {"added": [], "removed": []},
         "mounts": {"added": [], "removed": [], "changed": []},
-        "network": {"interfaces": {}, "routes_added": [], "routes_removed": [],
-                     "dns_added": [], "dns_removed": []},
+        "network": {
+            "interfaces": {},
+            "routes_added": [],
+            "routes_removed": [],
+            "dns_added": [],
+            "dns_removed": [],
+        },
         "cron": {},
     }
     result = classify(diff, environment="prod")
@@ -142,8 +157,13 @@ def test_critical_service_stopped_on_non_prod_classifies_tier2_warn():
         "services": {"added": [], "removed": ["nginx.service"]},
         "ports": {"added": [], "removed": []},
         "mounts": {"added": [], "removed": [], "changed": []},
-        "network": {"interfaces": {}, "routes_added": [], "routes_removed": [],
-                     "dns_added": [], "dns_removed": []},
+        "network": {
+            "interfaces": {},
+            "routes_added": [],
+            "routes_removed": [],
+            "dns_added": [],
+            "dns_removed": [],
+        },
         "cron": {},
     }
     result = classify(diff, environment="dev")
@@ -159,8 +179,13 @@ def test_critical_service_stopped_plus_extra_change_falls_through_to_llm():
         "services": {"added": [], "removed": ["postgresql.service"]},
         "ports": {"added": [{"proto": "tcp", "port": 8080, "address": "0.0.0.0"}], "removed": []},
         "mounts": {"added": [], "removed": [], "changed": []},
-        "network": {"interfaces": {}, "routes_added": [], "routes_removed": [],
-                     "dns_added": [], "dns_removed": []},
+        "network": {
+            "interfaces": {},
+            "routes_added": [],
+            "routes_removed": [],
+            "dns_added": [],
+            "dns_removed": [],
+        },
         "cron": {},
     }
     # Production scope: critical-service rule fires; extra changes are
@@ -178,8 +203,13 @@ def test_unknown_new_service_falls_through_to_llm():
         "services": {"added": ["my-custom-app.service"], "removed": []},
         "ports": {"added": [], "removed": []},
         "mounts": {"added": [], "removed": [], "changed": []},
-        "network": {"interfaces": {}, "routes_added": [], "routes_removed": [],
-                     "dns_added": [], "dns_removed": []},
+        "network": {
+            "interfaces": {},
+            "routes_added": [],
+            "routes_removed": [],
+            "dns_added": [],
+            "dns_removed": [],
+        },
         "cron": {},
     }
     result = classify(diff)
@@ -204,8 +234,13 @@ def test_mounts_changed_routes_to_tier3():
                 }
             ],
         },
-        "network": {"interfaces": {}, "routes_added": [], "routes_removed": [],
-                     "dns_added": [], "dns_removed": []},
+        "network": {
+            "interfaces": {},
+            "routes_added": [],
+            "routes_removed": [],
+            "dns_added": [],
+            "dns_removed": [],
+        },
         "cron": {},
     }
     result = classify(diff)
@@ -220,8 +255,13 @@ def test_estimate_tier_distribution_counts_correctly():
         "services": {"added": [], "removed": []},
         "ports": {"added": [], "removed": []},
         "mounts": {"added": [], "removed": [], "changed": []},
-        "network": {"interfaces": {}, "routes_added": [], "routes_removed": [],
-                     "dns_added": [], "dns_removed": []},
+        "network": {
+            "interfaces": {},
+            "routes_added": [],
+            "routes_removed": [],
+            "dns_added": [],
+            "dns_removed": [],
+        },
         "cron": {},
     }
     known_good = {
@@ -253,8 +293,5 @@ def test_classifier_does_not_import_llm():
 
     # The module file should never reference app.core.llm except in
     # comments. Inspect the loaded module's symbol table.
-    forbidden = [
-        attr for attr in dir(mod)
-        if "llm" in attr.lower() and not attr.startswith("_")
-    ]
+    forbidden = [attr for attr in dir(mod) if "llm" in attr.lower() and not attr.startswith("_")]
     assert not forbidden, f"validation_tiers leaked LLM references: {forbidden}"

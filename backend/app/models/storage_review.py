@@ -72,18 +72,12 @@ class StorageDesignReview(Base):
         server_default=StorageReviewStatus.draft.value,
         nullable=False,
     )
-    customer_notes: Mapped[str] = mapped_column(
-        Text, default="", server_default="", nullable=False
-    )
-    proposed_yaml: Mapped[str] = mapped_column(
-        Text, default="", server_default="", nullable=False
-    )
+    customer_notes: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    proposed_yaml: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
     # Executive summary + meta block. Per-finding rows live in
     # StorageFinding so the UI can filter / sort / triage them
     # efficiently.
-    analysis_results: Mapped[dict] = mapped_column(
-        JSONType, default=dict, nullable=False
-    )
+    analysis_results: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
     last_analyzed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -133,18 +127,14 @@ class StorageFinding(Base):
         nullable=False,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str] = mapped_column(
-        Text, nullable=False, default="", server_default=""
-    )
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     source_evidence: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default=""
     )
     proposed_evidence: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default=""
     )
-    recommendation: Mapped[str] = mapped_column(
-        Text, nullable=False, default="", server_default=""
-    )
+    recommendation: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

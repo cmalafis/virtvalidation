@@ -65,12 +65,7 @@ router = APIRouter(tags=["vcenters"])
 def _vm_count(db: Session, source_id: int) -> int:
     """COUNT subquery — keep separate so the bulk listing endpoint can
     batch all counts in a single query instead of N+1."""
-    return (
-        db.scalar(
-            select(func.count(VM.id)).where(VM.source_vcenter_id == source_id)
-        )
-        or 0
-    )
+    return db.scalar(select(func.count(VM.id)).where(VM.source_vcenter_id == source_id)) or 0
 
 
 def _read_payload(db: Session, row: VCenterSource) -> dict:
@@ -82,9 +77,7 @@ def _read_payload(db: Session, row: VCenterSource) -> dict:
 def _get_or_404(db: Session, vcenter_id: int) -> VCenterSource:
     row = db.get(VCenterSource, vcenter_id)
     if row is None:
-        raise HTTPException(
-            status_code=404, detail=f"vCenter source {vcenter_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"vCenter source {vcenter_id} not found")
     return row
 
 
@@ -102,9 +95,7 @@ def list_vcenters(db: Session = Depends(get_db)) -> list[dict]:
     rows = list(db.scalars(select(VCenterSource).order_by(VCenterSource.name)).all())
     counts = dict(
         db.execute(
-            select(VM.source_vcenter_id, func.count(VM.id)).group_by(
-                VM.source_vcenter_id
-            )
+            select(VM.source_vcenter_id, func.count(VM.id)).group_by(VM.source_vcenter_id)
         ).all()
     )
     out: list[dict] = []
@@ -236,9 +227,7 @@ def _normalize_hostname(raw: str | None) -> str:
 
 
 @router.post("/auto-match")
-def auto_match_vcenters(
-    payload: dict, db: Session = Depends(get_db)
-) -> dict:
+def auto_match_vcenters(payload: dict, db: Session = Depends(get_db)) -> dict:
     """Resolve a list of RVTools-detected vCenter hostnames to registered
     VCenterSource rows.
 
@@ -257,9 +246,7 @@ def auto_match_vcenters(
     """
     hostnames = payload.get("hostnames") or []
     if not isinstance(hostnames, list):
-        raise HTTPException(
-            status_code=422, detail="`hostnames` must be a list"
-        )
+        raise HTTPException(status_code=422, detail="`hostnames` must be a list")
 
     rows = list(db.scalars(select(VCenterSource)).all())
     by_norm: dict[str, VCenterSource] = {
@@ -342,9 +329,7 @@ def rvtools_delta_preview(
     """
     _get_or_404(db, vcenter_id)
 
-    existing = list(
-        db.scalars(select(VM).where(VM.source_vcenter_id == vcenter_id)).all()
-    )
+    existing = list(db.scalars(select(VM).where(VM.source_vcenter_id == vcenter_id)).all())
     by_name = {vm.name: vm for vm in existing}
     incoming_names: set[str] = set()
 
@@ -372,8 +357,7 @@ def rvtools_delta_preview(
             unchanged.append({"name": entry.name})
 
     removed = [
-        RVToolsDeltaItem(name=name).model_dump()
-        for name in sorted(set(by_name) - incoming_names)
+        RVToolsDeltaItem(name=name).model_dump() for name in sorted(set(by_name) - incoming_names)
     ]
 
     return {
@@ -531,10 +515,7 @@ def get_rvtools_import_status(vcenter_id: int, task_id: str) -> dict:
     if task.vcenter_id != vcenter_id:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"Task {task_id} belongs to vcenter {task.vcenter_id}, "
-                f"not {vcenter_id}"
-            ),
+            detail=(f"Task {task_id} belongs to vcenter {task.vcenter_id}, " f"not {vcenter_id}"),
         )
     return task.to_dict()
 
@@ -608,8 +589,7 @@ def get_categorization_status(vcenter_id: int, task_id: str) -> dict:
         raise HTTPException(
             status_code=404,
             detail=(
-                f"Task {task_id} belongs to vcenter {task.source_vcenter_id}, "
-                f"not {vcenter_id}"
+                f"Task {task_id} belongs to vcenter {task.source_vcenter_id}, " f"not {vcenter_id}"
             ),
         )
     return task.to_dict()
@@ -649,9 +629,7 @@ def list_groups(
     counts = dict(
         db.execute(
             select(VMGroupMember.group_id, func.count(VMGroupMember.id))
-            .where(
-                VMGroupMember.group_id.in_([r.id for r in rows])
-            )
+            .where(VMGroupMember.group_id.in_([r.id for r in rows]))
             .group_by(VMGroupMember.group_id)
         ).all()
     )

@@ -43,9 +43,15 @@ class LLMUsage(Base):
     model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
 
     # Token counts when the backend reported them; -1 when unknown.
-    input_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    output_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    total_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    input_tokens: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    total_tokens: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
 
     # Wall-clock latency in milliseconds. Helps spot when a backend
     # is in a degraded state (long latency without errors).

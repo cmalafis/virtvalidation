@@ -29,8 +29,13 @@ def _diff(extra_added=None) -> dict:
         },
         "ports": {"added": [], "removed": []},
         "mounts": {"added": [], "removed": [], "changed": []},
-        "network": {"interfaces": {}, "routes_added": [], "routes_removed": [],
-                     "dns_added": [], "dns_removed": []},
+        "network": {
+            "interfaces": {},
+            "routes_added": [],
+            "routes_removed": [],
+            "dns_added": [],
+            "dns_removed": [],
+        },
         "cron": {},
     }
 
@@ -183,10 +188,22 @@ def test_expired_entry_is_not_returned(db_session):
 def test_evict_expired_removes_only_expired_rows(db_session):
     fresh = _diff()
     stale = _diff(extra_added=["older.service"])
-    store(db_session, diff=fresh, os_family="rhel-like",
-          verdict=_verdict(), source_vm_id=1, source_model="m")
-    store(db_session, diff=stale, os_family="rhel-like",
-          verdict=_verdict(), source_vm_id=2, source_model="m")
+    store(
+        db_session,
+        diff=fresh,
+        os_family="rhel-like",
+        verdict=_verdict(),
+        source_vm_id=1,
+        source_model="m",
+    )
+    store(
+        db_session,
+        diff=stale,
+        os_family="rhel-like",
+        verdict=_verdict(),
+        source_vm_id=2,
+        source_model="m",
+    )
     stale_row = (
         db_session.query(ValidationLLMCache)
         .filter(ValidationLLMCache.diff_summary.like("services_added=2%"))
@@ -207,10 +224,22 @@ def test_evict_expired_removes_only_expired_rows(db_session):
 def test_stats_aggregates_hits_per_os_family(db_session):
     diff_a = _diff()
     diff_b = _diff(extra_added=["x.service"])
-    store(db_session, diff=diff_a, os_family="rhel-like",
-          verdict=_verdict(), source_vm_id=1, source_model="m")
-    store(db_session, diff=diff_b, os_family="windows",
-          verdict=_verdict(), source_vm_id=2, source_model="m")
+    store(
+        db_session,
+        diff=diff_a,
+        os_family="rhel-like",
+        verdict=_verdict(),
+        source_vm_id=1,
+        source_model="m",
+    )
+    store(
+        db_session,
+        diff=diff_b,
+        os_family="windows",
+        verdict=_verdict(),
+        source_vm_id=2,
+        source_model="m",
+    )
     lookup(db_session, diff=diff_a, os_family="rhel-like")
     lookup(db_session, diff=diff_a, os_family="rhel-like")
 

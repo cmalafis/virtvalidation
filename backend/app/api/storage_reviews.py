@@ -61,9 +61,7 @@ def _run_analysis(review_id: int) -> None:
     try:
         review = db.get(StorageDesignReview, review_id)
         if review is None:
-            logger.warning(
-                "storage analysis: review %s vanished before task ran", review_id
-            )
+            logger.warning("storage analysis: review %s vanished before task ran", review_id)
             return
         try:
             source_summary = build_storage_source_summary(db)
@@ -131,9 +129,7 @@ def _run_analysis(review_id: int) -> None:
 def _get_review_or_404(db: Session, review_id: int) -> StorageDesignReview:
     review = db.get(StorageDesignReview, review_id)
     if review is None:
-        raise HTTPException(
-            status_code=404, detail=f"Storage review {review_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Storage review {review_id} not found")
     return review
 
 
@@ -285,9 +281,7 @@ def delete_review(
     request.state.skip_audit_log = True
 
 
-@router.patch(
-    "/{review_id}/findings/{finding_id}", response_model=StorageFindingRead
-)
+@router.patch("/{review_id}/findings/{finding_id}", response_model=StorageFindingRead)
 def update_finding_triage(
     request: Request,
     review_id: int,

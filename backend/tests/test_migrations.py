@@ -178,7 +178,7 @@ def test_models_match_migrations_no_drift(temp_db):
         )
         assert only_in_models == set(), (
             f"Tables in models but not in migrations: {sorted(only_in_models)} "
-            "— run `alembic revision --autogenerate -m \"...\"` to capture them."
+            '— run `alembic revision --autogenerate -m "..."` to capture them.'
         )
 
         # Per-table column drift. We compare column names + nullability;
@@ -188,18 +188,14 @@ def test_models_match_migrations_no_drift(temp_db):
         fresh_inspector = inspect(fresh_engine)
         for table in sorted(migrated_app_tables):
             migrated_cols = {
-                c["name"]: c.get("nullable")
-                for c in migrated_inspector.get_columns(table)
+                c["name"]: c.get("nullable") for c in migrated_inspector.get_columns(table)
             }
-            fresh_cols = {
-                c["name"]: c.get("nullable")
-                for c in fresh_inspector.get_columns(table)
-            }
+            fresh_cols = {c["name"]: c.get("nullable") for c in fresh_inspector.get_columns(table)}
             assert migrated_cols == fresh_cols, (
                 f"Column drift on table {table!r}:\n"
                 f"  migrations: {migrated_cols}\n"
                 f"  models:     {fresh_cols}\n"
-                "Run `alembic revision --autogenerate -m \"...\"` to capture the diff."
+                'Run `alembic revision --autogenerate -m "..."` to capture the diff.'
             )
     finally:
         try:
@@ -293,7 +289,6 @@ def test_every_migration_has_upgrade_and_downgrade():
     """Every migration script must define both ``upgrade()`` and
     ``downgrade()``. Missing downgrades are how teams end up with
     one-way migrations they can't roll back from in production."""
-    repo_root = Path(__file__).resolve().parents[1]
     cfg = _alembic_config("sqlite:///dummy")
     script = ScriptDirectory.from_config(cfg)
 
@@ -301,8 +296,8 @@ def test_every_migration_has_upgrade_and_downgrade():
     assert revisions, "No migrations found in versions/ — at least the baseline must exist."
 
     for rev in revisions:
-        path = repo_root / "migrations" / "versions" / f"{rev.path.split('/')[-1]}"
-        # path may already be absolute via rev.path; fall back to that
+        # rev.path is the absolute path emitted by the Alembic script
+        # directory; no need to resolve relative to repo_root.
         actual_path = Path(rev.path)
         text = actual_path.read_text()
         assert "def upgrade()" in text, f"{actual_path} missing upgrade()"

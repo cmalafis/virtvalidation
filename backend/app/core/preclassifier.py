@@ -936,7 +936,7 @@ class PreClassifier:
             )
 
         consolidated: list[VMGroup] = []
-        for primary_key, primary_groups in by_primary.items():
+        for _primary_key, primary_groups in by_primary.items():
             # Sort smallest-first so the consolidation merges the
             # cheapest groups together.
             primary_groups.sort(key=lambda g: len(g.vm_ids))

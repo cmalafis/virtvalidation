@@ -274,6 +274,7 @@ def run_validation(
     # Stage 1+2: structured diff + tier classification (pure Python,
     # no LLM call).
     from app.core.llm.client import compute_diff  # local import avoids cycle
+
     diff = compute_diff(baseline, current)
     os_family = ((baseline.get("meta") or {}).get("os_profile") or {}).get(
         "distro_family"
@@ -405,6 +406,7 @@ def _record_llm_usage(
     in that case instead of refusing to render.
     """
     from app.models.llm_usage import LLMUsage  # local import: model registers on Base
+
     backend_type = getattr(backend, "backend_type", "unknown")
     db.add(
         LLMUsage(

@@ -61,8 +61,7 @@ class _StubBackend:
         json_start = user_text.index("{")
         payload = json.loads(user_text[json_start:])
         members = [
-            {"vm_id": v["vm_id"], "confidence": 0.9, "rationale": "test"}
-            for v in payload["vms"]
+            {"vm_id": v["vm_id"], "confidence": 0.9, "rationale": "test"} for v in payload["vms"]
         ]
         return json.dumps(
             {
@@ -246,9 +245,7 @@ def test_categorize_raises_when_groups_missing_from_response(client, db_session)
 
 def test_categorize_returns_zero_for_empty_vcenter(client, db_session):
     vc = _create_vcenter(client)
-    result = categorize(
-        db_session, source_vcenter_id=vc["id"], backend=_StubBackend()
-    )
+    result = categorize(db_session, source_vcenter_id=vc["id"], backend=_StubBackend())
     assert result == {"groups_created": 0, "batches_processed": 0}
 
 
@@ -296,9 +293,7 @@ def test_trigger_categorization_runs_in_background_and_persists_groups(
 
     spawn = client.post(f"/api/sources/vcenters/{vc['id']}/categorize").json()
 
-    status = client.get(
-        f"/api/sources/vcenters/{vc['id']}/categorize/{spawn['task_id']}"
-    ).json()
+    status = client.get(f"/api/sources/vcenters/{vc['id']}/categorize/{spawn['task_id']}").json()
     assert status["status"] == "completed"
     assert status["progress_percent"] == 100
     assert status["groups_created"] == 3
@@ -326,9 +321,7 @@ def test_categorization_status_404_when_task_belongs_to_different_vcenter(
     _enroll(client, "vm-a", source_vcenter_id=a["id"])
 
     spawn = client.post(f"/api/sources/vcenters/{a['id']}/categorize").json()
-    r = client.get(
-        f"/api/sources/vcenters/{b['id']}/categorize/{spawn['task_id']}"
-    )
+    r = client.get(f"/api/sources/vcenters/{b['id']}/categorize/{spawn['task_id']}")
     assert r.status_code == 404
 
 
@@ -337,9 +330,7 @@ def test_list_groups_filters_by_kind(client, stub_categorizer_backend):
     _enroll(client, "vm-a", source_vcenter_id=vc["id"])
     client.post(f"/api/sources/vcenters/{vc['id']}/categorize")
 
-    apps = client.get(
-        f"/api/sources/vcenters/{vc['id']}/groups?kind=application"
-    ).json()
+    apps = client.get(f"/api/sources/vcenters/{vc['id']}/groups?kind=application").json()
     assert len(apps) == 1
     assert apps[0]["kind"] == "application"
 

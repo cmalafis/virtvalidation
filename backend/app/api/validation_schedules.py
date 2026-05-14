@@ -84,9 +84,7 @@ class ScheduleRead(BaseModel):
 @router.get("", response_model=list[ScheduleRead])
 def list_schedules(db: Session = Depends(get_db)) -> list[ValidationSchedule]:
     return list(
-        db.scalars(
-            select(ValidationSchedule).order_by(ValidationSchedule.created_at.desc())
-        ).all()
+        db.scalars(select(ValidationSchedule).order_by(ValidationSchedule.created_at.desc())).all()
     )
 
 
@@ -138,9 +136,7 @@ def create_schedule(
 
 
 @router.get("/{schedule_id}", response_model=ScheduleRead)
-def get_schedule(
-    schedule_id: int, db: Session = Depends(get_db)
-) -> ValidationSchedule:
+def get_schedule(schedule_id: int, db: Session = Depends(get_db)) -> ValidationSchedule:
     row = db.get(ValidationSchedule, schedule_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Schedule {schedule_id} not found")
@@ -227,9 +223,7 @@ def fire_schedule(
     if not matched:
         raise HTTPException(status_code=422, detail="Schedule scope matched zero VMs")
 
-    vm_ids_with_baselines = set(
-        db.scalars(select(BaselineSnapshot.vm_id).distinct()).all()
-    )
+    vm_ids_with_baselines = set(db.scalars(select(BaselineSnapshot.vm_id).distinct()).all())
     validatable = [vm.id for vm in matched if vm.id in vm_ids_with_baselines]
     if not validatable:
         raise HTTPException(

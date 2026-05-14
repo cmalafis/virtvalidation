@@ -30,7 +30,9 @@ class _StubBackend(LLMBackend):
         self._health = health
         self._list_models_raises = list_models_raises
 
-    async def chat(self, messages, model=None, temperature=0.1, max_tokens=None):  # pragma: no cover
+    async def chat(
+        self, messages, model=None, temperature=0.1, max_tokens=None
+    ):  # pragma: no cover
         return {"content": "{}", "model": self.default_model}
 
     async def chat_stream(self, messages, model=None, temperature=0.1):  # pragma: no cover
@@ -83,6 +85,7 @@ def stub_backend(monkeypatch):
     monkeypatch.setattr("app.api.settings.get_llm_backend", _fake_get)
     yield _install
     llm_factory.reset_backend_cache()
+
 
 # ---------- Settings CRUD ----------
 

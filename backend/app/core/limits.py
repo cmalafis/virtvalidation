@@ -43,15 +43,13 @@ def _env_int(name: str, default: int) -> int:
     except ValueError:
         # Log via stderr — logging isn't configured yet during module load.
         import sys
-        sys.stderr.write(
-            f"WARNING: {name}={raw!r} is not an integer; using default {default}\n"
-        )
+
+        sys.stderr.write(f"WARNING: {name}={raw!r} is not an integer; using default {default}\n")
         return default
     if value <= 0:
         import sys
-        sys.stderr.write(
-            f"WARNING: {name}={value} must be positive; using default {default}\n"
-        )
+
+        sys.stderr.write(f"WARNING: {name}={value} must be positive; using default {default}\n")
         return default
     return value
 

@@ -18,7 +18,6 @@ from typing import AsyncIterator
 
 from app.core.llm.base import LLMBackend
 
-
 _NOT_READY_MESSAGE = (
     "vLLM backend is not implemented yet — targeted for VirtValidate v1.0.0. "
     "Until then, use LLM_BACKEND_TYPE=ollama (standalone) or "

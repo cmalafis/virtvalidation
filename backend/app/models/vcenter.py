@@ -66,12 +66,8 @@ class VCenterSource(Base):
     # Default mappings applied to VMs imported under this vCenter when the
     # operator hasn't set per-VM target_namespace. Keeps the bulk-import
     # path from forcing the operator to set every field manually.
-    default_target_namespace: Mapped[str | None] = mapped_column(
-        String(253), nullable=True
-    )
-    default_target_storage_class: Mapped[str | None] = mapped_column(
-        String(253), nullable=True
-    )
+    default_target_namespace: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    default_target_storage_class: Mapped[str | None] = mapped_column(String(253), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

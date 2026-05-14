@@ -190,9 +190,7 @@ def validate_ssh_key(key_type: str, key_size_bits: int | None = None, *, cfg=Non
     verdict = assess_ssh_key(key_type, key_size_bits)
     if verdict["approved"]:
         return
-    raise FIPSViolation(
-        f"SSH key rejected under FIPS_MODE=true: {verdict['reason']}"
-    )
+    raise FIPSViolation(f"SSH key rejected under FIPS_MODE=true: {verdict['reason']}")
 
 
 # ---------------------------------------------------------------------------
@@ -220,9 +218,7 @@ def fips_status(cfg=None) -> dict[str, Any]:
         {
             "name": "SSH key algorithm",
             "configured": getattr(cfg, "ssh_key_algorithm", "ed25519"),
-            "fips_approved": _ssh_algo_is_approved(
-                getattr(cfg, "ssh_key_algorithm", "ed25519")
-            ),
+            "fips_approved": _ssh_algo_is_approved(getattr(cfg, "ssh_key_algorithm", "ed25519")),
             "enforced": configured,
         },
         {
@@ -291,9 +287,7 @@ def log_startup_warning() -> None:
     """
     s = fips_status()
     if s["effective"]:
-        logger.info(
-            "FIPS 140-3: configured + OS-detected. Application gates active."
-        )
+        logger.info("FIPS 140-3: configured + OS-detected. Application gates active.")
     elif s["configured"] and not s["detected"]:
         logger.warning(
             "FIPS 140-3 mismatch — application configured for FIPS_MODE=true "

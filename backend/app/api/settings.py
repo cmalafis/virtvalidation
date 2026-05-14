@@ -20,10 +20,20 @@ from app.core.ssh_key import (
     KeyExistsError,
     KeyMissingError,
     UnsupportedAlgorithmError,
+)
+from app.core.ssh_key import (
     expected_path as ssh_expected_path,
+)
+from app.core.ssh_key import (
     generate as ssh_generate,
+)
+from app.core.ssh_key import (
     load_key_info as ssh_load_key_info,
+)
+from app.core.ssh_key import (
     normalize_algorithm as ssh_normalize_algorithm,
+)
+from app.core.ssh_key import (
     rotate as ssh_rotate,
 )
 from app.models.settings import AppSettings
@@ -239,8 +249,7 @@ def ssh_key_rotate(
         raise HTTPException(
             status_code=404,
             detail=(
-                f"No SSH key found at {e.path}. "
-                "Use POST /api/system/ssh-key/generate first."
+                f"No SSH key found at {e.path}. " "Use POST /api/system/ssh-key/generate first."
             ),
         ) from e
 
@@ -392,11 +401,7 @@ def llm_usage(hours: int = 24, db: Session = Depends(get_db)) -> dict:
     from app.models.llm_usage import LLMUsage
 
     since = datetime.now(timezone.utc) - timedelta(hours=max(1, hours))
-    rows = list(
-        db.scalars(
-            select(LLMUsage).where(LLMUsage.created_at >= since)
-        ).all()
-    )
+    rows = list(db.scalars(select(LLMUsage).where(LLMUsage.created_at >= since)).all())
 
     by_operation: dict[str, dict] = {}
     total_in = 0
@@ -437,13 +442,10 @@ def llm_usage(hours: int = 24, db: Session = Depends(get_db)) -> dict:
             manual += 1
 
     validations_total = sum(tier_counts.values())
-    cache_hit_rate = (
-        round(100 * cached / validations_total, 1) if validations_total else 0.0
-    )
+    cache_hit_rate = round(100 * cached / validations_total, 1) if validations_total else 0.0
 
-    cost_usd = (
-        total_in * (cfg.llm_cost_per_million_input_tokens / 1_000_000.0)
-        + total_out * (cfg.llm_cost_per_million_output_tokens / 1_000_000.0)
+    cost_usd = total_in * (cfg.llm_cost_per_million_input_tokens / 1_000_000.0) + total_out * (
+        cfg.llm_cost_per_million_output_tokens / 1_000_000.0
     )
 
     return {

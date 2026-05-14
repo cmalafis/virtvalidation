@@ -85,9 +85,7 @@ SAMPLE_LLM_OUTPUT = {
             "category": "positive_confirmation",
             "severity": "info",
             "title": "Capacity headroom adequate for consolidated storage",
-            "description": (
-                "Source datastore total ~12TB; proposed StorageClass quota ~20TB."
-            ),
+            "description": ("Source datastore total ~12TB; proposed StorageClass quota ~20TB."),
             "source_evidence": "vsphere_datastores: prod-tier (12TB used)",
             "proposed_evidence": "StorageClass quota: 20Ti",
             "recommendation": "No action needed.",
@@ -187,9 +185,7 @@ def test_parser_accepts_well_formed_output():
 def test_parser_normalizes_unknown_confidence_to_medium():
     payload = {
         **SAMPLE_LLM_OUTPUT,
-        "findings": [
-            {**SAMPLE_LLM_OUTPUT["findings"][0], "confidence": "definitely-yes"}
-        ],
+        "findings": [{**SAMPLE_LLM_OUTPUT["findings"][0], "confidence": "definitely-yes"}],
     }
     result = StorageReviewer._parse(json.dumps(payload))
     assert result["findings"][0]["confidence"] == "medium"
@@ -210,9 +206,7 @@ def test_parser_rejects_network_categories_on_storage_review():
     the two reviewers would silently mis-classify."""
     payload = {
         **SAMPLE_LLM_OUTPUT,
-        "findings": [
-            {**SAMPLE_LLM_OUTPUT["findings"][0], "category": "coverage_gap"}
-        ],
+        "findings": [{**SAMPLE_LLM_OUTPUT["findings"][0], "category": "coverage_gap"}],
     }
     with pytest.raises(StorageReviewError, match="category"):
         StorageReviewer._parse(json.dumps(payload))
@@ -241,9 +235,7 @@ def test_parser_rejects_garbage_json():
 # End-to-end API: create → notes → yaml → analyze → fetch
 # ---------------------------------------------------------------------------
 def test_create_review_round_trips(client):
-    body = client.post(
-        "/api/storage-reviews", json={"name": "Storage cutover review"}
-    ).json()
+    body = client.post("/api/storage-reviews", json={"name": "Storage cutover review"}).json()
     assert body["status"] == "draft"
     assert body["customer_notes"] == ""
     assert body["proposed_yaml"] == ""

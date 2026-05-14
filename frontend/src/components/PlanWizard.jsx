@@ -178,7 +178,6 @@ export default function PlanWizard() {
     });
   };
 
-  const remaining = MAX_VMS_PER_PLAN - selected.size;
   const overCap = selected.size > MAX_VMS_PER_PLAN;
   const canGenerate =
     step === 2 &&
@@ -295,8 +294,8 @@ export default function PlanWizard() {
             <div style={{ fontSize: 12, color: "#888899", marginTop: 6 }}>
               Mappings resolve source vSphere resources to target cluster
               resources. Each VM is routed to the mapping whose source
-              vCenter matches the VM's. Plan creation refuses VMs whose
-              vCenter isn't covered by any selected mapping.
+              vCenter matches the VM&apos;s. Plan creation refuses VMs whose
+              vCenter isn&apos;t covered by any selected mapping.
             </div>
 
             <div

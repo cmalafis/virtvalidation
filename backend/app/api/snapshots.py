@@ -21,10 +21,10 @@ from app.core.bulk_capture import (
     DEFAULT_PER_VCENTER_PARALLEL,
     run_bulk_capture,
 )
-from app.core.limits import MAX_VMS_PER_BULK_ACTION
 from app.core.bulk_capture import task_store as bulk_task_store
 from app.core.capture import run_capture_task, task_store
 from app.core.db import get_db
+from app.core.limits import MAX_VMS_PER_BULK_ACTION
 from app.models.vm import VM
 from app.schemas.vm import BulkCaptureResult
 
@@ -45,16 +45,12 @@ class BulkCaptureScope(BaseModel):
     only_status: str | None = None  # e.g. "discovered"
     name_contains: str | None = None
     max_parallel: int = Field(default=DEFAULT_MAX_PARALLEL, ge=1, le=100)
-    per_vcenter_parallel: int = Field(
-        default=DEFAULT_PER_VCENTER_PARALLEL, ge=1, le=50
-    )
+    per_vcenter_parallel: int = Field(default=DEFAULT_PER_VCENTER_PARALLEL, ge=1, le=50)
 
 
 def _resolve_capture_scope(db: Session, scope: BulkCaptureScope) -> list[VM]:
     if scope.vm_ids:
-        return list(
-            db.scalars(select(VM).where(VM.id.in_(scope.vm_ids)).order_by(VM.id)).all()
-        )
+        return list(db.scalars(select(VM).where(VM.id.in_(scope.vm_ids)).order_by(VM.id)).all())
     stmt = select(VM).order_by(VM.id)
     if scope.source_vcenter_id is not None:
         stmt = stmt.where(VM.source_vcenter_id == scope.source_vcenter_id)

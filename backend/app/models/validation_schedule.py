@@ -22,7 +22,6 @@ from sqlalchemy import (
     DateTime,
     Enum,
     Index,
-    Integer,
     String,
     Text,
     func,
@@ -71,13 +70,9 @@ class ValidationSchedule(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Bookkeeping.
-    last_fired_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    next_fire_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    next_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # When True the scheduler skips this row even if status=enabled.
     # Used by the "pause all" runtime override on the admin page.
@@ -98,6 +93,4 @@ class ValidationSchedule(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        Index("ix_validation_schedules_status", "status"),
-    )
+    __table_args__ = (Index("ix_validation_schedules_status", "status"),)

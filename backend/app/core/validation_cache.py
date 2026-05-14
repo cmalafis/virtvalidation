@@ -44,9 +44,7 @@ def compute_cache_key(diff: dict, os_family: str | None) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def lookup(
-    db: Session, *, diff: dict, os_family: str | None
-) -> Optional[dict]:
+def lookup(db: Session, *, diff: dict, os_family: str | None) -> Optional[dict]:
     """Return the cached verdict for this diff, or ``None``.
 
     Increments ``hit_count`` and stamps ``last_hit_at`` on the row
@@ -54,9 +52,7 @@ def lookup(
     Returns ``None`` when no row exists or the row has expired.
     """
     key = compute_cache_key(diff, os_family)
-    row = db.scalars(
-        select(ValidationLLMCache).where(ValidationLLMCache.cache_key == key)
-    ).first()
+    row = db.scalars(select(ValidationLLMCache).where(ValidationLLMCache.cache_key == key)).first()
     if row is None:
         return None
     # SQLite returns naive datetimes; normalize to UTC so the
@@ -159,9 +155,7 @@ def stats(db: Session) -> dict:
     total_hits = sum(r.hit_count or 0 for r in rows)
     by_family: dict[str, dict] = {}
     for r in rows:
-        bucket = by_family.setdefault(
-            r.os_family or "unknown", {"entries": 0, "hits": 0}
-        )
+        bucket = by_family.setdefault(r.os_family or "unknown", {"entries": 0, "hits": 0})
         bucket["entries"] += 1
         bucket["hits"] += r.hit_count or 0
     return {

@@ -1,50 +1,18 @@
-# Hooks are intentionally relaxed for solo development. CI runs strict
-# checks. Re-enable strict pre-commit when team grows beyond 1 contributor.
+# Solo-mode pre-commit: gitleaks only.
 #
-# Blocking hooks (commit-stoppers):
-#   - gitleaks    — secret detection, real security issue
-#   - ruff-format — cosmetic but trivial to re-run, keeps diffs clean
+# CI is the source of truth for ruff / pytest / build correctness — see
+# .github/workflows/ci.yml. The local hook chain is deliberately minimal
+# so `git commit` is fast and never reformats files mid-commit (which
+# previously forced a re-stage cycle and trained the operator to reach
+# for --no-verify).
 #
-# Non-blocking hooks (autofix or warn-only):
-#   - ruff  — auto-fixes what it can, reports the rest without failing
-#   - mypy  — runs and prints diagnostics, never blocks the commit
+# Why gitleaks stays blocking: a leaked private key or cloud credential
+# in git history is *unrecoverable* — rewriting history doesn't undo the
+# fact that GitHub, mirrors, caches, and any cloner already have it. The
+# only effective defense is catching the leak before push. Worth the
+# ~1 second per commit.
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.4
-    hooks:
-      # Solo-mode: --fix applies safe autofixes; --exit-zero suppresses the
-      # non-zero exit so remaining lint issues print but don't block. CI
-      # re-runs `ruff check` without --exit-zero and will fail the build
-      # there if anything still slips through.
-      - id: ruff
-        args: [--fix, --exit-zero]
-        files: ^backend/
-      - id: ruff-format
-        files: ^backend/
-
-  # Catches accidentally-committed secrets (AWS keys, GitHub tokens, private
-  # keys, etc.) before they leave the dev's machine. CI re-runs the same
-  # scan on every push as a safety net. Stays blocking — a leaked secret
-  # in git history is unrecoverable.
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.18.4
     hooks:
       - id: gitleaks
-
-  - repo: local
-    hooks:
-      # Warn-only: mypy runs against backend/app, prints type errors, but
-      # the trailing `|| true` swallows the exit code so the commit goes
-      # through. The CI mypy job runs without the swallow and remains
-      # the source of truth for type correctness.
-      - id: mypy
-        name: mypy (warn-only)
-        # Use the mypy already installed in the developer's venv rather than
-        # pre-commit's isolated environment so type stubs for our own app
-        # modules resolve correctly.
-        entry: bash -c 'cd backend && mypy app || true'
-        language: system
-        types: [python]
-        files: ^backend/app/
-        pass_filenames: false
-        verbose: true

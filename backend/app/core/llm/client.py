@@ -248,6 +248,7 @@ class LLMClient:
             {"role": "user", "content": user_prompt},
         ]
         last_validation_error: Optional[str] = None
+        last_raw: str = ""
         for attempt in range(max_retries + 1):
             if attempt > 0 and last_validation_error:
                 # Append the previous reply + a corrective message so
@@ -368,13 +369,13 @@ class LLMClient:
                     f"got {confidence!r}"
                 )
             for required in ("source_evidence", "current_evidence", "remediation", "title"):
-                value = (finding.get(required) or "").strip() if isinstance(
-                    finding.get(required), str
-                ) else finding.get(required)
+                value = (
+                    (finding.get(required) or "").strip()
+                    if isinstance(finding.get(required), str)
+                    else finding.get(required)
+                )
                 if not value:
-                    raise LLMError(
-                        f"findings[{idx}].{required} is required and must be non-empty"
-                    )
+                    raise LLMError(f"findings[{idx}].{required} is required and must be non-empty")
             worst_rank = max(worst_rank, rank[severity])
 
         # Verdict-vs-findings consistency. The model is occasionally
@@ -382,8 +383,7 @@ class LLMClient:
         # a critical finding, the parser overrides the verdict to fail.
         if worst_rank >= rank["critical"] and status != "fail":
             raise LLMError(
-                "verdict.status must be 'fail' when at least one finding "
-                "has severity 'critical'"
+                "verdict.status must be 'fail' when at least one finding " "has severity 'critical'"
             )
         if status == "pass" and worst_rank >= rank["medium"]:
             raise LLMError(
@@ -450,9 +450,7 @@ def compute_diff(baseline: dict, current: dict) -> dict:
     expensive backend resolution that comes with it).
     """
     return {
-        "services": _diff_services(
-            baseline.get("services", []), current.get("services", [])
-        ),
+        "services": _diff_services(baseline.get("services", []), current.get("services", [])),
         "ports": _diff_ports(baseline.get("ports", []), current.get("ports", [])),
         "mounts": _diff_mounts(baseline.get("mounts", []), current.get("mounts", [])),
         "network": _diff_network(baseline.get("network", {}), current.get("network", {})),

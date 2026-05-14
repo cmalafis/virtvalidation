@@ -15,7 +15,6 @@ Covers:
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -269,9 +268,7 @@ def test_full_health_includes_fips_block(client, monkeypatch):
     assert "operations" in body["fips"]
 
 
-def test_fips_status_endpoint_warns_on_configured_without_detected(
-    client, monkeypatch, tmp_path
-):
+def test_fips_status_endpoint_warns_on_configured_without_detected(client, monkeypatch, tmp_path):
     """When the operator sets FIPS_MODE=true on a non-FIPS host, the
     endpoint must surface a remediation message — that's the federal
     reviewer's signal that the deployment isn't actually compliant."""
@@ -290,9 +287,7 @@ def test_fips_status_endpoint_warns_on_configured_without_detected(
 # ---------------------------------------------------------------------------
 # SSH integration — the gate fires through the collector path
 # ---------------------------------------------------------------------------
-def test_ssh_collector_rejects_ed25519_when_fips_mode_on(
-    monkeypatch, tmp_path
-):
+def test_ssh_collector_rejects_ed25519_when_fips_mode_on(monkeypatch, tmp_path):
     """End-to-end: SSHCollector wraps validate_ssh_key, so an Ed25519
     key file under FIPS_MODE=true must surface SSHCollectionError before
     any network I/O happens. We mock the file read to skip generating
@@ -317,9 +312,7 @@ def test_ssh_collector_rejects_ed25519_when_fips_mode_on(
         def asbytes(self):
             return b"stub"
 
-    monkeypatch.setattr(
-        "app.core.ssh.load_private_key", lambda path: _StubEd25519()
-    )
+    monkeypatch.setattr("app.core.ssh.load_private_key", lambda path: _StubEd25519())
 
     collector = SSHCollector(key_path=str(fake_key))
     with pytest.raises(SSHCollectionError, match="FIPS_MODE=true"):

@@ -65,29 +65,46 @@ KNOWN_GOOD_NEW_SERVICES: frozenset[str] = frozenset(
 CRITICAL_SERVICES_FOR_PRODUCTION: frozenset[str] = frozenset(
     {
         # Web tier
-        "httpd", "httpd.service",
-        "nginx", "nginx.service",
-        "apache2", "apache2.service",
+        "httpd",
+        "httpd.service",
+        "nginx",
+        "nginx.service",
+        "apache2",
+        "apache2.service",
         # Databases
-        "postgresql", "postgresql.service", "postgresql-16.service",
-        "mysql", "mysql.service",
-        "mariadb", "mariadb.service",
-        "mongod", "mongod.service",
-        "redis", "redis.service",
+        "postgresql",
+        "postgresql.service",
+        "postgresql-16.service",
+        "mysql",
+        "mysql.service",
+        "mariadb",
+        "mariadb.service",
+        "mongod",
+        "mongod.service",
+        "redis",
+        "redis.service",
         # App / runtime
-        "tomcat", "tomcat.service",
-        "java", "wildfly",
-        "docker", "docker.service",
+        "tomcat",
+        "tomcat.service",
+        "java",
+        "wildfly",
+        "docker",
+        "docker.service",
         "podman.service",
         "containerd.service",
         # Infrastructure
-        "named", "named.service",   # BIND DNS
-        "chronyd", "chronyd.service",
-        "ntpd", "ntpd.service",
-        "smbd", "nmbd",
+        "named",
+        "named.service",  # BIND DNS
+        "chronyd",
+        "chronyd.service",
+        "ntpd",
+        "ntpd.service",
+        "smbd",
+        "nmbd",
         "winbind",
         # Identity
-        "sssd", "sssd.service",
+        "sssd",
+        "sssd.service",
     }
 )
 
@@ -300,13 +317,10 @@ def _tier2(diff: dict, *, environment: str | None) -> Optional[TierClassificatio
     matched: list[str] = []
     findings: list[dict] = []
     remediation: list[str] = []
-    worst_severity: Optional[str] = None  # "warn" | "critical"
 
     # Critical service stopped on a production VM → fail
     is_prod = (environment or "").lower() in {"prod", "production"}
-    critical_stopped = [
-        svc for svc in services_removed if svc in CRITICAL_SERVICES_FOR_PRODUCTION
-    ]
+    critical_stopped = [svc for svc in services_removed if svc in CRITICAL_SERVICES_FOR_PRODUCTION]
     if critical_stopped and is_prod:
         for svc in critical_stopped:
             findings.append(
@@ -327,7 +341,6 @@ def _tier2(diff: dict, *, environment: str | None) -> Optional[TierClassificatio
             remediation.append(
                 f"Restart {svc} via `systemctl start {svc.split('.')[0]}` and check its journal."
             )
-        worst_severity = "critical"
         matched.append("tier2.critical_service_stopped")
         return TierClassification(
             tier="tier2",
@@ -393,9 +406,7 @@ def _tier2(diff: dict, *, environment: str | None) -> Optional[TierClassificatio
 
     # All changes are known-good additions → pass without LLM
     unknown_added = [svc for svc in services_added if svc not in KNOWN_GOOD_NEW_SERVICES]
-    only_known_good_services = (
-        services_added and not unknown_added and not services_removed
-    )
+    only_known_good_services = services_added and not unknown_added and not services_removed
     no_other_changes = (
         not ports_removed
         and not ports_added
@@ -423,7 +434,8 @@ def _tier2(diff: dict, *, environment: str | None) -> Optional[TierClassificatio
                 "status": "pass",
                 "summary": (
                     "Migration-tooling services added; no other drift. "
-                    + "New services: " + ", ".join(sorted(services_added))
+                    + "New services: "
+                    + ", ".join(sorted(services_added))
                 ),
                 "findings": [],
                 "remediation": [],

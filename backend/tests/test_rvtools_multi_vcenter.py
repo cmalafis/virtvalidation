@@ -123,12 +123,21 @@ def test_multi_vcenter_file_routes_per_hostname(client):
     vc_b = _register_vcenter(client, "vc-b", "vc-b.dha.mil")
     payload = {
         "vms": [
-            {"name": "alpha-1", "source_hostname": "a1.corp",
-             "source_vcenter_hostname": "vc-a.dha.mil"},
-            {"name": "alpha-2", "source_hostname": "a2.corp",
-             "source_vcenter_hostname": "vc-a.dha.mil"},
-            {"name": "beta-1", "source_hostname": "b1.corp",
-             "source_vcenter_hostname": "vc-b.dha.mil"},
+            {
+                "name": "alpha-1",
+                "source_hostname": "a1.corp",
+                "source_vcenter_hostname": "vc-a.dha.mil",
+            },
+            {
+                "name": "alpha-2",
+                "source_hostname": "a2.corp",
+                "source_vcenter_hostname": "vc-a.dha.mil",
+            },
+            {
+                "name": "beta-1",
+                "source_hostname": "b1.corp",
+                "source_vcenter_hostname": "vc-b.dha.mil",
+            },
         ],
         "vcenter_mapping": {
             "vc-a.dha.mil": vc_a,
@@ -154,12 +163,21 @@ def test_unmapped_hostname_skips_those_vms_with_reason(client):
     vc_a = _register_vcenter(client, "vc-mapped", "vc-mapped.dha.mil")
     payload = {
         "vms": [
-            {"name": "mapped-1", "source_hostname": "m1.corp",
-             "source_vcenter_hostname": "vc-mapped.dha.mil"},
-            {"name": "unmapped-1", "source_hostname": "u1.corp",
-             "source_vcenter_hostname": "vc-unknown.dha.mil"},
-            {"name": "unmapped-2", "source_hostname": "u2.corp",
-             "source_vcenter_hostname": "vc-unknown.dha.mil"},
+            {
+                "name": "mapped-1",
+                "source_hostname": "m1.corp",
+                "source_vcenter_hostname": "vc-mapped.dha.mil",
+            },
+            {
+                "name": "unmapped-1",
+                "source_hostname": "u1.corp",
+                "source_vcenter_hostname": "vc-unknown.dha.mil",
+            },
+            {
+                "name": "unmapped-2",
+                "source_hostname": "u2.corp",
+                "source_vcenter_hostname": "vc-unknown.dha.mil",
+            },
         ],
         "vcenter_mapping": {"vc-mapped.dha.mil": vc_a},
     }
@@ -182,10 +200,16 @@ def test_default_vcenter_id_catches_unmapped_vms(client):
     vc_default = _register_vcenter(client, "vc-default", "vc-default.dha.mil")
     payload = {
         "vms": [
-            {"name": "mapped-x", "source_hostname": "mx.corp",
-             "source_vcenter_hostname": "vc-mapped.dha.mil"},
-            {"name": "fallback-x", "source_hostname": "fx.corp",
-             "source_vcenter_hostname": "vc-other.dha.mil"},
+            {
+                "name": "mapped-x",
+                "source_hostname": "mx.corp",
+                "source_vcenter_hostname": "vc-mapped.dha.mil",
+            },
+            {
+                "name": "fallback-x",
+                "source_hostname": "fx.corp",
+                "source_vcenter_hostname": "vc-other.dha.mil",
+            },
         ],
         "vcenter_mapping": {"vc-mapped.dha.mil": vc_a},
         "default_vcenter_id": vc_default,
@@ -205,8 +229,11 @@ def test_default_vcenter_id_catches_unmapped_vms(client):
 def test_mapping_to_unknown_vcenter_id_409s(client):
     payload = {
         "vms": [
-            {"name": "x", "source_hostname": "x.corp",
-             "source_vcenter_hostname": "vc-unknown.dha.mil"}
+            {
+                "name": "x",
+                "source_hostname": "x.corp",
+                "source_vcenter_hostname": "vc-unknown.dha.mil",
+            }
         ],
         "vcenter_mapping": {"vc-unknown.dha.mil": 99_999},
     }
@@ -228,8 +255,11 @@ def test_no_routable_vms_returns_422(client):
     422 with a clear message rather than silently succeeding."""
     payload = {
         "vms": [
-            {"name": "ghost", "source_hostname": "ghost.corp",
-             "source_vcenter_hostname": "vc-nowhere.dha.mil"}
+            {
+                "name": "ghost",
+                "source_hostname": "ghost.corp",
+                "source_vcenter_hostname": "vc-nowhere.dha.mil",
+            }
         ],
         "vcenter_mapping": {},
     }
@@ -245,9 +275,12 @@ def test_re_upload_is_idempotent(client):
     vc = _register_vcenter(client, "vc-idem", "vc-idem.dha.mil")
     payload = {
         "vms": [
-            {"name": "vm-idem", "source_hostname": "i.corp",
-             "ip_address": "10.0.0.5",
-             "source_vcenter_hostname": "vc-idem.dha.mil"}
+            {
+                "name": "vm-idem",
+                "source_hostname": "i.corp",
+                "ip_address": "10.0.0.5",
+                "source_vcenter_hostname": "vc-idem.dha.mil",
+            }
         ],
         "vcenter_mapping": {"vc-idem.dha.mil": vc},
     }

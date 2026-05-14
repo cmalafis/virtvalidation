@@ -47,9 +47,7 @@ class BulkValidationScope(BaseModel):
 
 def _resolve_scope(db: Session, scope: BulkValidationScope) -> list[VM]:
     if scope.vm_ids:
-        return list(
-            db.scalars(select(VM).where(VM.id.in_(scope.vm_ids)).order_by(VM.id)).all()
-        )
+        return list(db.scalars(select(VM).where(VM.id.in_(scope.vm_ids)).order_by(VM.id)).all())
     stmt = select(VM).order_by(VM.id)
     if scope.source_vcenter_id is not None:
         stmt = stmt.where(VM.source_vcenter_id == scope.source_vcenter_id)
@@ -113,9 +111,7 @@ def validate_all(
 # Tier-aware bulk validation
 # ---------------------------------------------------------------------------
 @router.post("/preview-tiers")
-def preview_tiers(
-    payload: BulkValidationScope, db: Session = Depends(get_db)
-) -> dict:
+def preview_tiers(payload: BulkValidationScope, db: Session = Depends(get_db)) -> dict:
     """Estimate the LLM-call cost of a bulk validation before running.
 
     Walks each matched VM through SSH-collect + diff + classifier (no
@@ -125,12 +121,8 @@ def preview_tiers(
     """
     matched = _resolve_scope(db, payload)
     if not matched:
-        raise HTTPException(
-            status_code=422, detail="Scope matched zero VMs"
-        )
-    return preview_tier_distribution(
-        db, vm_ids=[vm.id for vm in matched], actor="preview"
-    )
+        raise HTTPException(status_code=422, detail="Scope matched zero VMs")
+    return preview_tier_distribution(db, vm_ids=[vm.id for vm in matched], actor="preview")
 
 
 @router.post("/run-bulk", status_code=202)
@@ -152,9 +144,7 @@ def run_bulk(
         raise HTTPException(status_code=422, detail="Scope matched zero VMs")
 
     # Filter out VMs without a baseline — validation requires one.
-    vm_ids_with_baselines = set(
-        db.scalars(select(BaselineSnapshot.vm_id).distinct()).all()
-    )
+    vm_ids_with_baselines = set(db.scalars(select(BaselineSnapshot.vm_id).distinct()).all())
     validatable = [vm for vm in matched if vm.id in vm_ids_with_baselines]
     skipped = [
         {"vm_id": vm.id, "reason": "no baseline captured"}
@@ -165,8 +155,7 @@ def run_bulk(
         raise HTTPException(
             status_code=422,
             detail=(
-                f"None of the {len(matched)} matched VMs have a baseline. "
-                "Run capture first."
+                f"None of the {len(matched)} matched VMs have a baseline. " "Run capture first."
             ),
         )
 

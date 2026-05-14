@@ -66,9 +66,7 @@ class VMGroup(Base):
         nullable=False,
         index=True,
     )
-    kind: Mapped[GroupKind] = mapped_column(
-        Enum(GroupKind, name="vm_group_kind"), nullable=False
-    )
+    kind: Mapped[GroupKind] = mapped_column(Enum(GroupKind, name="vm_group_kind"), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     # Audit trail for the LLM run that produced this group; helps when
@@ -92,9 +90,7 @@ class VMGroup(Base):
 
     __table_args__ = (
         # Same logical group name can only exist once per (vcenter, kind).
-        UniqueConstraint(
-            "source_vcenter_id", "kind", "name", name="uq_group_vcenter_kind_name"
-        ),
+        UniqueConstraint("source_vcenter_id", "kind", "name", name="uq_group_vcenter_kind_name"),
         Index("ix_groups_vcenter_kind", "source_vcenter_id", "kind"),
     )
 
@@ -129,9 +125,7 @@ class VMGroupMember(Base):
 
     group: Mapped[VMGroup] = relationship(back_populates="members")
 
-    __table_args__ = (
-        UniqueConstraint("group_id", "vm_id", name="uq_member_group_vm"),
-    )
+    __table_args__ = (UniqueConstraint("group_id", "vm_id", name="uq_member_group_vm"),)
 
 
 # ---------------------------------------------------------------------------
@@ -159,9 +153,7 @@ class MigrationProgram(Base):
     description: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     # vCenter scope — null means "every vCenter". Most programs scope
     # to a single vCenter (or a list of vCenters serialized to JSON).
-    source_vcenter_ids: Mapped[list[int]] = mapped_column(
-        JSONType, nullable=False, default=list
-    )
+    source_vcenter_ids: Mapped[list[int]] = mapped_column(JSONType, nullable=False, default=list)
     # Level 2 strategy output — campaigns + sequencing. Stored as JSON
     # for now; the full Campaign / Wave normalization comes with the
     # streaming-UI work.

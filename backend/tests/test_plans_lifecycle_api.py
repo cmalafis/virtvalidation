@@ -479,8 +479,9 @@ class TestSelectorFilter:
         _setup_backend(monkeypatch)
         vm_a = _enroll(client, "vm-a")
         vm_b = _enroll(client, "vm-b")
-        # Move vm_a to planned via a plan
-        plan = client.post("/api/plans", json={"vm_ids": [vm_a["id"]]}).json()
+        # Move vm_a to planned via a plan (response unused; the
+        # side-effect on the VM's lifecycle_state is what we assert).
+        client.post("/api/plans", json={"vm_ids": [vm_a["id"]]}).raise_for_status()
         # Default listing returns both
         items = client.get("/api/vms").json()["items"]
         assert len(items) == 2

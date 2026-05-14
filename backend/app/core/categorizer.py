@@ -158,9 +158,7 @@ class CategorizationTaskStore:
         self._lock = threading.RLock()
 
     def create(self, source_vcenter_id: int) -> CategorizationTask:
-        task = CategorizationTask(
-            task_id=str(uuid.uuid4()), source_vcenter_id=source_vcenter_id
-        )
+        task = CategorizationTask(task_id=str(uuid.uuid4()), source_vcenter_id=source_vcenter_id)
         with self._lock:
             self._tasks[task.task_id] = task
         return task
@@ -177,9 +175,7 @@ class CategorizationTaskStore:
             for k, v in fields.items():
                 setattr(t, k, v)
 
-    def mark_completed(
-        self, task_id: str, *, groups_created: int
-    ) -> None:
+    def mark_completed(self, task_id: str, *, groups_created: int) -> None:
         with self._lock:
             t = self._tasks.get(task_id)
             if t is None:
@@ -259,15 +255,9 @@ def categorize(
     # confusing "no VMs to categorize" return from a typo'd id.
     vcenter = db.get(VCenterSource, source_vcenter_id)
     if vcenter is None:
-        raise CategorizationError(
-            f"vCenter source {source_vcenter_id} not found"
-        )
+        raise CategorizationError(f"vCenter source {source_vcenter_id} not found")
 
-    vms = list(
-        db.scalars(
-            select(VM).where(VM.source_vcenter_id == source_vcenter_id)
-        ).all()
-    )
+    vms = list(db.scalars(select(VM).where(VM.source_vcenter_id == source_vcenter_id)).all())
     if not vms:
         # Empty inventory — return an empty result rather than crash.
         # The UI surfaces "No VMs to categorize" and prompts the
@@ -282,9 +272,9 @@ def categorize(
             select(VMGroup.id).where(VMGroup.source_vcenter_id == source_vcenter_id)
         )
     ).delete(synchronize_session=False)
-    db.query(VMGroup).filter(
-        VMGroup.source_vcenter_id == source_vcenter_id
-    ).delete(synchronize_session=False)
+    db.query(VMGroup).filter(VMGroup.source_vcenter_id == source_vcenter_id).delete(
+        synchronize_session=False
+    )
     db.flush()
 
     run_id = str(uuid.uuid4())
@@ -480,9 +470,7 @@ def run_categorization_task(
     """
     db = _db_module.SessionLocal()
     try:
-        task_store.update(
-            task_id, current_step="loading_inventory", progress_percent=5
-        )
+        task_store.update(task_id, current_step="loading_inventory", progress_percent=5)
 
         def _progress(*, batches_total: int, batches_complete: int) -> None:
             task_store.update(
@@ -493,9 +481,7 @@ def run_categorization_task(
                 # Reserve the last 10% for persistence; the LLM phase
                 # owns the 5–90% band so the bar moves while the work
                 # is actually happening.
-                progress_percent=int(
-                    5 + (85 * batches_complete / max(batches_total, 1))
-                ),
+                progress_percent=int(5 + (85 * batches_complete / max(batches_total, 1))),
             )
 
         try:
@@ -506,16 +492,12 @@ def run_categorization_task(
                 batch_size=batch_size,
             )
         except CategorizationError as e:
-            logger.warning(
-                "categorization failed for vcenter %s: %s", source_vcenter_id, e
-            )
+            logger.warning("categorization failed for vcenter %s: %s", source_vcenter_id, e)
             task_store.mark_failed(task_id, error=str(e))
             return
 
         task_store.update(task_id, current_step="persisting", progress_percent=95)
-        task_store.mark_completed(
-            task_id, groups_created=result["groups_created"]
-        )
+        task_store.mark_completed(task_id, groups_created=result["groups_created"])
         logger.info(
             "categorization task %s completed: %d groups across %d batches",
             task_id,

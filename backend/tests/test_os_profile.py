@@ -607,8 +607,18 @@ def _win_fixture_responses() -> dict[str, bytes]:
         cs.hostname_fqdn: b"\xff\xfeW\x00I\x00N\x002\x002\x00.\x00c\x00o\x00r\x00p\x00\r\x00\n\x00",
         cs.services_running: utf16(
             [
-                {"Name": "sshd", "Status": "Running", "StartType": "Automatic", "DisplayName": "OpenSSH SSH Server"},
-                {"Name": "W3SVC", "Status": "Running", "StartType": "Automatic", "DisplayName": "World Wide Web Publishing Service"},
+                {
+                    "Name": "sshd",
+                    "Status": "Running",
+                    "StartType": "Automatic",
+                    "DisplayName": "OpenSSH SSH Server",
+                },
+                {
+                    "Name": "W3SVC",
+                    "Status": "Running",
+                    "StartType": "Automatic",
+                    "DisplayName": "World Wide Web Publishing Service",
+                },
             ]
         ),
         cs.network_addr_v4: utf8(
@@ -616,7 +626,14 @@ def _win_fixture_responses() -> dict[str, bytes]:
         ),
         cs.network_addr_v6: utf8([]),
         cs.network_routes: utf8(
-            [{"DestinationPrefix": "0.0.0.0/0", "NextHop": "10.0.0.1", "InterfaceAlias": "Ethernet0", "RouteMetric": 0}]
+            [
+                {
+                    "DestinationPrefix": "0.0.0.0/0",
+                    "NextHop": "10.0.0.1",
+                    "InterfaceAlias": "Ethernet0",
+                    "RouteMetric": 0,
+                }
+            ]
         ),
         cs.resolv_conf: utf8(
             [{"InterfaceAlias": "Ethernet0", "ServerAddresses": ["10.0.0.2", "10.0.0.3"]}]
@@ -629,7 +646,14 @@ def _win_fixture_responses() -> dict[str, bytes]:
         ),
         cs.mounts: utf8(
             [
-                {"DriveLetter": "C", "FileSystemLabel": "OS", "FileSystemType": "NTFS", "Size": 64424509440, "SizeRemaining": 32212254720, "HealthStatus": "Healthy"}
+                {
+                    "DriveLetter": "C",
+                    "FileSystemLabel": "OS",
+                    "FileSystemType": "NTFS",
+                    "Size": 64424509440,
+                    "SizeRemaining": 32212254720,
+                    "HealthStatus": "Healthy",
+                }
             ]
         ),
         cs.cron_system_paths: utf8(
@@ -639,7 +663,13 @@ def _win_fixture_responses() -> dict[str, bytes]:
             ]
         ),
         cs.windows_hotfixes: utf8(
-            [{"HotFixID": "KB5036909", "Description": "Security Update", "InstalledOn": "2026-04-01"}]
+            [
+                {
+                    "HotFixID": "KB5036909",
+                    "Description": "Security Update",
+                    "InstalledOn": "2026-04-01",
+                }
+            ]
         ),
         cs.windows_ad_membership: utf8(
             {"Domain": "corp.local", "PartOfDomain": True, "DomainRole": 3}

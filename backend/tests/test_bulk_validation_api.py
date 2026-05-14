@@ -7,10 +7,7 @@ without needing Ollama.
 
 from __future__ import annotations
 
-import json
 from unittest.mock import patch
-
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +31,7 @@ def _enroll(client, name: str, *, environment: str = "prod") -> dict:
 def _seed_baseline(db_session, vm_id: int, *, services=None) -> None:
     """Persist a baseline snapshot the validation pipeline can read."""
     from app.models.vm import BaselineSnapshot
+
     payload = {
         "meta": {
             "host": "x",
@@ -70,9 +68,7 @@ def test_preview_tiers_rejects_empty_scope(client):
     assert r.status_code == 422
 
 
-def test_preview_tiers_reports_distribution_without_calling_llm(
-    client, db_session, monkeypatch
-):
+def test_preview_tiers_reports_distribution_without_calling_llm(client, db_session, monkeypatch):
     """Preview must SSH-collect + diff + classify but NEVER invoke
     the LLM. We monkeypatch the SSH collector to return a fixed
     state and assert the LLM backend never gets a chat call."""
@@ -109,9 +105,7 @@ def test_preview_tiers_reports_distribution_without_calling_llm(
 # ---------------------------------------------------------------------------
 # Bulk validation: tier-1 path
 # ---------------------------------------------------------------------------
-def test_bulk_validation_tier1_skips_llm_for_clean_migration(
-    client, db_session, monkeypatch
-):
+def test_bulk_validation_tier1_skips_llm_for_clean_migration(client, db_session, monkeypatch):
     """A VM whose current state matches its baseline should land in
     Tier 1 and complete without an LLM call. The stub backend asserts
     no chat_sync was made."""
@@ -154,9 +148,7 @@ def test_bulk_validation_tier1_skips_llm_for_clean_migration(
         mock_validate.assert_not_called()
 
 
-def test_bulk_validation_tier3_invokes_llm_and_caches(
-    client, db_session, monkeypatch
-):
+def test_bulk_validation_tier3_invokes_llm_and_caches(client, db_session, monkeypatch):
     """Ambiguous diffs route to Tier 3 → LLM. The verdict should
     persist into the cache so a second VM with the same diff hits
     the cache instead of the LLM."""
@@ -207,11 +199,16 @@ def test_bulk_validation_tier3_invokes_llm_and_caches(
     def _fake_validate(self, baseline, current_state, vm_role, max_retries=1):
         nonlocal call_count
         call_count += 1
-        return {**canned, "diff": validation_mod.compute_diff(baseline, current_state) if hasattr(validation_mod, "compute_diff") else {}, "model": "stub", "needs_manual_review": False}
+        return {
+            **canned,
+            "diff": validation_mod.compute_diff(baseline, current_state)
+            if hasattr(validation_mod, "compute_diff")
+            else {},
+            "model": "stub",
+            "needs_manual_review": False,
+        }
 
-    monkeypatch.setattr(
-        "app.core.llm.client.LLMClient.validate", _fake_validate
-    )
+    monkeypatch.setattr("app.core.llm.client.LLMClient.validate", _fake_validate)
 
     r = client.post(
         "/api/validations/run-bulk",
@@ -242,10 +239,12 @@ def test_bulk_validation_continues_on_individual_failure(client, db_session, mon
         return {
             "meta": {"os_profile": {"distro_family": "rhel-like"}},
             "services": [{"unit": "sshd.service"}],
-            "ports": [], "mounts": [],
+            "ports": [],
+            "mounts": [],
             "network": {"interfaces": {}, "routes": [], "dns": []},
             "cron": {"user_crontabs": {}, "system": []},
         }
+
     monkeypatch.setattr(validation_mod, "_collect_current_state", _selective_collect)
 
     r = client.post(

@@ -184,7 +184,8 @@ def test_load_key_info_uses_pub_sidecar_when_present(isolated_key_dir, fips_off)
 
 
 def test_load_key_info_derives_pub_from_private_when_sidecar_missing(
-    isolated_key_dir, fips_off,
+    isolated_key_dir,
+    fips_off,
 ):
     info = generate("ed25519")
     pub = Path(info.path).with_suffix(".pub")

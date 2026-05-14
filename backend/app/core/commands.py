@@ -306,17 +306,14 @@ def _windows_powershell() -> CommandSet:
             "ConvertTo-Json -Compress"
         ),
         os_release=_ps(
-            "Get-CimInstance Win32_OperatingSystem | "
-            "ConvertTo-Json -Compress -Depth 3"
+            "Get-CimInstance Win32_OperatingSystem | " "ConvertTo-Json -Compress -Depth 3"
         ),
         # uname_kernel + uname_arch are emitted from the same Win32 query
         # so we don't need three round-trips for OS detection. The
         # collector pulls them from the os_release JSON itself.
         uname_kernel="",
         uname_arch="",
-        hostname_fqdn=_ps(
-            "[System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).HostName"
-        ),
+        hostname_fqdn=_ps("[System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).HostName"),
         firewall_inspect=_ps(
             "Get-NetFirewallRule | Where-Object Enabled -eq 'True' | "
             "Select-Object DisplayName, Direction, Action, Profile | "
@@ -329,8 +326,7 @@ def _windows_powershell() -> CommandSet:
             "ConvertTo-Json -Compress"
         ),
         windows_system_info=_ps(
-            "Get-CimInstance Win32_OperatingSystem | "
-            "ConvertTo-Json -Compress -Depth 3"
+            "Get-CimInstance Win32_OperatingSystem | " "ConvertTo-Json -Compress -Depth 3"
         ),
         windows_hotfixes=_ps(
             "Get-HotFix | "

@@ -266,7 +266,12 @@ def test_delta_preview_summary_counts_match_buckets(client):
         vc["id"],
         [
             # stays — unchanged (matches enrollment defaults)
-            {"name": "stays", "source_hostname": "stays.corp.local", "role": "database", "ip_address": "10.0.0.5"},
+            {
+                "name": "stays",
+                "source_hostname": "stays.corp.local",
+                "role": "database",
+                "ip_address": "10.0.0.5",
+            },
             # new
             {"name": "fresh"},
             # 'leaves' is omitted → removed

@@ -28,12 +28,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from sqlalchemy.orm import Session
-
 from app.core import db as _db_module
 from app.core.audit import record_audit
 from app.core.capture import CaptureError, collect_and_store
-from app.core.config import settings
 from app.models.vm import VM
 
 logger = logging.getLogger(__name__)
@@ -122,9 +119,7 @@ class BulkCaptureTaskStore:
             t = self._tasks.get(task_id)
             if t is None:
                 return
-            entry = t.per_vm.get(vm_id) or VMResult(
-                vm_id=vm_id, vm_name=vm_name, status="queued"
-            )
+            entry = t.per_vm.get(vm_id) or VMResult(vm_id=vm_id, vm_name=vm_name, status="queued")
             entry.status = status  # type: ignore[assignment]
             if error is not None:
                 entry.error = error
@@ -179,12 +174,8 @@ async def _run_one(
             await _capture_in_thread(task_id, vm_id, vm_name, actor)
 
 
-async def _capture_in_thread(
-    task_id: str, vm_id: int, vm_name: str, actor: str
-) -> None:
-    task_store.set_vm_status(
-        task_id, vm_id=vm_id, vm_name=vm_name, status="capturing"
-    )
+async def _capture_in_thread(task_id: str, vm_id: int, vm_name: str, actor: str) -> None:
+    task_store.set_vm_status(task_id, vm_id=vm_id, vm_name=vm_name, status="capturing")
     started = time.monotonic()
     try:
         await asyncio.to_thread(_capture_in_sync_thread, vm_id, actor)
@@ -310,9 +301,7 @@ def run_bulk_capture(
     # Pre-populate per_vm entries so the UI sees the full list
     # immediately, not just rows that have started.
     for vm in vms:
-        task_store.set_vm_status(
-            task_id, vm_id=vm.id, vm_name=vm.name, status="queued"
-        )
+        task_store.set_vm_status(task_id, vm_id=vm.id, vm_name=vm.name, status="queued")
     try:
         asyncio.run(
             run_bulk_capture_async(
@@ -323,7 +312,7 @@ def run_bulk_capture(
                 per_vcenter_parallel=per_vcenter_parallel,
             )
         )
-    except Exception as e:  # pragma: no cover — defensive
+    except Exception:  # pragma: no cover — defensive
         logger.exception("bulk capture task %s crashed", task_id)
         task_store.finalize(task_id, status="failed")
         raise

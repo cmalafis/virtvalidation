@@ -177,9 +177,10 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
 - When you add a new function, class, API endpoint, SQLAlchemy model,
   Pydantic schema, or React component, regenerate before committing:
   `python3 scripts/generate_architecture_docs.py`
-- CI (`.github/workflows/architecture-docs.yml`) regenerates on every
-  PR and fails the build if the committed docs differ — drift is caught
-  at review time, not in production.
+- The drift-check CI workflow was removed in the CI simplification
+  (May 2026). The script is still the source of truth; CI no longer
+  enforces freshness. If you forget to regenerate, the docs go stale
+  silently — review your diff before pushing.
 - `docs/product-map.html` is hand-maintained — describes *what* the
   product does. The architecture diagram describes *how* it's built.
 

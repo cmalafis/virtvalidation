@@ -38,9 +38,7 @@ class StubBackend(LLMBackend):
         self._raise = raise_on_call
         self.calls: list[dict] = []
 
-    async def chat(
-        self, messages, model=None, temperature=0.1, max_tokens=None
-    ):
+    async def chat(self, messages, model=None, temperature=0.1, max_tokens=None):
         self.calls.append(
             {
                 "messages": messages,

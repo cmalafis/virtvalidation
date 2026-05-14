@@ -189,9 +189,7 @@ def apply_migrations(engine: Engine) -> dict[str, Any]:
         try:
             command.stamp(cfg, head)
         except Exception as e:
-            raise MigrationError(
-                f"Failed to stamp legacy database at head={head}: {e}"
-            ) from e
+            raise MigrationError(f"Failed to stamp legacy database at head={head}: {e}") from e
 
     try:
         command.upgrade(cfg, "head")

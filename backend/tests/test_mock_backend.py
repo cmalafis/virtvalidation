@@ -29,11 +29,7 @@ def test_chat_sync_returns_in_under_100ms():
     backend = MockBackend()
     # Build a 1000-VM categorization prompt — the upper end of what the
     # real orchestrator passes through the planner chunker.
-    payload = {
-        "VMs": [
-            {"vm_id": i, "name": f"vm-{i:04d}", "role": "app"} for i in range(1000)
-        ]
-    }
+    payload = {"VMs": [{"vm_id": i, "name": f"vm-{i:04d}", "role": "app"} for i in range(1000)]}
     messages = [
         {"role": "system", "content": "Level 1 categorizer"},
         {"role": "user", "content": json.dumps(payload)},

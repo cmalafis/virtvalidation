@@ -146,7 +146,11 @@ def suggest_network_mappings(
         "Produce the JSON object specified in the system prompt now."
     )
     return _call_and_parse(
-        backend, NETWORK_SYSTEM_PROMPT, user_msg, key="source_network", target_set={t["name"] for t in targets}
+        backend,
+        NETWORK_SYSTEM_PROMPT,
+        user_msg,
+        key="source_network",
+        target_set={t["name"] for t in targets},
     )
 
 
@@ -180,7 +184,11 @@ def suggest_storage_mappings(
         "Produce the JSON object specified in the system prompt now."
     )
     return _call_and_parse(
-        backend, STORAGE_SYSTEM_PROMPT, user_msg, key="source_datastore", target_set={t["name"] for t in targets}
+        backend,
+        STORAGE_SYSTEM_PROMPT,
+        user_msg,
+        key="source_datastore",
+        target_set={t["name"] for t in targets},
     )
 
 
@@ -227,9 +235,7 @@ def _call_and_parse(
         # Network and storage variants use slightly different target
         # field names; check both.
         target_field = (
-            "target_network_name"
-            if "target_network_name" in s
-            else "target_storage_class"
+            "target_network_name" if "target_network_name" in s else "target_storage_class"
         )
         target_name = s.get(target_field)
         if target_name and target_name not in target_set:

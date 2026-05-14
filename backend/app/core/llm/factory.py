@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import threading
 
-from app.core.config import Settings, settings as _module_settings
+from app.core.config import Settings
+from app.core.config import settings as _module_settings
 from app.core.llm.base import LLMBackend, LLMBackendError
 from app.core.llm.kserve_backend import KServeBackend
 from app.core.llm.mock_backend import MockBackend

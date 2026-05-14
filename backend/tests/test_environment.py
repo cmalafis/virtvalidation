@@ -21,38 +21,41 @@ from app.core.environment import (
 # ---------------------------------------------------------------------------
 # Normalization
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("raw,expected", [
-    ("production", Environment.PRODUCTION),
-    ("PRODUCTION", Environment.PRODUCTION),
-    ("Prod", Environment.PRODUCTION),
-    ("prd", Environment.PRODUCTION),
-    ("live", Environment.PRODUCTION),
-    ("development", Environment.DEVELOPMENT),
-    ("dev", Environment.DEVELOPMENT),
-    ("Dev-Server", Environment.DEVELOPMENT),
-    ("sandbox", Environment.DEVELOPMENT),
-    ("QA", Environment.TEST),
-    ("uat", Environment.TEST),
-    ("Test", Environment.TEST),
-    ("staging", Environment.STAGING),
-    ("STG", Environment.STAGING),
-    ("preprod", Environment.STAGING),
-    ("pre-prod", Environment.STAGING),
-    ("DR", Environment.DR),
-    ("disaster", Environment.DR),
-    ("disaster-recovery", Environment.DR),
-    ("Failover", Environment.DR),
-    ("Infra", Environment.INFRASTRUCTURE),
-    ("INFRASTRUCTURE", Environment.INFRASTRUCTURE),
-    ("DB", Environment.DB_ONLY),
-    ("Database", Environment.DB_ONLY),
-    ("non-prod", Environment.NON_PROD),
-    ("NonProd", Environment.NON_PROD),
-    ("", Environment.UNKNOWN),
-    ("   ", Environment.UNKNOWN),
-    ("randomString", Environment.UNKNOWN),
-    (None, Environment.UNKNOWN),
-])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("production", Environment.PRODUCTION),
+        ("PRODUCTION", Environment.PRODUCTION),
+        ("Prod", Environment.PRODUCTION),
+        ("prd", Environment.PRODUCTION),
+        ("live", Environment.PRODUCTION),
+        ("development", Environment.DEVELOPMENT),
+        ("dev", Environment.DEVELOPMENT),
+        ("Dev-Server", Environment.DEVELOPMENT),
+        ("sandbox", Environment.DEVELOPMENT),
+        ("QA", Environment.TEST),
+        ("uat", Environment.TEST),
+        ("Test", Environment.TEST),
+        ("staging", Environment.STAGING),
+        ("STG", Environment.STAGING),
+        ("preprod", Environment.STAGING),
+        ("pre-prod", Environment.STAGING),
+        ("DR", Environment.DR),
+        ("disaster", Environment.DR),
+        ("disaster-recovery", Environment.DR),
+        ("Failover", Environment.DR),
+        ("Infra", Environment.INFRASTRUCTURE),
+        ("INFRASTRUCTURE", Environment.INFRASTRUCTURE),
+        ("DB", Environment.DB_ONLY),
+        ("Database", Environment.DB_ONLY),
+        ("non-prod", Environment.NON_PROD),
+        ("NonProd", Environment.NON_PROD),
+        ("", Environment.UNKNOWN),
+        ("   ", Environment.UNKNOWN),
+        ("randomString", Environment.UNKNOWN),
+        (None, Environment.UNKNOWN),
+    ],
+)
 def test_normalize_handles_field_variants(raw, expected):
     assert normalize(raw) == expected
 
@@ -110,14 +113,17 @@ def test_custom_attribute_with_unknown_value_falls_through():
 # ---------------------------------------------------------------------------
 # Detection cascade — Tier 3 (folder)
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("folder,expected", [
-    ("/prod/ehr-pro", Environment.PRODUCTION),
-    ("/Dev/Sandbox", Environment.DEVELOPMENT),
-    ("/qa/uat-1", Environment.TEST),
-    ("/dr/replica", Environment.DR),
-    ("/infrastructure/ad-dc", Environment.INFRASTRUCTURE),
-    ("/staging/prod-validation", Environment.STAGING),
-])
+@pytest.mark.parametrize(
+    "folder,expected",
+    [
+        ("/prod/ehr-pro", Environment.PRODUCTION),
+        ("/Dev/Sandbox", Environment.DEVELOPMENT),
+        ("/qa/uat-1", Environment.TEST),
+        ("/dr/replica", Environment.DR),
+        ("/infrastructure/ad-dc", Environment.INFRASTRUCTURE),
+        ("/staging/prod-validation", Environment.STAGING),
+    ],
+)
 def test_folder_path_signal(folder, expected):
     result = detect_environment(folder_path=folder)
     assert result.environment == expected
@@ -154,14 +160,17 @@ def test_cluster_loses_to_folder():
 # ---------------------------------------------------------------------------
 # Detection cascade — Tier 5 (name prefix)
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("name,expected", [
-    ("prod-web-01", Environment.PRODUCTION),
-    ("dev-server-01", Environment.DEVELOPMENT),
-    ("test-runner-1", Environment.TEST),
-    ("stg-app-01", Environment.STAGING),
-    ("dr-replica-01", Environment.DR),
-    ("infra-shared-01", Environment.INFRASTRUCTURE),
-])
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("prod-web-01", Environment.PRODUCTION),
+        ("dev-server-01", Environment.DEVELOPMENT),
+        ("test-runner-1", Environment.TEST),
+        ("stg-app-01", Environment.STAGING),
+        ("dr-replica-01", Environment.DR),
+        ("infra-shared-01", Environment.INFRASTRUCTURE),
+    ],
+)
 def test_name_prefix_signal(name, expected):
     result = detect_environment(name=name)
     assert result.environment == expected
@@ -172,13 +181,16 @@ def test_name_prefix_signal(name, expected):
 # ---------------------------------------------------------------------------
 # Detection cascade — Tier 6 (DB heuristic)
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("name", [
-    "postgres-replica-01",
-    "mysql-cluster",
-    "mongodb-shard",
-    "oracle-prod-db",
-    "redis-cache-1",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "postgres-replica-01",
+        "mysql-cluster",
+        "mongodb-shard",
+        "oracle-prod-db",
+        "redis-cache-1",
+    ],
+)
 def test_db_heuristic_when_no_other_signal(name):
     result = detect_environment(name=name)
     assert result.environment == Environment.DB_ONLY

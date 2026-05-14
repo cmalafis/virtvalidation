@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
 import re
 import shlex
@@ -22,8 +23,6 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Literal, Optional
-
-import json
 
 import paramiko
 
@@ -81,9 +80,7 @@ def load_private_key(path: Path) -> paramiko.PKey:
         except paramiko.SSHException as e:
             last_err = e
             continue
-    raise SSHCollectionError(
-        f"Failed to load SSH key at {path} as Ed25519/RSA/ECDSA: {last_err}"
-    )
+    raise SSHCollectionError(f"Failed to load SSH key at {path} as Ed25519/RSA/ECDSA: {last_err}")
 
 
 def _key_size_bits(key: paramiko.PKey) -> int | None:
@@ -609,9 +606,7 @@ class SSHCollector:
             "ad_membership": self._collect_windows_ad_membership(client, cs),
         }
 
-    def _collect_windows_services(
-        self, client: paramiko.SSHClient, cs: CommandSet
-    ) -> list[dict]:
+    def _collect_windows_services(self, client: paramiko.SSHClient, cs: CommandSet) -> list[dict]:
         body = self._run_json(client, cs.services_running) or []
         if isinstance(body, dict):
             body = [body]
@@ -639,9 +634,7 @@ class SSHCollector:
             )
         return services
 
-    def _collect_windows_network(
-        self, client: paramiko.SSHClient, cs: CommandSet
-    ) -> dict:
+    def _collect_windows_network(self, client: paramiko.SSHClient, cs: CommandSet) -> dict:
         v4 = self._run_json(client, cs.network_addr_v4) or []
         v6 = self._run_json(client, cs.network_addr_v6) or []
         if isinstance(v4, dict):
@@ -697,9 +690,7 @@ class SSHCollector:
                     dns.append(s)
         return {"interfaces": interfaces, "routes": routes, "dns": dns}
 
-    def _collect_windows_ports(
-        self, client: paramiko.SSHClient, cs: CommandSet
-    ) -> list[dict]:
+    def _collect_windows_ports(self, client: paramiko.SSHClient, cs: CommandSet) -> list[dict]:
         body = self._run_json(client, cs.listening_ports) or []
         if isinstance(body, dict):
             body = [body]
@@ -724,9 +715,7 @@ class SSHCollector:
             )
         return ports
 
-    def _collect_windows_volumes(
-        self, client: paramiko.SSHClient, cs: CommandSet
-    ) -> list[dict]:
+    def _collect_windows_volumes(self, client: paramiko.SSHClient, cs: CommandSet) -> list[dict]:
         body = self._run_json(client, cs.mounts) or []
         if isinstance(body, dict):
             body = [body]
@@ -752,9 +741,7 @@ class SSHCollector:
             mounts.append(entry)
         return mounts
 
-    def _collect_windows_scheduled_tasks(
-        self, client: paramiko.SSHClient, cs: CommandSet
-    ) -> dict:
+    def _collect_windows_scheduled_tasks(self, client: paramiko.SSHClient, cs: CommandSet) -> dict:
         """Return scheduled tasks under the system_entries key so the
         existing diff engine compares them the same way it compares
         ``/etc/cron.d/*`` entries."""
@@ -773,14 +760,11 @@ class SSHCollector:
                 continue
             grouped.setdefault(path, []).append(name)
         system_entries = [
-            {"path": path, "entries": sorted(entries)}
-            for path, entries in sorted(grouped.items())
+            {"path": path, "entries": sorted(entries)} for path, entries in sorted(grouped.items())
         ]
         return {"user_crontabs": {}, "system": system_entries}
 
-    def _collect_windows_hotfixes(
-        self, client: paramiko.SSHClient, cs: CommandSet
-    ) -> list[dict]:
+    def _collect_windows_hotfixes(self, client: paramiko.SSHClient, cs: CommandSet) -> list[dict]:
         if not cs.windows_hotfixes:
             return []
         body = self._run_json(client, cs.windows_hotfixes) or []
@@ -805,9 +789,7 @@ class SSHCollector:
             )
         return out
 
-    def _collect_windows_ad_membership(
-        self, client: paramiko.SSHClient, cs: CommandSet
-    ) -> dict:
+    def _collect_windows_ad_membership(self, client: paramiko.SSHClient, cs: CommandSet) -> dict:
         if not cs.windows_ad_membership:
             return {}
         body = self._run_json(client, cs.windows_ad_membership) or {}

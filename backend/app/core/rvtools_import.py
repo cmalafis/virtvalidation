@@ -117,9 +117,7 @@ def run_rvtools_import(
     summary = RVToolsImportSummary()
     now = datetime.now(timezone.utc)
 
-    existing = list(
-        db.scalars(select(VM).where(VM.source_vcenter_id == vcenter_id)).all()
-    )
+    existing = list(db.scalars(select(VM).where(VM.source_vcenter_id == vcenter_id)).all())
     by_name = {vm.name: vm for vm in existing}
     seen_payload_names: set[str] = set()
 
