@@ -307,6 +307,8 @@ class MechanicalWaveAssigner:
                     role=group.key.role,
                     state=group.key.state,
                     discriminator=f"{group.key.discriminator}/batch-{batch_num}",
+                    environment=group.key.environment,
+                    target_cluster_id=group.key.target_cluster_id,
                 ),
                 vm_ids=batch_ids,
                 shared_attributes=dict(group.shared_attributes),
@@ -440,17 +442,18 @@ class MechanicalWaveAssigner:
         while candidate <= max_waves:
             existing = waves.get(candidate)
             # Partition coherence: each wave emits exactly one MTV
-            # ``Plan`` CR, which can carry only one source provider
-            # + one target namespace. The preclassifier already keys
-            # groups by ``(vcenter_id, target_namespace)``, so we
-            # just refuse to place this group into a non-empty wave
-            # whose first group disagrees on either dimension. A
-            # fresh wave (no ``existing`` yet) seeds whichever
-            # partition this group declares.
+            # ``Plan`` CR, which can carry only one source provider +
+            # one destination provider + one target namespace. The
+            # preclassifier keys groups by ``(vcenter_id,
+            # target_cluster_id, target_namespace)``, so we refuse to
+            # place this group into a non-empty wave whose first group
+            # disagrees on any of the three. A fresh wave seeds
+            # whichever partition this group declares.
             if existing and existing.groups:
                 seed_key = existing.groups[0].key
                 if (
                     seed_key.vcenter_id != group.key.vcenter_id
+                    or seed_key.target_cluster_id != group.key.target_cluster_id
                     or seed_key.target_namespace != group.key.target_namespace
                 ):
                     candidate += 1

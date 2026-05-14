@@ -44,6 +44,7 @@ from app.schemas.plan import (
     PlanningStrategyCreate,
     PlanningStrategyRead,
     PlanningStrategyUpdate,
+    PlanPreviewResponse,
     PlanRead,
     PreviewGroupsResponse,
 )
@@ -76,7 +77,62 @@ def _auto_resolve_mappings_for_vms(db: Session, vms: list[VM]) -> list[ResourceM
     return list(seen.values())
 
 
-@router.post("", response_model=PlanRead, status_code=status.HTTP_202_ACCEPTED)
+def _partition_vms_for_plans(vms: list[VM], db: Session) -> tuple[list[tuple], list[VM]]:
+    """Partition selected VMs by (vcenter, cluster, namespace) using
+    the target resolver. Returns ``(partitions, unresolvable_vms)``
+    where ``partitions`` is a list of
+    ``((vc_id, cluster_id, namespace), [VM])`` and ``unresolvable``
+    is every VM whose resolution didn't yield a cluster + namespace.
+    """
+    resolutions = resolve_vms_iter(vms, db)
+    by_key: dict[tuple, list[VM]] = {}
+    unresolvable: list[VM] = []
+    for vm in vms:
+        r = resolutions.get(vm.id)
+        if r is None or r.cluster_id is None or not r.namespace:
+            unresolvable.append(vm)
+            continue
+        key = (vm.source_vcenter_id, r.cluster_id, r.namespace)
+        by_key.setdefault(key, []).append(vm)
+    return list(by_key.items()), unresolvable
+
+
+def _slug_for_plan_name(value: str, max_len: int = 63) -> str:
+    """RFC1123-safe lowercase slug. Falls back to ``plan`` when empty.
+
+    Used to compose multi-partition plan names: the user's chosen base
+    name + vcenter / cluster / namespace suffixes, joined with ``-``,
+    each segment slugified independently then concatenated and
+    truncated to max_len.
+    """
+    out: list[str] = []
+    last_dash = False
+    for ch in value.lower():
+        if ch.isalnum():
+            out.append(ch)
+            last_dash = False
+        elif not last_dash and out:
+            out.append("-")
+            last_dash = True
+    slug = "".join(out).strip("-")
+    return (slug or "plan")[:max_len]
+
+
+def _compose_plan_name(
+    base: str, vcenter_name: str | None, cluster_name: str | None, namespace: str | None
+) -> str:
+    parts = [base]
+    for s in (vcenter_name, cluster_name, namespace):
+        if s:
+            parts.append(s)
+    return _slug_for_plan_name("-".join(parts))
+
+
+@router.post(
+    "",
+    response_model=PlanRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def create_plan(
     payload: PlanCreate,
     background_tasks: BackgroundTasks,
@@ -84,27 +140,19 @@ def create_plan(
 ) -> dict:
     """Kick off async migration plan generation.
 
-    Returns 202 within ~1 second with the plan row in ``status=pending``.
-    The actual work — preclassification, LLM rationale, wave assembly —
-    runs in a FastAPI BackgroundTask that writes ``status`` /
-    ``progress_message`` / ``progress_percent`` to the plan row as it
-    advances. The frontend polls ``GET /api/plans/{id}`` every 2s and
-    transitions the modal through the visible status states.
+    Selections are fanned out by ``(source_vcenter_id,
+    target_cluster_id, target_namespace)`` partition — each partition
+    becomes one MigrationPlan row with its own background generation
+    task and its own MTV CR set at YAML-export time. The response
+    surfaces the first plan's PlanRead with a ``plans`` list of all
+    fanned-out plans so callers see the full set.
 
     On LLM failure the verbatim typed-exception message lands in
-    ``Plan.error_message`` — operators see "Cannot reach KServe at
-    http://wrong.endpoint", not a generic "Plan generation failed".
-
-    Fail-fast pre-flight: missing vm_ids 404 immediately so the
-    operator doesn't wait for the background task to surface the
-    same answer.
+    each plan's ``error_message``.
     """
     unique_ids = list(dict.fromkeys(payload.vm_ids))
     if not unique_ids:
         raise HTTPException(status_code=422, detail="vm_ids must contain at least one VM")
-    # Selection cap. Architectural rule, not just a soft hint — the
-    # operator workflow is many small auditable plans, not one giant
-    # black-box plan. See settings.max_vms_per_plan.
     max_vms = _app_settings.max_vms_per_plan
     if len(unique_ids) > max_vms:
         raise HTTPException(
@@ -120,13 +168,27 @@ def create_plan(
     if missing:
         raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
 
-    # Resolve mapping list. Two branches:
-    #   1. caller provides ``mapping_ids`` (incl. empty) → use verbatim.
-    #   2. omitted → auto-resolve via the per-VM target resolver
-    #      (target_cluster_id_override OR sole mapping per vCenter).
-    # Stage 0 then validates per-VM against whichever mapping covers
-    # the VM's (source vCenter, target cluster) pair.
-    mappings: list[ResourceMapping]
+    # Partition by (vcenter, cluster, namespace). Unresolvable VMs
+    # surface immediately as a 422 so the operator fixes the
+    # mapping / override before the background tasks fire.
+    partitions, unresolvable = _partition_vms_for_plans(vms, db)
+    if unresolvable:
+        names = [vm.name for vm in unresolvable[:10]]
+        suffix = "" if len(unresolvable) <= 10 else f" (+{len(unresolvable) - 10} more)"
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{len(unresolvable)} VM(s) cannot be resolved to a target cluster + namespace: "
+                f"{', '.join(names)}{suffix}. Set target_cluster_id_override / "
+                "target_namespace_override on the affected VMs or add a ResourceMapping."
+            ),
+        )
+    if not partitions:
+        raise HTTPException(status_code=422, detail="No partitions resolved from selection.")
+
+    # If the caller supplied an explicit mapping_ids list, use it
+    # verbatim (CLI / scripts). Otherwise auto-resolve per partition.
+    explicit_mapping_ids: list[int] | None = None
     if payload.mapping_ids is not None:
         if payload.mapping_ids:
             rows = list(
@@ -141,65 +203,203 @@ def create_plan(
                     status_code=404,
                     detail=f"Resource mapping(s) not found: {missing}",
                 )
-            mappings = rows
+        explicit_mapping_ids = list(payload.mapping_ids)
+
+    # Pre-build name metadata for slug composition. One DB hit each;
+    # both tables are small.
+    from app.models.target import OCPTarget
+    from app.models.vcenter import VCenterSource
+
+    vcenters = {v.id: v for v in db.scalars(select(VCenterSource)).all()}
+    targets = {t.id: t for t in db.scalars(select(OCPTarget)).all()}
+
+    # Build the plan rows in one pass so we can transition all VMs to
+    # ``planned`` in a single atomic call afterward.
+    created_plans: list[MigrationPlan] = []
+    bg_specs: list[tuple] = []
+    for (vc_id, cluster_id, namespace), p_vms in partitions:
+        p_vm_ids = [vm.id for vm in p_vms]
+        # Determine per-partition mapping ids: explicit list filtered
+        # to mappings covering this (vcenter, cluster); else auto.
+        if explicit_mapping_ids is not None:
+            mapping_rows = [
+                m
+                for m in db.scalars(
+                    select(ResourceMapping).where(
+                        ResourceMapping.id.in_(explicit_mapping_ids),
+                        ResourceMapping.vcenter_source_id == vc_id,
+                        ResourceMapping.ocp_target_id == cluster_id,
+                    )
+                ).all()
+            ]
         else:
-            mappings = []
-    else:
-        mappings = _auto_resolve_mappings_for_vms(db, vms)
+            mapping_rows = list(
+                db.scalars(
+                    select(ResourceMapping).where(
+                        ResourceMapping.vcenter_source_id == vc_id,
+                        ResourceMapping.ocp_target_id == cluster_id,
+                    )
+                ).all()
+            )
 
-    mapping_ids_used = [m.id for m in mappings]
+        # Stage 0 — pre-flight against this partition's mapping(s).
+        coverage = validate_plan_inputs(p_vms, mapping_rows)
+        if not coverage.ok:
+            raise HTTPException(status_code=422, detail=coverage.render())
 
-    coverage = validate_plan_inputs(vms, mappings)
-    if not coverage.ok:
-        raise HTTPException(status_code=422, detail=coverage.render())
+        # Compose a unique-per-partition plan name when fanning out.
+        # Single-partition selections keep the user-supplied name
+        # verbatim so the simple case looks unchanged.
+        if len(partitions) == 1:
+            plan_name = payload.name
+        else:
+            vc_name = vcenters.get(vc_id).name if vcenters.get(vc_id) else None
+            cluster_name = targets.get(cluster_id).name if targets.get(cluster_id) else None
+            plan_name = _compose_plan_name(payload.name, vc_name, cluster_name, namespace)
 
-    plan = MigrationPlan(
-        name=payload.name,
-        vm_ids=unique_ids,
-        waves=[],
-        # ``model`` is non-null on the column; the planner overwrites it
-        # when it completes. Empty string is the sentinel for "not yet
-        # generated".
-        model="",
-        mapping_ids=mapping_ids_used,
-        status="pending",
-        progress_message="Queued",
-        progress_percent=0,
-        started_at=datetime.now(timezone.utc),
-    )
-    db.add(plan)
-    db.flush()  # need plan.id for the lifecycle audit row
+        plan = MigrationPlan(
+            name=plan_name,
+            vm_ids=p_vm_ids,
+            waves=[],
+            model="",
+            mapping_ids=[m.id for m in mapping_rows],
+            status="pending",
+            progress_message="Queued",
+            progress_percent=0,
+            started_at=datetime.now(timezone.utc),
+        )
+        db.add(plan)
+        db.flush()  # need plan.id before the lifecycle transition + bg task
+        created_plans.append(plan)
+        bg_specs.append((plan.id, p_vm_ids))
 
-    # Lifecycle precondition: every selected VM must be ``available``.
-    # The lifecycle service raises if any VM is already in a plan; that
-    # surfaces as a 422 so the operator sees exactly which VMs blocked
-    # the request.
+    # Atomic lifecycle transition for every selected VM. If any one
+    # VM is already in another plan, the whole call fails and no
+    # background tasks fire.
     try:
-        transition_to_planned(unique_ids, plan.id, db)
+        transition_to_planned(unique_ids, created_plans[0].id, db)
     except LifecycleTransitionError as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     db.commit()
-    db.refresh(plan)
+    for plan in created_plans:
+        db.refresh(plan)
 
-    background_tasks.add_task(
-        run_simple_plan_generation,
-        plan.id,
-        vm_ids=unique_ids,
-        ha_strategy=payload.ha_strategy,
-        preclassification_enabled=payload.preclassification_enabled,
-    )
+    for plan_id, p_vm_ids in bg_specs:
+        background_tasks.add_task(
+            run_simple_plan_generation,
+            plan_id,
+            vm_ids=p_vm_ids,
+            ha_strategy=payload.ha_strategy,
+            preclassification_enabled=payload.preclassification_enabled,
+        )
 
-    body = PlanRead.model_validate(plan).model_dump(mode="json")
-    # Legacy fields the dashboard's old success toast reads. They stay
-    # empty until the background task completes; the frontend's poll
-    # loop replaces the row with the completed version.
+    # Response: the first plan's PlanRead at the top level (legacy
+    # callers read id/status/etc directly) PLUS a ``plans`` list with
+    # every fanned-out plan so the wizard can poll all of them.
+    first = created_plans[0]
+    body = PlanRead.model_validate(first).model_dump(mode="json")
     body["groups"] = []
     body["groups_formed"] = 0
     body["method"] = ""
     body["attempts"] = 0
+    body["plans"] = [PlanRead.model_validate(p).model_dump(mode="json") for p in created_plans]
+    body["plan_count"] = len(created_plans)
     return body
+
+
+@router.post("/preview", response_model=PlanPreviewResponse)
+def preview_plan_partitions(payload: PlanCreate, db: Session = Depends(get_db)) -> dict:
+    """Show how the selection will fan out into Plan CRs without
+    creating any plan rows. Each entry corresponds to one
+    ``(source_vcenter, target_cluster, target_namespace)`` partition
+    POST /api/plans would generate.
+
+    Estimated waves is a ceiling: ``ceil(vm_count / max_vms_per_wave)``;
+    actual wave count depends on the mechanical assigner's pack +
+    HA-family split + concurrency analysis, which we don't run here
+    to keep /preview cheap (no LLM calls, no DB writes).
+    """
+    from app.core.target_resolution import resolve_vms_iter as _resolve
+    from app.core.wave_skeleton import MAX_VMS_PER_WAVE
+    from app.models.target import OCPTarget
+    from app.models.vcenter import VCenterSource
+
+    unique_ids = list(dict.fromkeys(payload.vm_ids))
+    if not unique_ids:
+        raise HTTPException(status_code=422, detail="vm_ids must contain at least one VM")
+    vms = list(db.scalars(select(VM).where(VM.id.in_(unique_ids))).all())
+    known_ids = {v.id for v in vms}
+    missing = [vid for vid in unique_ids if vid not in known_ids]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
+
+    resolutions = _resolve(vms, db)
+    vcenters = {v.id: v for v in db.scalars(select(VCenterSource)).all()}
+    targets = {t.id: t for t in db.scalars(select(OCPTarget)).all()}
+    mappings = list(db.scalars(select(ResourceMapping)).all())
+    mapping_by_pair = {(m.vcenter_source_id, m.ocp_target_id): m for m in mappings}
+
+    by_key: dict[tuple, dict] = {}
+    unresolved: list[dict] = []
+    for vm in vms:
+        r = resolutions.get(vm.id)
+        if r is None or r.cluster_id is None or not r.namespace:
+            unresolved.append(
+                {
+                    "vm_id": vm.id,
+                    "vm_name": vm.name,
+                    "reasons": list(r.reasons) if r is not None else ["resolution unavailable"],
+                }
+            )
+            continue
+        key = (vm.source_vcenter_id, r.cluster_id, r.namespace)
+        entry = by_key.get(key)
+        if entry is None:
+            mapping = mapping_by_pair.get((vm.source_vcenter_id, r.cluster_id))
+            entry = {
+                "source_vcenter_id": vm.source_vcenter_id,
+                "source_vcenter_name": (
+                    vcenters[vm.source_vcenter_id].name
+                    if vm.source_vcenter_id in vcenters
+                    else None
+                ),
+                "target_cluster_id": r.cluster_id,
+                "target_cluster_name": (
+                    targets[r.cluster_id].name if r.cluster_id in targets else None
+                ),
+                "target_namespace": r.namespace,
+                "vm_count": 0,
+                "estimated_waves": 0,
+                "mapping_id": mapping.id if mapping is not None else None,
+                "mapping_name": mapping.name if mapping is not None else None,
+                "network_targets": [],
+                "storage_targets": [],
+            }
+            by_key[key] = entry
+        entry["vm_count"] += 1
+        for n in r.networks:
+            if n.target_network_name and n.target_network_name not in entry["network_targets"]:
+                entry["network_targets"].append(n.target_network_name)
+        for s in r.storage:
+            if (
+                s.target_storage_class_name
+                and s.target_storage_class_name not in entry["storage_targets"]
+            ):
+                entry["storage_targets"].append(s.target_storage_class_name)
+
+    # Compute estimated_waves now that vm_count is finalized.
+    for entry in by_key.values():
+        entry["estimated_waves"] = (entry["vm_count"] + MAX_VMS_PER_WAVE - 1) // MAX_VMS_PER_WAVE
+
+    return {
+        "total_vms": len(vms),
+        "resolvable": sum(g["vm_count"] for g in by_key.values()),
+        "unresolvable": len(unresolved),
+        "groups": list(by_key.values()),
+        "unresolved": unresolved,
+    }
 
 
 @router.post("/preview-groups", response_model=PreviewGroupsResponse)

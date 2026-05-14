@@ -102,6 +102,149 @@ class TestSelectionCap:
         assert r.status_code == 422
         assert "max 3" in r.json()["detail"]
 
+    def test_default_cap_is_1000(self, monkeypatch):
+        # Importing here so the test doesn't pin the value at module load
+        # time — the cap is a settings attribute and can be overridden
+        # via env var per-deployment.
+        from app.core.config import settings as app_settings
+
+        assert app_settings.max_vms_per_plan == 1000
+
+
+class TestMultiPlanFanOut:
+    def _seed_two_clusters(self, client):
+        """vCenter A + two OCP target clusters + a mapping per pair, each
+        covering vlan-100/tier1 with a single-namespace strategy. Returns
+        (vc_id, cluster_a_id, cluster_b_id)."""
+        vc = client.post(
+            "/api/sources/vcenters",
+            json={"name": "vc-multi", "hostname": "vc-multi.example"},
+        ).json()
+        a = client.post(
+            "/api/sources/targets",
+            json={"name": "ocp-multi-a", "api_endpoint": "https://ocp-a.example"},
+        ).json()
+        b = client.post(
+            "/api/sources/targets",
+            json={"name": "ocp-multi-b", "api_endpoint": "https://ocp-b.example"},
+        ).json()
+        for tgt, ns in ((a, "prod-a"), (b, "prod-b")):
+            client.post(
+                "/api/mappings",
+                json={
+                    "name": f"map-{tgt['name']}",
+                    "vcenter_source_id": vc["id"],
+                    "ocp_target_id": tgt["id"],
+                    "network_mappings": [
+                        {
+                            "source_network": "vlan-100",
+                            "target_network_name": "vlan-100-nad",
+                            "target_network_type": "nad",
+                            "target_namespace": "openshift-multus",
+                        }
+                    ],
+                    "storage_mappings": [
+                        {"source_datastore": "tier1", "target_storage_class": "ocs-rbd"}
+                    ],
+                    "namespace_mappings": [{"criteria": "default", "target_namespace": ns}],
+                },
+            ).raise_for_status()
+        return vc["id"], a["id"], b["id"]
+
+    def test_post_plans_fans_out_per_cluster(self, client, monkeypatch):
+        _setup_backend(monkeypatch)
+        vc_id, cluster_a, cluster_b = self._seed_two_clusters(client)
+        ids = []
+        for i in range(1, 4):
+            ids.append(
+                client.post(
+                    "/api/vms",
+                    json={
+                        "name": f"vm-a-{i:02d}",
+                        "source_hostname": f"vm-a-{i:02d}.local",
+                        "source_vcenter_id": vc_id,
+                        "target_cluster_id_override": cluster_a,
+                        "vsphere_networks": ["vlan-100"],
+                        "vsphere_datastores": ["tier1"],
+                    },
+                ).json()["id"]
+            )
+        for i in range(1, 3):
+            ids.append(
+                client.post(
+                    "/api/vms",
+                    json={
+                        "name": f"vm-b-{i:02d}",
+                        "source_hostname": f"vm-b-{i:02d}.local",
+                        "source_vcenter_id": vc_id,
+                        "target_cluster_id_override": cluster_b,
+                        "vsphere_networks": ["vlan-100"],
+                        "vsphere_datastores": ["tier1"],
+                    },
+                ).json()["id"]
+            )
+
+        r = client.post("/api/plans", json={"name": "Q3-mc", "vm_ids": ids})
+        assert r.status_code == 202, r.text
+        body = r.json()
+        assert body["plan_count"] == 2, body
+        assert len(body["plans"]) == 2
+        names = sorted(p["name"] for p in body["plans"])
+        assert all("ocp-multi-a" in n or "ocp-multi-b" in n for n in names)
+        # All five VMs accounted for across the two plan rows.
+        all_vm_ids = sorted(vid for p in body["plans"] for vid in p["vm_ids"])
+        assert all_vm_ids == sorted(ids)
+
+    def test_post_plans_preview_returns_partition_groups(self, client, monkeypatch):
+        _setup_backend(monkeypatch)
+        vc_id, cluster_a, cluster_b = self._seed_two_clusters(client)
+        ids = []
+        for cluster_id, prefix in ((cluster_a, "a"), (cluster_b, "b")):
+            for i in range(1, 4):
+                ids.append(
+                    client.post(
+                        "/api/vms",
+                        json={
+                            "name": f"vm-{prefix}-{i:02d}",
+                            "source_hostname": f"vm-{prefix}-{i:02d}.local",
+                            "source_vcenter_id": vc_id,
+                            "target_cluster_id_override": cluster_id,
+                            "vsphere_networks": ["vlan-100"],
+                            "vsphere_datastores": ["tier1"],
+                        },
+                    ).json()["id"]
+                )
+        r = client.post("/api/plans/preview", json={"vm_ids": ids})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["total_vms"] == 6
+        assert body["resolvable"] == 6
+        assert body["unresolvable"] == 0
+        assert len(body["groups"]) == 2
+        for g in body["groups"]:
+            assert g["vm_count"] == 3
+            assert "vlan-100-nad" in g["network_targets"]
+            assert "ocs-rbd" in g["storage_targets"]
+
+    def test_post_plans_unresolvable_returns_422(self, client, monkeypatch):
+        _setup_backend(monkeypatch)
+        # No mapping; the VM resolves to no cluster.
+        vc = client.post(
+            "/api/sources/vcenters",
+            json={"name": "vc-bare", "hostname": "vc-bare.example"},
+        ).json()
+        vm = client.post(
+            "/api/vms",
+            json={
+                "name": "vm-bare",
+                "source_hostname": "vm-bare.local",
+                "source_vcenter_id": vc["id"],
+            },
+        ).json()
+        r = client.post("/api/plans", json={"vm_ids": [vm["id"]]})
+        assert r.status_code == 422, r.text
+        assert "cannot be resolved" in r.json()["detail"]
+
     def test_exactly_at_cap_succeeds(self, client, monkeypatch):
         _setup_backend(monkeypatch)
         monkeypatch.setattr("app.core.config.settings.max_vms_per_plan", 3)

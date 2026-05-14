@@ -248,6 +248,7 @@ def split_overconcentrated_families(
                 state=g.key.state,
                 discriminator=f"{g.key.discriminator}/family-split-{n}",
                 environment=g.key.environment,
+                target_cluster_id=g.key.target_cluster_id,
             )
             ha_subset = [m for m in g.ha_members if m.vm_id in set(member_ids)]
             shared_attrs = {k: list(v) for k, v in g.shared_attributes.items()}

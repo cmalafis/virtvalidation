@@ -59,8 +59,13 @@ class GroupKey:
     ``environment`` is the partition dimension added in the
     post-N refactor — production VMs can never share a group with
     development or DR VMs, even when sharing every other dimension.
-    Default ``"unknown"`` keeps the field optional for callers that
-    construct a key directly without env context.
+
+    ``target_cluster_id`` joins the partition tuple under the
+    multi-cluster target architecture so groups never span clusters
+    (MTV's NetworkMap/StorageMap CRs are scoped per
+    (source provider, destination provider) pair). Default ``None``
+    keeps the field optional for callers that construct a key
+    directly without cluster context.
     """
 
     vcenter_id: int | None
@@ -69,16 +74,18 @@ class GroupKey:
     state: str
     discriminator: str  # network, datastore, app_hint, or name_prefix bucket
     environment: str = "unknown"
+    target_cluster_id: int | None = None
 
     def as_string(self) -> str:
         # Stable string form for the API + audit log. Order is fixed
         # so reordering the dataclass fields doesn't change the
-        # rendered id. ``env`` slot keeps prod/dev/dr groups visibly
-        # distinct in audit traces even when their other dimensions
-        # match.
+        # rendered id. ``env`` and ``tc`` slots keep prod/dev/dr and
+        # cluster-A/cluster-B groups visibly distinct in audit traces
+        # even when their other dimensions match.
         vc = f"vc{self.vcenter_id}" if self.vcenter_id is not None else "vc?"
         tn = self.target_namespace or "default"
-        return f"{vc}/{tn}/{self.environment}/{self.role}/{self.state}/{self.discriminator}"
+        tc = f"tc{self.target_cluster_id}" if self.target_cluster_id is not None else "tc?"
+        return f"{vc}/{tc}/{tn}/{self.environment}/{self.role}/{self.state}/{self.discriminator}"
 
 
 @dataclass
@@ -565,6 +572,7 @@ class PreClassifier:
                 state=group.estimated_state,
                 discriminator=f"{group.key.discriminator}/ha:{m.ha_role}:{m.vm_name}",
                 environment=group.key.environment,
+                target_cluster_id=group.key.target_cluster_id,
             )
             micro.append(
                 VMGroup(
@@ -617,8 +625,16 @@ class PreClassifier:
             # surfaces them in one batch the operator can label
             # before re-running. We don't merge UNKNOWN into prod or
             # dev — that would obscure the missing-label signal.
+            #
+            # target_cluster_id joins the tuple under the multi-cluster
+            # target architecture: a single source vCenter can fan out
+            # to multiple OCP clusters (cluster-per-env / per-BU /
+            # per-region). The MTV CRs are scoped per (source provider,
+            # destination provider) pair, so groups must never span
+            # clusters either.
             primary_key = (
                 vm.source_vcenter_id,
+                vm.target_cluster_id_override,
                 (vm.target_namespace_override or "").strip(),
                 env.value,
             )
@@ -676,13 +692,13 @@ class PreClassifier:
     # Internal — partition / sub-group / tag
     # ------------------------------------------------------------------
     def _classify_within_primary(self, primary_key: tuple, bucket: list[VM]) -> list[VMGroup]:
-        # Primary key is now (vcenter_id, target_namespace, env_value)
-        # — env was added so production / development / DR never
-        # merge into the same partition even when sharing a target
-        # namespace. ``env`` becomes part of the group key's
-        # discriminator so downstream consumers (audit log, MTV
-        # YAML, UI) can see the partition reason.
-        vcenter_id, target_namespace, env = primary_key
+        # Primary key is now (vcenter_id, target_cluster_id,
+        # target_namespace, env_value). Cluster + namespace join env in
+        # the partition tuple so production / development / DR never
+        # merge AND clusters never merge — MTV's NetworkMap /
+        # StorageMap CRs are scoped per (source provider, destination
+        # provider) pair, so groups must respect that boundary.
+        vcenter_id, target_cluster_id, target_namespace, env = primary_key
         if not bucket:
             return []
 
@@ -719,6 +735,7 @@ class PreClassifier:
                         role_vms,
                         discriminator=f"hint:{hint}:{role}",
                         environment=env,
+                        target_cluster_id=target_cluster_id,
                     )
                 )
         remaining = leftovers
@@ -766,6 +783,7 @@ class PreClassifier:
                     cluster,
                     discriminator=disc,
                     environment=env,
+                    target_cluster_id=target_cluster_id,
                 )
             )
 
@@ -783,6 +801,7 @@ class PreClassifier:
                     vms,
                     discriminator=f"prefix:{prefix}",
                     environment=env,
+                    target_cluster_id=target_cluster_id,
                 )
             )
 
@@ -796,6 +815,7 @@ class PreClassifier:
         *,
         discriminator: str,
         environment: str = "unknown",
+        target_cluster_id: int | None = None,
     ) -> VMGroup:
         # Role: majority vote across the group's VMs. Ties resolve by
         # the role with highest risk so we don't accidentally
@@ -861,6 +881,7 @@ class PreClassifier:
             state=state,
             discriminator=discriminator,
             environment=environment,
+            target_cluster_id=target_cluster_id,
         )
 
         # Sort vm_ids so the API output is deterministic across runs.
@@ -904,12 +925,15 @@ class PreClassifier:
         if len(groups) <= self.max_groups:
             return groups
 
-        # Group by primary key so we never merge across vCenters or
-        # target namespaces (which would break the strongest
-        # invariant the planner relies on).
+        # Group by primary key so we never merge across vCenters, target
+        # clusters, or target namespaces (which would break the strongest
+        # invariant the planner relies on — MTV CRs are scoped per
+        # (vcenter, cluster, namespace) tuple).
         by_primary: dict[tuple, list[VMGroup]] = defaultdict(list)
         for g in groups:
-            by_primary[(g.key.vcenter_id, g.key.target_namespace)].append(g)
+            by_primary[(g.key.vcenter_id, g.key.target_cluster_id, g.key.target_namespace)].append(
+                g
+            )
 
         consolidated: list[VMGroup] = []
         for primary_key, primary_groups in by_primary.items():
@@ -981,6 +1005,7 @@ class PreClassifier:
             state=state,
             discriminator=f"merged:{a.key.discriminator}+{b.key.discriminator}"[:64],
             environment=a.key.environment,
+            target_cluster_id=a.key.target_cluster_id,
         )
         merged_ids = sorted(set(a.vm_ids) | set(b.vm_ids))
         shared: dict[str, list[str]] = {}

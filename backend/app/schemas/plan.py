@@ -141,6 +141,15 @@ class PlanRead(BaseModel):
     method: str = ""
     attempts: int = 0
 
+    # Multi-cluster fan-out fields. POST /api/plans partitions the
+    # selection by (vcenter, cluster, namespace) and creates one
+    # MigrationPlan row per partition; ``plans`` lists every row
+    # created in the fan-out, ``plan_count`` is len(plans). The
+    # top-level PlanRead fields surface the first plan so single-
+    # partition callers don't need to read ``plans[0]``.
+    plans: list[dict] = Field(default_factory=list)
+    plan_count: int = 0
+
 
 # POST /api/plans payload — the canonical create path under the new
 # pipeline.
@@ -181,3 +190,47 @@ class PreviewGroupsResponse(BaseModel):
     groups: list[dict]
     over_ceiling: bool
     ceiling: int
+
+
+# ---------------------------------------------------------------------------
+# POST /api/plans/preview — multi-cluster partition preview
+# ---------------------------------------------------------------------------
+class PreviewPartitionGroup(BaseModel):
+    """One ``(vcenter, cluster, namespace)`` partition the operator's
+    selection will fan out into. Each row corresponds to a Plan CR
+    that POST /api/plans will create."""
+
+    source_vcenter_id: int | None
+    source_vcenter_name: str | None
+    target_cluster_id: int | None
+    target_cluster_name: str | None
+    target_namespace: str | None
+    vm_count: int
+    estimated_waves: int
+    mapping_id: int | None
+    mapping_name: str | None
+    network_targets: list[str] = Field(default_factory=list)
+    storage_targets: list[str] = Field(default_factory=list)
+
+
+class PreviewUnresolvedVM(BaseModel):
+    vm_id: int
+    vm_name: str
+    reasons: list[str] = Field(default_factory=list)
+
+
+class PlanPreviewResponse(BaseModel):
+    total_vms: int
+    resolvable: int
+    unresolvable: int
+    groups: list[PreviewPartitionGroup]
+    unresolved: list[PreviewUnresolvedVM]
+
+
+# ---------------------------------------------------------------------------
+# POST /api/plans wrapper — returns the list of plans created by the
+# multi-cluster fan-out. Single-partition selections produce a 1-entry
+# list; multi-partition selections produce N entries.
+# ---------------------------------------------------------------------------
+class MultiPlanCreateResponse(BaseModel):
+    plans: list[PlanRead]
