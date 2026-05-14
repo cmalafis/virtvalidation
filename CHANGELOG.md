@@ -7,6 +7,31 @@ from [Conventional Commits](https://www.conventionalcommits.org/) on `main`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1-alpha](https://github.com/cmalafis/virtvalidation/compare/v0.1.0-alpha...v0.1.1-alpha) (2026-05-14)
+
+
+### Features
+
+* add windows OS support with validation checks ([5a99af7](https://github.com/cmalafis/virtvalidation/commit/5a99af7280d569b20c255101cc7bae0e1172a0c4))
+* added creation issues ([a4d0390](https://github.com/cmalafis/virtvalidation/commit/a4d0390a25cf831342502034d5eb43b97e174e7b))
+* FIPS 140-3 compliance support for federal deployments ([602defc](https://github.com/cmalafis/virtvalidation/commit/602defc5380afac8e94fbbfff25d5a34c1a9eb97))
+* helm chart addition ([622372d](https://github.com/cmalafis/virtvalidation/commit/622372d9fa7eb4f3155ad929547eb83bfae8bf6a))
+* migration planing ux initial design ([9908cb1](https://github.com/cmalafis/virtvalidation/commit/9908cb1eb4d00e0b79e0e630c6b90326e742365f))
+* pluggable LLM backend abstraction with factory pattern ([8072745](https://github.com/cmalafis/virtvalidation/commit/80727454515a1fff98012236a8bc0530eb692076))
+* scaling out migration planner ([e36063c](https://github.com/cmalafis/virtvalidation/commit/e36063c62cf21c3ec5a4ce03a63383d9b19a6bbc))
+* ui fix for rvtools upload ([8746c68](https://github.com/cmalafis/virtvalidation/commit/8746c68c36686dcce22ced663ee5442168db29f5))
+
+
+### Bug Fixes
+
+* clean up lint warnings and stale type ignores ([daa0ecd](https://github.com/cmalafis/virtvalidation/commit/daa0ecdbedc49c56fe69faf25f25467c400270c7))
+* **deps:** upgrade dependencies to address 7 CVEs ([eec1b36](https://github.com/cmalafis/virtvalidation/commit/eec1b362953ae17d084f1db2060b05a02b53c864))
+
+
+### Documentation
+
+* polished README and living product map ([bfef3c8](https://github.com/cmalafis/virtvalidation/commit/bfef3c88c2e6c6070ee6db7c3d996606589dd2ae))
+
 ## [0.1.0-alpha] — 2026-04-29
 
 Initial alpha cut. Self-hosted, air-gapped VM migration validation
