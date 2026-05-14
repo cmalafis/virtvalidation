@@ -1,0 +1,128 @@
+---
+# Sets up the read-only `virtvalidate` user on a target VM for use by the
+# VirtValidate baseline + validation engine.
+#
+# VirtValidate's API renders this playbook via:
+#   GET /api/ssh-keys/{id}/playbook
+# The backend substitutes the chosen key's public material into the
+# `virtvalidate_public_key` default below (replacing the "REPLACE_ME"
+# marker), so operators can run the downloaded file directly with no
+# extra flags. The same file also accepts an explicit override:
+#
+#   ansible-playbook setup-virtvalidate-user.yml \
+#       -e 'virtvalidate_public_key="ssh-ed25519 AAAA... admin"'
+#
+# What this playbook does (idempotent — safe to run twice):
+#   1. Create the `virtvalidate` user + group with a locked password
+#      (key-only auth — passwords are never accepted on this account).
+#   2. Install the supplied SSH public key into ~/.ssh/authorized_keys.
+#   3. Drop /etc/sudoers.d/virtvalidate with a moderate read-only
+#      sudoers allowlist (the binaries VirtValidate's Pass-1 collector
+#      needs). `visudo -cf` validates the file before writing.
+#
+# All sudo entries are READ-ONLY commands. Nothing in this allowlist
+# can mutate the target VM — this is enforced at code review time, not
+# at runtime. If a future patch needs a mutating command on the target,
+# VirtValidate's threat model says it does NOT belong in this allowlist;
+# build a separate `virtvalidate-remediate` user with explicit operator
+# acknowledgement instead.
+#
+# Path notes for non-RHEL distros:
+#   The allowlist targets RHEL-family binary locations
+#   (/usr/bin/systemctl, /usr/sbin/ss, /usr/bin/journalctl, etc.). On
+#   Debian/Ubuntu, `ss` is in /usr/bin/ — same place — and the rest
+#   match too. On Alpine, `systemctl` doesn't exist (no systemd) and
+#   this playbook needs a different sudoers stanza. Test against your
+#   target OS before deploying to mixed-OS fleets.
+
+- name: Set up virtvalidate read-only user
+  hosts: all
+  become: true
+  vars:
+    virtvalidate_user: virtvalidate
+    # The /api/ssh-keys/{id}/playbook endpoint substitutes the literal
+    # "REPLACE_ME" string with the chosen key's public material before
+    # serving the file. Operators running the playbook with -e override
+    # the value entirely.
+    virtvalidate_public_key: "REPLACE_ME"
+  tasks:
+    - name: Fail fast when no public key was provided
+      ansible.builtin.fail:
+        msg: >-
+          virtvalidate_public_key was not set. Either download this
+          playbook from the VirtValidate API (which templates it
+          automatically) or pass -e 'virtvalidate_public_key="ssh-... user"'
+          on the command line.
+      when: virtvalidate_public_key == "REPLACE_ME" or virtvalidate_public_key | length < 20
+
+    - name: Create virtvalidate group
+      ansible.builtin.group:
+        name: "{{ virtvalidate_user }}"
+        state: present
+
+    - name: Create virtvalidate user (locked password — key auth only)
+      ansible.builtin.user:
+        name: "{{ virtvalidate_user }}"
+        group: "{{ virtvalidate_user }}"
+        shell: /bin/bash
+        create_home: true
+        # `!` is the canonical "locked, no password ever accepted" form
+        # in /etc/shadow on RHEL-family. Combined with sshd's default
+        # `PasswordAuthentication yes` this still rejects password auth
+        # because the hashed password field starts with `!`.
+        password: '!'
+        comment: "VirtValidate read-only validation user"
+
+    - name: Install authorized key for virtvalidate
+      ansible.posix.authorized_key:
+        user: "{{ virtvalidate_user }}"
+        key: "{{ virtvalidate_public_key }}"
+        state: present
+        # Non-exclusive — operators may add their own keys to this user
+        # for emergency access. VirtValidate's revoke-from-vms only
+        # removes the specific key it owns; other entries are left alone.
+        exclusive: false
+
+    - name: Configure read-only sudo allowlist for virtvalidate
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/virtvalidate
+        mode: '0440'
+        owner: root
+        group: root
+        # `visudo -cf` validates the file before atomic-replace; an
+        # invalid sudoers entry would otherwise lock the host out of sudo
+        # entirely.
+        validate: 'visudo -cf %s'
+        content: |
+          # VirtValidate read-only validation commands.
+          #
+          # Moderate allowlist: specific read-only binaries, any args.
+          # ALL ENTRIES MUST BE NON-MUTATING. The VirtValidate threat
+          # model treats this account as the lowest-privilege principal
+          # the appliance needs to do its job; mutating commands belong
+          # in a separate account that requires explicit operator
+          # acknowledgement.
+          #
+          # When the Pass-1 collector spec grows
+          # (app.core.collection.collector_spec), this allowlist may
+          # need to grow too — but never to include mutating commands.
+
+          virtvalidate ALL=(root) NOPASSWD: /usr/bin/systemctl status *, \
+            /usr/bin/systemctl list-units *, \
+            /usr/bin/systemctl is-active *, \
+            /usr/bin/systemctl is-enabled *, \
+            /usr/bin/systemctl show *, \
+            /usr/bin/journalctl *, \
+            /usr/sbin/ss *, \
+            /usr/bin/ss *, \
+            /usr/bin/crontab -l *, \
+            /usr/sbin/chronyc sources, \
+            /usr/sbin/chronyc tracking, \
+            /usr/bin/chronyc sources, \
+            /usr/bin/chronyc tracking, \
+            /usr/bin/cat /etc/os-release, \
+            /usr/bin/cat /proc/meminfo, \
+            /usr/bin/cat /proc/cpuinfo, \
+            /usr/bin/cat /proc/loadavg, \
+            /usr/bin/cat /proc/uptime, \
+            /usr/bin/find /var/log -type f -name *.log -printf *

@@ -13,7 +13,13 @@ from app.api.reports import router as reports_router
 from app.api.rvtools import router as rvtools_router
 from app.api.settings import settings_router, system_router
 from app.api.snapshots import router as snapshots_router
+from app.api.ssh_keys import router as ssh_keys_router
 from app.api.storage_reviews import router as storage_reviews_router
+from app.api.waves import (
+    baseline_runs_router,
+    validation_runs_router,
+    waves_router,
+)
 from app.api.target_entities import router as target_entities_router
 from app.api.targets import mappings_router as resource_mappings_router
 from app.api.targets import targets_router as ocp_targets_router
@@ -34,6 +40,13 @@ from app.models import grouping as _grouping_models  # noqa: F401  (register mod
 from app.models import llm_usage as _llm_usage_models  # noqa: F401  (register models on Base)
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)
 from app.models import settings as _settings_models  # noqa: F401  (register models on Base)
+from app.models import ssh_key as _ssh_key_models  # noqa: F401  (register models on Base)
+from app.models import (
+    baseline_run as _baseline_run_models,  # noqa: F401  (register models on Base)
+)
+from app.models import (
+    validation_run as _validation_run_models,  # noqa: F401  (register models on Base)
+)
 from app.models import (
     storage_review as _storage_review_models,  # noqa: F401  (register models on Base)
 )
@@ -185,3 +198,7 @@ app.include_router(resource_mappings_router, prefix="/api/mappings")
 app.include_router(validations_router, prefix="/api/validations")
 app.include_router(validation_schedules_router, prefix="/api/validation-schedules")
 app.include_router(vcenters_router, prefix="/api/sources/vcenters")
+app.include_router(ssh_keys_router, prefix="/api/ssh-keys")
+app.include_router(waves_router, prefix="/api/plans")
+app.include_router(baseline_runs_router, prefix="/api/baseline-runs")
+app.include_router(validation_runs_router, prefix="/api/validation-runs")

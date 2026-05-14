@@ -53,6 +53,15 @@ COPY backend/alembic.ini ./alembic.ini
 # (via the symlink below) — settings default to /app/templates.
 COPY docs/vm-inventory-template.csv ./templates/vm-inventory-template.csv
 
+# Ansible playbooks served by GET /api/ssh-keys/{id}/playbook. The
+# handler resolves the file via the repo-relative path
+# ``parents[3] / "deploy" / "ansible" / ...`` — so copying the tree
+# into ../deploy keeps the parents[3] resolution working both in dev
+# (where the repo root has deploy/) and in the container (where
+# /opt/app-root/deploy mirrors it). Without this the endpoint returns
+# 503 because the file doesn't exist at the expected path.
+COPY deploy/ansible/ /opt/app-root/deploy/ansible/
+
 # SSH key directory + back-compat /app symlink. The runtime defaults
 # (SSH_KEY_PATH=/app/keys/id_ed25519, CSV_TEMPLATE_PATH=/app/templates)
 # and the podman-compose / Quadlet volume mounts (./backend/app/keys

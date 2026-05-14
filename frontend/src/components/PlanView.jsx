@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link, useParams } from "react-router-dom";
 import { fetchJSON } from "../utils/fetchJSON";
+import WaveRunsPanel from "./WaveRunsPanel";
 
 // Strategy-driven plan detail page. Surfaces the LLM's rationale +
 // per-wave reasoning prominently — that's the consultative output the
@@ -164,6 +165,7 @@ export default function PlanView() {
             <WaveCard
               key={wave.wave_number}
               wave={wave}
+              planId={plan.id}
               vmsById={vmsById}
               waveCount={(plan.waves || []).length}
               onMoveVM={(vmId, target) => onMoveVM(vmId, wave.wave_number, target)}
@@ -252,7 +254,7 @@ function ChunkCard({ chunk, waves }) {
 }
 
 
-function WaveCard({ wave, vmsById, waveCount, onMoveVM }) {
+function WaveCard({ wave, planId, vmsById, waveCount, onMoveVM }) {
   const [moveOpen, setMoveOpen] = useState(null); // vm_id when picker is open
   const riskColor = RISK_COLOR[wave.risk_level || wave.estimated_risk] || "#aaaacc";
   return (
@@ -312,6 +314,9 @@ function WaveCard({ wave, vmsById, waveCount, onMoveVM }) {
           ⚠ {wave.applications_split_warning}
         </div>
       )}
+
+      {/* Wave-scoped baseline + validation actions */}
+      <WaveRunsPanel planId={planId} waveNumber={wave.wave_number} />
 
       {/* VM list with move-vm action per row */}
       <div style={{ marginTop: 8 }}>

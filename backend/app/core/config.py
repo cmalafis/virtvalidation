@@ -8,6 +8,24 @@ class Settings(BaseSettings):
     ssh_key_path: str = "/app/keys/id_ed25519"
     cluster_name: str = "ocp-virt-prod-01"
 
+    # ----- Wave-scoped SSH collection (deterministic engine) -----
+    # Bounded concurrency for the multi-VM orchestrator. Each in-flight VM
+    # holds one paramiko connection + ~1-2 MB of buffers; 25 keeps a 1000-VM
+    # baseline run sane on the appliance pod (peak ~50 MB working set for
+    # SSH I/O) while delivering minutes-scale wall-clock instead of hours.
+    # Tunable per-deployment if larger VM fleets or smaller appliance pods
+    # change the trade-off.
+    ssh_max_concurrency: int = 25
+    # Per-command timeout for a single SSH command inside the collector.
+    # Hung commands (the classic "ssh into a dying VM and the shell stalls")
+    # are the most common reason a per-VM collection wedges; this caps how
+    # much wall-clock one bad VM can burn.
+    ssh_command_timeout_seconds: int = 30
+    # Per-connection timeout for the initial TCP + SSH banner exchange.
+    # Lower than the command timeout because a connection that can't be
+    # made in 10s isn't coming.
+    ssh_connect_timeout_seconds: int = 10
+
     # ----- FIPS 140-3 compliance -----
     # When fips_mode is on, the appliance refuses to load SSH keys that
     # aren't on the FIPS-approved list (RSA ≥3072, ECDSA P-384, ECDSA

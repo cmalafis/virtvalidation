@@ -486,7 +486,7 @@ Depends on: `app.core.config`
 
 **Functions**
 
-- `render_pdf(report)` — Render a WaveReport dict as a CISO-ready PDF using weasyprint.
+- `render_pdf(report)` — Render a WaveReport dict as a CISO-ready PDF.
 
 </details>
 
@@ -685,6 +685,25 @@ Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.fips`,
 
 </details>
 
+<details><summary><strong><code>app.api.ssh_keys</code></strong> — <em>API endpoints</em> · Multi-key SSH catalog endpoints.</summary>
+
+Path: `backend/app/api/ssh_keys.py`  
+Depends on: `app.core.audit`, `app.core.db`, `app.core.fips`, `app.core.limits`, `app.core.ssh_key`, `app.models.ssh_key`, `app.models.vm`, `app.schemas.ssh_key`, `app.services`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `POST` | `/api/ssh-keys` | `create_ssh_key(payload, request, db)` | Generate a new keypair, persist the metadata row, return the row. |
+| `GET` | `/api/ssh-keys` | `list_ssh_keys(db, skip, limit, status_filter, plan_id)` | Paginated key catalog. Filterable by status + plan_id. |
+| `GET` | `/api/ssh-keys/{key_id}` | `get_ssh_key(key_id, db)` | — |
+| `GET` | `/api/ssh-keys/{key_id}/public` | `get_ssh_key_public(key_id, db)` | Return the public key as ``text/plain`` for easy copy/paste. |
+| `GET` | `/api/ssh-keys/{key_id}/playbook` | `get_ssh_key_playbook(key_id, db)` | Return the Ansible setup playbook with this key&#x27;s public material |
+| `POST` | `/api/ssh-keys/{key_id}/retire` | `retire_ssh_key(key_id, request, db)` | — |
+| `POST` | `/api/ssh-keys/{key_id}/revoke-from-vms` | `revoke_ssh_key_from_vms(key_id, payload, request, db)` | Day-2 cleanup: remove the key&#x27;s public component from each listed |
+
+</details>
+
 <details><summary><strong><code>app.api.storage_reviews</code></strong> — <em>API endpoints</em> · Storage design review HTTP surface.</summary>
 
 Path: `backend/app/api/storage_reviews.py`  
@@ -833,10 +852,28 @@ Depends on: `app.core.audit`, `app.core.categorizer`, `app.core.db`, `app.core.r
 
 </details>
 
+<details><summary><strong><code>app.api.waves</code></strong> — <em>API endpoints</em> · Wave-scoped baseline + validation endpoints.</summary>
+
+Path: `backend/app/api/waves.py`  
+Depends on: `app.core.audit`, `app.core.collection.wave_jobs`, `app.core.db`, `app.models.baseline_run`, `app.models.plan`, `app.models.ssh_key`, `app.models.validation_run`, `app.models.vm`, `app.schemas.baseline_run`, `app.schemas.ssh_key`, `app.schemas.validation_run`, `app.services`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `POST` | `/api/plans/{plan_id}/waves/{wave_number}/baseline` | `kick_off_baseline_run(plan_id, wave_number, payload, background_tasks, request, db)` | — |
+| `GET` | `/api/baseline-runs/{run_id}` | `get_baseline_run(run_id, db)` | — |
+| `POST` | `/api/baseline-runs/{run_id}/retry-failed` | `retry_failed_baseline(run_id, background_tasks, request, db)` | — |
+| `POST` | `/api/plans/{plan_id}/waves/{wave_number}/validate` | `kick_off_validation_run(plan_id, wave_number, payload, background_tasks, request, db)` | — |
+| `GET` | `/api/validation-runs/{run_id}` | `get_validation_run(run_id, db)` | — |
+| `POST` | `/api/plans/{plan_id}/waves/{wave_number}/revoke-validation-key` | `revoke_validation_key(plan_id, wave_number, payload, request, db)` | Remove the key&#x27;s public component from each VM in the wave&#x27;s |
+
+</details>
+
 <details><summary><strong><code>app.core.bulk_capture</code></strong> — <em>Business logic</em> · Bulk baseline-capture orchestrator.</summary>
 
 Path: `backend/app/core/bulk_capture.py`  
-Depends on: `app.core`, `app.core.audit`, `app.core.capture`, `app.core.config`, `app.models.vm`
+Depends on: `app.core`, `app.core.audit`, `app.core.capture`, `app.models.vm`
 
 **Classes**
 
@@ -918,6 +955,87 @@ Depends on: `app.core`, `app.core.audit`, `app.core.config`, `app.core.llm.base`
 
 </details>
 
+<details><summary><strong><code>app.core.collection.__init__</code></strong> — <em>Business logic</em> · Deterministic SSH collection engine for the wave-scoped flow.</summary>
+
+Path: `backend/app/core/collection/__init__.py`  
+Depends on: `app.core.collection.collector_spec`, `app.core.collection.engine`, `app.core.collection.orchestrator`
+
+</details>
+
+<details><summary><strong><code>app.core.collection.collector_spec</code></strong> — <em>Business logic</em> · Pass-1 deterministic probe catalog.</summary>
+
+Path: `backend/app/core/collection/collector_spec.py`  
+
+**Classes**
+
+- **`ProbeSpec`** (Class)
+  - One probe in the Pass-1 catalog.
+  - Fields: `name`, `data_key`, `description`, `available`
+
+**Functions**
+
+- `pass1_spec()` — Return the full Pass-1 probe catalog (available + future).
+- `pass1_probe_names()` — Return the list of probe names recorded in :attr:`Baseline.probes_run`.
+- `pass1_data_keys()` — Return the set of top-level keys the available probes contribute.
+
+</details>
+
+<details><summary><strong><code>app.core.collection.diff</code></strong> — <em>Business logic</em> · Deterministic structured diff between a baseline and a current</summary>
+
+Path: `backend/app/core/collection/diff.py`  
+
+**Functions**
+
+- `diff_collection(baseline_data, current_data)` — Compare two collection dicts and return a structured diff.
+
+</details>
+
+<details><summary><strong><code>app.core.collection.engine</code></strong> — <em>Business logic</em> · Single-VM collection engine.</summary>
+
+Path: `backend/app/core/collection/engine.py`  
+Depends on: `app.core.collection.collector_spec`, `app.core.ssh`
+
+**Classes**
+
+- **`VMTarget`** (Class)
+  - Minimal connection identity for one VM. Keeps the engine DB-agnostic.
+  - Fields: `vm_id`, `host`, `port`, `username`
+- **`CollectionResult`** (Class)
+  - Fields: `vm_id`, `succeeded`, `collected_data`, `host_key_fingerprint`, `probe_catalog_version`, `probes_run`, `failure_category`, `failure_detail`, `started_at`, `completed_at`, `duration_ms`
+- **`CollectionEngine`** (Class)
+  - Deterministic single-VM collector.
+  - Methods:
+    - `collect(self, target)` — SSH into ``target`` and return a :class:`CollectionResult`.
+- **`_InjectedKeyCollector`** (Class)
+  - ``SSHCollector`` that uses a pre-loaded paramiko key.
+
+</details>
+
+<details><summary><strong><code>app.core.collection.orchestrator</code></strong> — <em>Business logic</em> · Bounded-concurrency orchestrator for the collection engine.</summary>
+
+Path: `backend/app/core/collection/orchestrator.py`  
+Depends on: `app.core.collection.engine`
+
+**Functions**
+
+- `run_collection_batch()` — Collect from every target in ``targets`` with bounded concurrency.
+
+</details>
+
+<details><summary><strong><code>app.core.collection.wave_jobs</code></strong> — <em>Business logic</em> · Background-task orchestration for wave-scoped baseline + validation runs.</summary>
+
+Path: `backend/app/core/collection/wave_jobs.py`  
+Depends on: `app.core`, `app.core.collection.collector_spec`, `app.core.collection.diff`, `app.core.collection.engine`, `app.core.collection.orchestrator`, `app.core.config`, `app.models.baseline_run`, `app.models.plan`, `app.models.validation_run`, `app.models.vm`, `app.services`
+
+**Functions**
+
+- `resolve_wave_vm_ids(plan, wave_number)` — Return the VM ids in ``plan.waves[wave_number-1].vm_ids``.
+- `build_targets(db, vm_ids)` — Translate VM rows into engine-ready :class:`VMTarget` objects.
+- `run_baseline_task(baseline_run_id)` — BackgroundTask entry point — drives one BaselineRun to completion.
+- `run_validation_task(validation_run_id)` — BackgroundTask entry point — drives one ValidationRun to completion.
+
+</details>
+
 <details><summary><strong><code>app.core.commands</code></strong> — <em>Business logic</em> · Per-OS command dispatch for the SSH collector.</summary>
 
 Path: `backend/app/core/commands.py`  
@@ -953,7 +1071,7 @@ Path: `backend/app/core/config.py`
 **Classes**
 
 - **`Settings`** (Class)
-  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `llm_max_items_per_call`, `max_vms_per_plan`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
+  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `ssh_max_concurrency`, `ssh_command_timeout_seconds`, `ssh_connect_timeout_seconds`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `llm_max_items_per_call`, `max_vms_per_plan`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
 
 </details>
 
@@ -1594,7 +1712,7 @@ Depends on: `app.core.config`, `app.core.preclassifier`
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -1605,7 +1723,24 @@ Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.a
 <details><summary><strong><code>app.models.__init__</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/models/__init__.py`  
-Depends on: `app.models.audit`, `app.models.network_review`, `app.models.plan`, `app.models.settings`, `app.models.validation`, `app.models.vm`
+Depends on: `app.models.audit`, `app.models.baseline_run`, `app.models.network_review`, `app.models.plan`, `app.models.settings`, `app.models.ssh_key`, `app.models.validation`, `app.models.validation_run`, `app.models.vm`
+
+</details>
+
+<details><summary><strong><code>app.models.baseline_run</code></strong> — <em>Data models / schemas</em> · Wave-scoped baseline capture runs.</summary>
+
+Path: `backend/app/models/baseline_run.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`BaselineRunStatus`** (Class)
+- **`VMCollectionStatus`** (Class)
+- **`BaselineRun`** (SQLAlchemy model · table `baseline_runs`)
+  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `captured_vms`, `failed_vms`, `progress_message`, `started_at`, `completed_at`, `created_at`
+- **`Baseline`** (SQLAlchemy model · table `baselines`)
+  - Per-VM baseline sample owned by a :class:`BaselineRun`.
+  - Fields: `id`, `baseline_run_id`, `vm_id`, `status`, `collected_data`, `probe_catalog_version`, `probes_run`, `host_key_fingerprint`, `failure_category`, `failure_detail`, `collection_started_at`, `collection_completed_at`, `captured_at`
 
 </details>
 
@@ -1690,6 +1825,20 @@ Depends on: `app.core.db`
 
 </details>
 
+<details><summary><strong><code>app.models.ssh_key</code></strong> — <em>Data models / schemas</em> · Multi-key SSH key catalog for the wave-scoped validation flow.</summary>
+
+Path: `backend/app/models/ssh_key.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`SSHKeyStatus`** (Class)
+- **`SSHKey`** (SQLAlchemy model · table `ssh_keys`)
+  - An Ed25519 (or other) keypair the appliance generated for use by the
+  - Fields: `id`, `name`, `public_key`, `private_key_path`, `fingerprint`, `algorithm`, `status`, `plan_id`, `created_at`, `retired_at`
+
+</details>
+
 <details><summary><strong><code>app.models.storage_review</code></strong> — <em>Data models / schemas</em> · Storage design review tables.</summary>
 
 Path: `backend/app/models/storage_review.py`  
@@ -1764,6 +1913,23 @@ Depends on: `app.core.db`
 
 </details>
 
+<details><summary><strong><code>app.models.validation_run</code></strong> — <em>Data models / schemas</em> · Wave-scoped validation runs.</summary>
+
+Path: `backend/app/models/validation_run.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`ValidationRunStatus`** (Class)
+- **`VMValidationVerdict`** (Class)
+  - Per-VM validation verdict.
+- **`ValidationRun`** (SQLAlchemy model · table `validation_runs`)
+  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `passed_vms`, `warned_vms`, `failed_vms`, `unreachable_vms`, `progress_message`, `started_at`, `completed_at`, `created_at`
+- **`VMValidation`** (SQLAlchemy model · table `vm_validations`)
+  - Fields: `id`, `validation_run_id`, `vm_id`, `baseline_id`, `verdict`, `collected_data`, `diff_result`, `host_key_changed`, `failure_category`, `failure_detail`, `validated_at`
+
+</details>
+
 <details><summary><strong><code>app.models.validation_schedule</code></strong> — <em>Data models / schemas</em> · Scheduled validation runs.</summary>
 
 Path: `backend/app/models/validation_schedule.py`  
@@ -1790,6 +1956,25 @@ Depends on: `app.core.db`
 - **`VCenterSource`** (SQLAlchemy model · table `vcenter_sources`)
   - Logical handle for a vCenter that VMs belong to.
   - Fields: `id`, `name`, `hostname`, `region`, `site`, `classification_level`, `status`, `default_target_namespace`, `default_target_storage_class`, `notes`, `created_at`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.schemas.baseline_run</code></strong> — <em>Data models / schemas</em> · Pydantic schemas for the wave-scoped BaselineRun + Baseline resources.</summary>
+
+Path: `backend/app/schemas/baseline_run.py`  
+Depends on: `app.models.baseline_run`
+
+**Classes**
+
+- **`BaselineRunCreate`** (Pydantic schema)
+  - Fields: `ssh_key_id`
+- **`BaselineRead`** (Pydantic schema)
+  - Fields: `id`, `baseline_run_id`, `vm_id`, `status`, `collected_data`, `probe_catalog_version`, `probes_run`, `host_key_fingerprint`, `failure_category`, `failure_detail`, `collection_started_at`, `collection_completed_at`, `captured_at`
+- **`BaselineRunRead`** (Pydantic schema)
+  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `captured_vms`, `failed_vms`, `progress_message`, `started_at`, `completed_at`, `created_at`, `baselines`
+- **`BaselineRunAccepted`** (Pydantic schema)
+  - Body returned by POST endpoints that kick off a run.
+  - Fields: `baseline_run_id`, `status`, `status_url`
 
 </details>
 
@@ -1879,6 +2064,29 @@ Depends on: `app.models.settings`
   - Fields: `name`, `configured`, `fips_approved`, `enforced`
 - **`FIPSStatus`** (Pydantic schema)
   - Fields: `configured`, `detected`, `effective`, `mismatch_warning`, `operations`
+
+</details>
+
+<details><summary><strong><code>app.schemas.ssh_key</code></strong> — <em>Data models / schemas</em> · Pydantic schemas for the multi-key SSH catalog.</summary>
+
+Path: `backend/app/schemas/ssh_key.py`  
+Depends on: `app.models.ssh_key`
+
+**Classes**
+
+- **`SSHKeyCreate`** (Pydantic schema)
+  - Fields: `name`, `plan_id`, `algorithm`
+- **`SSHKeyRead`** (Pydantic schema)
+  - Fields: `id`, `name`, `public_key`, `fingerprint`, `algorithm`, `status`, `plan_id`, `created_at`, `retired_at`
+- **`SSHKeyListResponse`** (Pydantic schema)
+  - Wrapped list response per the codebase convention.
+  - Fields: `items`, `total`, `skip`, `limit`
+- **`SSHKeyRevokeRequest`** (Pydantic schema)
+  - Fields: `vm_ids`, `force`
+- **`SSHKeyRevocationOutcome`** (Pydantic schema)
+  - Fields: `vm_id`, `succeeded`, `detail`
+- **`SSHKeyRevokeResponse`** (Pydantic schema)
+  - Fields: `key_id`, `total`, `succeeded`, `failed`, `outcomes`
 
 </details>
 
@@ -1976,6 +2184,26 @@ Depends on: `app.models.target_network`, `app.models.target_storage_class`
 
 </details>
 
+<details><summary><strong><code>app.schemas.validation_run</code></strong> — <em>Data models / schemas</em> · Pydantic schemas for the wave-scoped ValidationRun + VMValidation</summary>
+
+Path: `backend/app/schemas/validation_run.py`  
+Depends on: `app.models.validation_run`
+
+**Classes**
+
+- **`ValidationRunCreate`** (Pydantic schema)
+  - Fields: `ssh_key_id`
+- **`VMValidationRead`** (Pydantic schema)
+  - Fields: `id`, `validation_run_id`, `vm_id`, `baseline_id`, `verdict`, `collected_data`, `diff_result`, `host_key_changed`, `failure_category`, `failure_detail`, `validated_at`
+- **`ValidationRunRead`** (Pydantic schema)
+  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `passed_vms`, `warned_vms`, `failed_vms`, `unreachable_vms`, `progress_message`, `started_at`, `completed_at`, `created_at`, `validations`
+- **`ValidationRunAccepted`** (Pydantic schema)
+  - Fields: `validation_run_id`, `status`, `status_url`
+- **`RevokeValidationKeyRequest`** (Pydantic schema)
+  - Fields: `ssh_key_id`, `force`
+
+</details>
+
 <details><summary><strong><code>app.schemas.vcenter</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/schemas/vcenter.py`  
@@ -2009,6 +2237,35 @@ Depends on: `app.core.limits`, `app.models.vcenter`
   - Fields: `id`, `kind`, `name`, `description`, `vm_count`
 - **`CategorizationTaskRead`** (Pydantic schema)
   - Fields: `task_id`, `source_vcenter_id`, `status`, `current_step`, `progress_percent`, `batches_total`, `batches_complete`, `started_at`, `completed_at`, `groups_created`, `error`
+
+</details>
+
+<details><summary><strong><code>app.services.ssh_key_service</code></strong> — <em>Other</em> · Multi-key SSH service used by the wave-scoped baseline + validation flow.</summary>
+
+Path: `backend/app/services/ssh_key_service.py`  
+Depends on: `app.core.config`, `app.core.ssh_key`, `app.models.ssh_key`
+
+**Classes**
+
+- **`SSHKeyNotFoundError`** (Class)
+  - The requested SSH key row doesn't exist (or has been deleted).
+- **`SSHKeyRetiredError`** (Class)
+  - The key exists but is retired; new runs may not use it.
+- **`PrivateKeyMissingError`** (Class)
+  - The DB row exists but the private key file on disk is gone.
+- **`VMRevocationOutcome`** (Class)
+  - Fields: `vm_id`, `succeeded`, `detail`
+
+**Functions**
+
+- `keys_directory()` — Resolve the directory that hosts the named-key files.
+- `generate_keypair(db)` — Materialize a new keypair, write the private file to the PVC, and
+- `get_key(db, key_id)`
+- `get_active_key(db, key_id)`
+- `get_public_key(db, key_id)` — Return the OpenSSH public-key string. Safe to expose via API.
+- `load_paramiko_key(db, key_id)` — Load the paramiko key object for use by the collection orchestrator.
+- `retire_key(db, key_id)` — Mark a key retired. The private key file is left on disk for the
+- `revoke_key_from_vms(db)` — Remove a key's public component from each VM's authorized_keys.
 
 </details>
 
@@ -2303,6 +2560,7 @@ Exports / inner components:
 - **`ConfirmModal`** (component)
 - **`EnrollmentInstructions`** (component)
 - **`SSHKeyViewerWithFIPS`** (component)
+- **`ValidationKeysWithFIPS`** (component)
 - **`SSHKeyViewer`** (component)
 - **`ConnectionStatus`** (component)
 - **`FIPSCompliancePanel`** (component)
@@ -2416,6 +2674,26 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/components/ValidationKeysSection.jsx</code></strong> — <em>Frontend component</em> · Multi-key SSH catalog UI for the wave-scoped baseline + validation flow.</summary>
+
+API calls:
+- `/api/plans?limit=200`
+- `/api/ssh-keys`
+- `/api/ssh-keys/{id}/retire`
+- `/api/ssh-keys?limit=200`
+
+Exports / inner components:
+- **`ValidationKeysSection`** (component)
+- **`KeyRow`** (component)
+- **`PostCreatePanel`** (component)
+- **`CreateKeyModal`** (component)
+- **`FieldLabel`** (component)
+- **`btnPrimary`** (helper)
+- **`btnGhost`** (helper)
+- **`btnSecondaryStyle`** (helper)
+
+</details>
+
 <details><summary><strong><code>frontend/src/components/VirtValidate.jsx</code></strong> — <em>Frontend component</em> · Design Review status + severity colors. Module-level so the dashboard</summary>
 
 API calls:
@@ -2474,6 +2752,33 @@ Exports / inner components:
 - **`FormField`** (component)
 - **`PreviewTable`** (component)
 - **`TabButton`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/components/WaveRunsPanel.jsx</code></strong> — <em>Frontend component</em> · Wave-scoped baseline + validation actions, embedded inside a WaveCard.</summary>
+
+API calls:
+- `/api/baseline-runs/{id}`
+- `/api/baseline-runs/{id}/retry-failed`
+- `/api/plans/{id}/waves/{id}/baseline`
+- `/api/plans/{id}/waves/{id}/revoke-validation-key`
+- `/api/plans/{id}/waves/{id}/validate`
+- `/api/ssh-keys?status=active&limit=200`
+- `/api/validation-runs/{id}`
+
+Exports / inner components:
+- **`WaveRunsPanel`** (component)
+- **`BaselineProgressCard`** (component)
+- **`ValidationProgressCard`** (component)
+- **`ValidationRow`** (component)
+- **`VerdictPill`** (component)
+- **`ProgressBar`** (component)
+- **`KeyPickerModal`** (component)
+- **`RevokeKeyModal`** (component)
+- **`ModalShell`** (component)
+- **`btnPrimary`** (helper)
+- **`btnGhost`** (helper)
+- **`btnSecondaryStyle`** (helper)
 
 </details>
 

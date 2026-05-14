@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Link } from "react-router-dom";
 import { fetchJSON } from "../utils/fetchJSON";
+import ValidationKeysSection from "./ValidationKeysSection";
 
 const TOAST_OPTS = {
   style: {
@@ -369,6 +370,20 @@ function SSHKeyViewerWithFIPS() {
     return () => { cancelled = true; };
   }, []);
   return <SSHKeyViewer fipsMode={fipsMode}/>;
+}
+
+// Same shape as SSHKeyViewerWithFIPS — read FIPS status once and pass it
+// to the multi-key catalog so the algorithm dropdown gets the right defaults.
+function ValidationKeysWithFIPS() {
+  const [fipsMode, setFipsMode] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchJSON("/api/system/fips-status")
+      .then((data) => { if (!cancelled) setFipsMode(Boolean(data?.effective)); })
+      .catch(() => { /* ValidationKeysSection falls back to non-FIPS defaults */ });
+    return () => { cancelled = true; };
+  }, []);
+  return <ValidationKeysSection fipsMode={fipsMode}/>;
 }
 
 function SSHKeyViewer({ fipsMode = false }) {
@@ -1374,6 +1389,7 @@ export default function Settings() {
 
       <div style={{ maxWidth: 960, margin: "0 auto", padding: 32 }} className="fade-in">
         <SSHKeyViewerWithFIPS />
+        <ValidationKeysWithFIPS />
         <ConnectionStatus />
         <FIPSCompliancePanel />
         <LLMBackendPanel />

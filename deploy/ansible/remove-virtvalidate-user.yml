@@ -1,0 +1,35 @@
+---
+# Removes the `virtvalidate` user, group, and sudoers entry from a target
+# VM. Use AFTER all migrations for this VM are complete, all baselines and
+# validations are archived, and there's no need to re-collect anything.
+#
+# This is more drastic than the day-2 key revocation surfaced via
+# /api/ssh-keys/{id}/revoke-from-vms — that just removes a specific
+# public key line from authorized_keys. This playbook removes the WHOLE
+# user, so any other key the operator authorized (emergency access) is
+# also gone.
+#
+# Idempotent — safe to run twice (or against a VM that never had the user).
+
+- name: Remove virtvalidate read-only user
+  hosts: all
+  become: true
+  vars:
+    virtvalidate_user: virtvalidate
+  tasks:
+    - name: Remove sudoers allowlist
+      ansible.builtin.file:
+        path: /etc/sudoers.d/virtvalidate
+        state: absent
+
+    - name: Remove virtvalidate user (and home directory)
+      ansible.builtin.user:
+        name: "{{ virtvalidate_user }}"
+        state: absent
+        remove: true
+        force: true
+
+    - name: Remove virtvalidate group
+      ansible.builtin.group:
+        name: "{{ virtvalidate_user }}"
+        state: absent

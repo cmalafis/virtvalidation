@@ -1953,7 +1953,7 @@ const DATA = {
         "functions": [
           {
             "name": "render_pdf",
-            "summary": "Render a WaveReport dict as a CISO-ready PDF using weasyprint."
+            "summary": "Render a WaveReport dict as a CISO-ready PDF."
           }
         ],
         "depends_on": [
@@ -2458,6 +2458,71 @@ const DATA = {
           "app.core.ssh_key",
           "app.models.settings",
           "app.schemas.settings"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.api.ssh_keys",
+        "title": "app.api.ssh_keys",
+        "subtitle": "backend/app/api/ssh_keys.py",
+        "summary": "Multi-key SSH catalog endpoints.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/api/ssh-keys",
+            "handler": "create_ssh_key",
+            "summary": "Generate a new keypair, persist the metadata row, return the row."
+          },
+          {
+            "method": "GET",
+            "path": "/api/ssh-keys",
+            "handler": "list_ssh_keys",
+            "summary": "Paginated key catalog. Filterable by status + plan_id."
+          },
+          {
+            "method": "GET",
+            "path": "/api/ssh-keys/{key_id}",
+            "handler": "get_ssh_key",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/ssh-keys/{key_id}/public",
+            "handler": "get_ssh_key_public",
+            "summary": "Return the public key as ``text/plain`` for easy copy/paste."
+          },
+          {
+            "method": "GET",
+            "path": "/api/ssh-keys/{key_id}/playbook",
+            "handler": "get_ssh_key_playbook",
+            "summary": "Return the Ansible setup playbook with this key's public material"
+          },
+          {
+            "method": "POST",
+            "path": "/api/ssh-keys/{key_id}/retire",
+            "handler": "retire_ssh_key",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/ssh-keys/{key_id}/revoke-from-vms",
+            "handler": "revoke_ssh_key_from_vms",
+            "summary": "Day-2 cleanup: remove the key's public component from each listed"
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.db",
+          "app.core.fips",
+          "app.core.limits",
+          "app.core.ssh_key",
+          "app.models.ssh_key",
+          "app.models.vm",
+          "app.schemas.ssh_key",
+          "app.services"
         ]
       },
       {
@@ -3026,6 +3091,68 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.api.waves",
+        "title": "app.api.waves",
+        "subtitle": "backend/app/api/waves.py",
+        "summary": "Wave-scoped baseline + validation endpoints.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/api/plans/{plan_id}/waves/{wave_number}/baseline",
+            "handler": "kick_off_baseline_run",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/baseline-runs/{run_id}",
+            "handler": "get_baseline_run",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/baseline-runs/{run_id}/retry-failed",
+            "handler": "retry_failed_baseline",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/plans/{plan_id}/waves/{wave_number}/validate",
+            "handler": "kick_off_validation_run",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/validation-runs/{run_id}",
+            "handler": "get_validation_run",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/plans/{plan_id}/waves/{wave_number}/revoke-validation-key",
+            "handler": "revoke_validation_key",
+            "summary": "Remove the key's public component from each VM in the wave's"
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.audit",
+          "app.core.collection.wave_jobs",
+          "app.core.db",
+          "app.models.baseline_run",
+          "app.models.plan",
+          "app.models.ssh_key",
+          "app.models.validation_run",
+          "app.models.vm",
+          "app.schemas.baseline_run",
+          "app.schemas.ssh_key",
+          "app.schemas.validation_run",
+          "app.services"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.bulk_capture",
         "title": "app.core.bulk_capture",
         "subtitle": "backend/app/core/bulk_capture.py",
@@ -3112,7 +3239,6 @@ const DATA = {
           "app.core",
           "app.core.audit",
           "app.core.capture",
-          "app.core.config",
           "app.models.vm"
         ]
       },
@@ -3319,6 +3445,208 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.collection.__init__",
+        "title": "app.core.collection.__init__",
+        "subtitle": "backend/app/core/collection/__init__.py",
+        "summary": "Deterministic SSH collection engine for the wave-scoped flow.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.collection.collector_spec",
+          "app.core.collection.engine",
+          "app.core.collection.orchestrator"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.collection.collector_spec",
+        "title": "app.core.collection.collector_spec",
+        "subtitle": "backend/app/core/collection/collector_spec.py",
+        "summary": "Pass-1 deterministic probe catalog.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ProbeSpec",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "name",
+              "data_key",
+              "description",
+              "available"
+            ],
+            "methods": [],
+            "summary": "One probe in the Pass-1 catalog."
+          }
+        ],
+        "functions": [
+          {
+            "name": "pass1_spec",
+            "summary": "Return the full Pass-1 probe catalog (available + future)."
+          },
+          {
+            "name": "pass1_probe_names",
+            "summary": "Return the list of probe names recorded in :attr:`Baseline.probes_run`."
+          },
+          {
+            "name": "pass1_data_keys",
+            "summary": "Return the set of top-level keys the available probes contribute."
+          }
+        ],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.core.collection.diff",
+        "title": "app.core.collection.diff",
+        "subtitle": "backend/app/core/collection/diff.py",
+        "summary": "Deterministic structured diff between a baseline and a current",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "diff_collection",
+            "summary": "Compare two collection dicts and return a structured diff."
+          }
+        ],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.core.collection.engine",
+        "title": "app.core.collection.engine",
+        "subtitle": "backend/app/core/collection/engine.py",
+        "summary": "Single-VM collection engine.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "VMTarget",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "host",
+              "port",
+              "username"
+            ],
+            "methods": [],
+            "summary": "Minimal connection identity for one VM. Keeps the engine DB-agnostic."
+          },
+          {
+            "name": "CollectionResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "succeeded",
+              "collected_data",
+              "host_key_fingerprint",
+              "probe_catalog_version",
+              "probes_run",
+              "failure_category",
+              "failure_detail",
+              "started_at",
+              "completed_at",
+              "duration_ms"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "CollectionEngine",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "collect",
+                "summary": "SSH into ``target`` and return a :class:`CollectionResult`."
+              }
+            ],
+            "summary": "Deterministic single-VM collector."
+          },
+          {
+            "name": "_InjectedKeyCollector",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "``SSHCollector`` that uses a pre-loaded paramiko key."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.collection.collector_spec",
+          "app.core.ssh"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.collection.orchestrator",
+        "title": "app.core.collection.orchestrator",
+        "subtitle": "backend/app/core/collection/orchestrator.py",
+        "summary": "Bounded-concurrency orchestrator for the collection engine.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "run_collection_batch",
+            "summary": "Collect from every target in ``targets`` with bounded concurrency."
+          }
+        ],
+        "depends_on": [
+          "app.core.collection.engine"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.collection.wave_jobs",
+        "title": "app.core.collection.wave_jobs",
+        "subtitle": "backend/app/core/collection/wave_jobs.py",
+        "summary": "Background-task orchestration for wave-scoped baseline + validation runs.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "resolve_wave_vm_ids",
+            "summary": "Return the VM ids in ``plan.waves[wave_number-1].vm_ids``."
+          },
+          {
+            "name": "build_targets",
+            "summary": "Translate VM rows into engine-ready :class:`VMTarget` objects."
+          },
+          {
+            "name": "run_baseline_task",
+            "summary": "BackgroundTask entry point \u2014 drives one BaselineRun to completion."
+          },
+          {
+            "name": "run_validation_task",
+            "summary": "BackgroundTask entry point \u2014 drives one ValidationRun to completion."
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.collection.collector_spec",
+          "app.core.collection.diff",
+          "app.core.collection.engine",
+          "app.core.collection.orchestrator",
+          "app.core.config",
+          "app.models.baseline_run",
+          "app.models.plan",
+          "app.models.validation_run",
+          "app.models.vm",
+          "app.services"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.commands",
         "title": "app.core.commands",
         "subtitle": "backend/app/core/commands.py",
@@ -3405,6 +3733,9 @@ const DATA = {
               "database_url",
               "ssh_key_path",
               "cluster_name",
+              "ssh_max_concurrency",
+              "ssh_command_timeout_seconds",
+              "ssh_connect_timeout_seconds",
               "fips_mode",
               "ssh_key_algorithm",
               "llm_backend_type",
@@ -5103,6 +5434,7 @@ const DATA = {
           "app.api.rvtools",
           "app.api.settings",
           "app.api.snapshots",
+          "app.api.ssh_keys",
           "app.api.storage_reviews",
           "app.api.target_entities",
           "app.api.targets",
@@ -5111,6 +5443,7 @@ const DATA = {
           "app.api.validations",
           "app.api.vcenters",
           "app.api.vms",
+          "app.api.waves",
           "app.core.db",
           "app.core.fips",
           "app.core.llm.factory",
@@ -5133,11 +5466,88 @@ const DATA = {
         "functions": [],
         "depends_on": [
           "app.models.audit",
+          "app.models.baseline_run",
           "app.models.network_review",
           "app.models.plan",
           "app.models.settings",
+          "app.models.ssh_key",
           "app.models.validation",
+          "app.models.validation_run",
           "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.baseline_run",
+        "title": "app.models.baseline_run",
+        "subtitle": "backend/app/models/baseline_run.py",
+        "summary": "Wave-scoped baseline capture runs.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "BaselineRunStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VMCollectionStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BaselineRun",
+            "kind": "model",
+            "table": "baseline_runs",
+            "fields": [
+              "id",
+              "plan_id",
+              "wave_number",
+              "ssh_key_id",
+              "status",
+              "total_vms",
+              "captured_vms",
+              "failed_vms",
+              "progress_message",
+              "started_at",
+              "completed_at",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "Baseline",
+            "kind": "model",
+            "table": "baselines",
+            "fields": [
+              "id",
+              "baseline_run_id",
+              "vm_id",
+              "status",
+              "collected_data",
+              "probe_catalog_version",
+              "probes_run",
+              "host_key_fingerprint",
+              "failure_category",
+              "failure_detail",
+              "collection_started_at",
+              "collection_completed_at",
+              "captured_at"
+            ],
+            "methods": [],
+            "summary": "Per-VM baseline sample owned by a :class:`BaselineRun`."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
         ]
       },
       {
@@ -5422,6 +5832,48 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.models.ssh_key",
+        "title": "app.models.ssh_key",
+        "subtitle": "backend/app/models/ssh_key.py",
+        "summary": "Multi-key SSH key catalog for the wave-scoped validation flow.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "SSHKeyStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SSHKey",
+            "kind": "model",
+            "table": "ssh_keys",
+            "fields": [
+              "id",
+              "name",
+              "public_key",
+              "private_key_path",
+              "fingerprint",
+              "algorithm",
+              "status",
+              "plan_id",
+              "created_at",
+              "retired_at"
+            ],
+            "methods": [],
+            "summary": "An Ed25519 (or other) keypair the appliance generated for use by the"
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.models.storage_review",
         "title": "app.models.storage_review",
         "subtitle": "backend/app/models/storage_review.py",
@@ -5686,6 +6138,80 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.models.validation_run",
+        "title": "app.models.validation_run",
+        "subtitle": "backend/app/models/validation_run.py",
+        "summary": "Wave-scoped validation runs.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ValidationRunStatus",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VMValidationVerdict",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "Per-VM validation verdict."
+          },
+          {
+            "name": "ValidationRun",
+            "kind": "model",
+            "table": "validation_runs",
+            "fields": [
+              "id",
+              "plan_id",
+              "wave_number",
+              "ssh_key_id",
+              "status",
+              "total_vms",
+              "passed_vms",
+              "warned_vms",
+              "failed_vms",
+              "unreachable_vms",
+              "progress_message",
+              "started_at",
+              "completed_at",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VMValidation",
+            "kind": "model",
+            "table": "vm_validations",
+            "fields": [
+              "id",
+              "validation_run_id",
+              "vm_id",
+              "baseline_id",
+              "verdict",
+              "collected_data",
+              "diff_result",
+              "host_key_changed",
+              "failure_category",
+              "failure_detail",
+              "validated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.models.validation_schedule",
         "title": "app.models.validation_schedule",
         "subtitle": "backend/app/models/validation_schedule.py",
@@ -5780,6 +6306,87 @@ const DATA = {
         "functions": [],
         "depends_on": [
           "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.baseline_run",
+        "title": "app.schemas.baseline_run",
+        "subtitle": "backend/app/schemas/baseline_run.py",
+        "summary": "Pydantic schemas for the wave-scoped BaselineRun + Baseline resources.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "BaselineRunCreate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "ssh_key_id"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BaselineRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "baseline_run_id",
+              "vm_id",
+              "status",
+              "collected_data",
+              "probe_catalog_version",
+              "probes_run",
+              "host_key_fingerprint",
+              "failure_category",
+              "failure_detail",
+              "collection_started_at",
+              "collection_completed_at",
+              "captured_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BaselineRunRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "plan_id",
+              "wave_number",
+              "ssh_key_id",
+              "status",
+              "total_vms",
+              "captured_vms",
+              "failed_vms",
+              "progress_message",
+              "started_at",
+              "completed_at",
+              "created_at",
+              "baselines"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BaselineRunAccepted",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "baseline_run_id",
+              "status",
+              "status_url"
+            ],
+            "methods": [],
+            "summary": "Body returned by POST endpoints that kick off a run."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.models.baseline_run"
         ]
       },
       {
@@ -6184,6 +6791,101 @@ const DATA = {
         "functions": [],
         "depends_on": [
           "app.models.settings"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.ssh_key",
+        "title": "app.schemas.ssh_key",
+        "subtitle": "backend/app/schemas/ssh_key.py",
+        "summary": "Pydantic schemas for the multi-key SSH catalog.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "SSHKeyCreate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "plan_id",
+              "algorithm"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SSHKeyRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "name",
+              "public_key",
+              "fingerprint",
+              "algorithm",
+              "status",
+              "plan_id",
+              "created_at",
+              "retired_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SSHKeyListResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "items",
+              "total",
+              "skip",
+              "limit"
+            ],
+            "methods": [],
+            "summary": "Wrapped list response per the codebase convention."
+          },
+          {
+            "name": "SSHKeyRevokeRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids",
+              "force"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SSHKeyRevocationOutcome",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "succeeded",
+              "detail"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "SSHKeyRevokeResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "key_id",
+              "total",
+              "succeeded",
+              "failed",
+              "outcomes"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.models.ssh_key"
         ]
       },
       {
@@ -6637,6 +7339,98 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.schemas.validation_run",
+        "title": "app.schemas.validation_run",
+        "subtitle": "backend/app/schemas/validation_run.py",
+        "summary": "Pydantic schemas for the wave-scoped ValidationRun + VMValidation",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ValidationRunCreate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "ssh_key_id"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VMValidationRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "validation_run_id",
+              "vm_id",
+              "baseline_id",
+              "verdict",
+              "collected_data",
+              "diff_result",
+              "host_key_changed",
+              "failure_category",
+              "failure_detail",
+              "validated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ValidationRunRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "plan_id",
+              "wave_number",
+              "ssh_key_id",
+              "status",
+              "total_vms",
+              "passed_vms",
+              "warned_vms",
+              "failed_vms",
+              "unreachable_vms",
+              "progress_message",
+              "started_at",
+              "completed_at",
+              "created_at",
+              "validations"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ValidationRunAccepted",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "validation_run_id",
+              "status",
+              "status_url"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "RevokeValidationKeyRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "ssh_key_id",
+              "force"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.models.validation_run"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.schemas.vcenter",
         "title": "app.schemas.vcenter",
         "subtitle": "backend/app/schemas/vcenter.py",
@@ -6825,6 +7619,92 @@ const DATA = {
         "depends_on": [
           "app.core.limits",
           "app.models.vcenter"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.services.ssh_key_service",
+        "title": "app.services.ssh_key_service",
+        "subtitle": "backend/app/services/ssh_key_service.py",
+        "summary": "Multi-key SSH service used by the wave-scoped baseline + validation flow.",
+        "category": "other",
+        "routes": [],
+        "classes": [
+          {
+            "name": "SSHKeyNotFoundError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "The requested SSH key row doesn't exist (or has been deleted)."
+          },
+          {
+            "name": "SSHKeyRetiredError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "The key exists but is retired; new runs may not use it."
+          },
+          {
+            "name": "PrivateKeyMissingError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "The DB row exists but the private key file on disk is gone."
+          },
+          {
+            "name": "VMRevocationOutcome",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "succeeded",
+              "detail"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "keys_directory",
+            "summary": "Resolve the directory that hosts the named-key files."
+          },
+          {
+            "name": "generate_keypair",
+            "summary": "Materialize a new keypair, write the private file to the PVC, and"
+          },
+          {
+            "name": "get_key",
+            "summary": ""
+          },
+          {
+            "name": "get_active_key",
+            "summary": ""
+          },
+          {
+            "name": "get_public_key",
+            "summary": "Return the OpenSSH public-key string. Safe to expose via API."
+          },
+          {
+            "name": "load_paramiko_key",
+            "summary": "Load the paramiko key object for use by the collection orchestrator."
+          },
+          {
+            "name": "retire_key",
+            "summary": "Mark a key retired. The private key file is left on disk for the"
+          },
+          {
+            "name": "revoke_key_from_vms",
+            "summary": "Remove a key's public component from each VM's authorized_keys."
+          }
+        ],
+        "depends_on": [
+          "app.core.config",
+          "app.core.ssh_key",
+          "app.models.ssh_key"
         ]
       }
     ],
@@ -7541,6 +8421,10 @@ const DATA = {
             "kind": "component"
           },
           {
+            "name": "ValidationKeysWithFIPS",
+            "kind": "component"
+          },
+          {
             "name": "SSHKeyViewer",
             "kind": "component"
           },
@@ -7838,6 +8722,54 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/components/ValidationKeysSection.jsx",
+        "title": "ValidationKeysSection.jsx",
+        "subtitle": "frontend/src/components/ValidationKeysSection.jsx",
+        "summary": "Multi-key SSH catalog UI for the wave-scoped baseline + validation flow.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/plans?limit=200",
+          "/api/ssh-keys",
+          "/api/ssh-keys/{id}/retire",
+          "/api/ssh-keys?limit=200"
+        ],
+        "members": [
+          {
+            "name": "ValidationKeysSection",
+            "kind": "component"
+          },
+          {
+            "name": "KeyRow",
+            "kind": "component"
+          },
+          {
+            "name": "PostCreatePanel",
+            "kind": "component"
+          },
+          {
+            "name": "CreateKeyModal",
+            "kind": "component"
+          },
+          {
+            "name": "FieldLabel",
+            "kind": "component"
+          },
+          {
+            "name": "btnPrimary",
+            "kind": "helper"
+          },
+          {
+            "name": "btnGhost",
+            "kind": "helper"
+          },
+          {
+            "name": "btnSecondaryStyle",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/components/VirtValidate.jsx",
         "title": "VirtValidate.jsx",
         "subtitle": "frontend/src/components/VirtValidate.jsx",
@@ -7997,6 +8929,73 @@ const DATA = {
           {
             "name": "TabButton",
             "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/WaveRunsPanel.jsx",
+        "title": "WaveRunsPanel.jsx",
+        "subtitle": "frontend/src/components/WaveRunsPanel.jsx",
+        "summary": "Wave-scoped baseline + validation actions, embedded inside a WaveCard.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/baseline-runs/{id}",
+          "/api/baseline-runs/{id}/retry-failed",
+          "/api/plans/{id}/waves/{id}/baseline",
+          "/api/plans/{id}/waves/{id}/revoke-validation-key",
+          "/api/plans/{id}/waves/{id}/validate",
+          "/api/ssh-keys?status=active&limit=200",
+          "/api/validation-runs/{id}"
+        ],
+        "members": [
+          {
+            "name": "WaveRunsPanel",
+            "kind": "component"
+          },
+          {
+            "name": "BaselineProgressCard",
+            "kind": "component"
+          },
+          {
+            "name": "ValidationProgressCard",
+            "kind": "component"
+          },
+          {
+            "name": "ValidationRow",
+            "kind": "component"
+          },
+          {
+            "name": "VerdictPill",
+            "kind": "component"
+          },
+          {
+            "name": "ProgressBar",
+            "kind": "component"
+          },
+          {
+            "name": "KeyPickerModal",
+            "kind": "component"
+          },
+          {
+            "name": "RevokeKeyModal",
+            "kind": "component"
+          },
+          {
+            "name": "ModalShell",
+            "kind": "component"
+          },
+          {
+            "name": "btnPrimary",
+            "kind": "helper"
+          },
+          {
+            "name": "btnGhost",
+            "kind": "helper"
+          },
+          {
+            "name": "btnSecondaryStyle",
+            "kind": "helper"
           }
         ]
       },
