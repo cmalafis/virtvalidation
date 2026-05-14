@@ -154,9 +154,25 @@ def _slugify(value: str) -> str:
     return slug or "unassigned"
 
 
+def _rfc1123_name(value: str) -> str:
+    """Lowercase, RFC1123-compliant, ≤63 chars. MTV's Plan CR rejects
+    VM names that aren't DNS-1123 labels — operator vSphere hostnames
+    often have uppercase or dots, so we slugify on emission and leave
+    the original on ``id`` for traceback."""
+    slug = _slugify(value)
+    return slug[:63] or "vm"
+
+
 @dataclass(frozen=True)
 class WaveContext:
-    """Inputs the YAML generator needs in addition to the per-VM rows."""
+    """Inputs the YAML generator needs in addition to the per-VM rows.
+
+    ``source_provider`` and ``destination_provider`` name the MTV
+    Provider CRs the operator has already installed on the destination
+    cluster — typically derived from VCenterSource.name and
+    OCPTarget.name respectively. Defaults come from settings for
+    legacy single-cluster deployments.
+    """
 
     plan_id: int
     wave_number: int
@@ -172,14 +188,17 @@ class WaveContext:
         plan_id: int,
         wave_number: int,
         rationale: str,
+        *,
+        source_provider: str | None = None,
+        destination_provider: str | None = None,
     ) -> WaveContext:
         return cls(
             plan_id=plan_id,
             wave_number=wave_number,
             rationale=rationale,
             namespace=settings.mtv_namespace,
-            source_provider=settings.mtv_source_provider,
-            destination_provider=settings.mtv_destination_provider,
+            source_provider=source_provider or settings.mtv_source_provider,
+            destination_provider=destination_provider or settings.mtv_destination_provider,
             default_target_namespace=settings.mtv_default_target_namespace,
         )
 
@@ -309,7 +328,15 @@ def _build_plan(
 
     plan_vms: list[dict[str, Any]] = []
     for vm, vm_ns in zip(vms, resolved_namespaces, strict=True):
-        entry: dict[str, Any] = {"name": vm["name"]}
+        # MTV requires RFC1123-compliant VM names (lowercase letters,
+        # digits, '-'); operator hostnames in vSphere often include
+        # uppercase. ``id`` carries the original name so downstream
+        # tooling can correlate back to the vSphere inventory.
+        original = vm.get("name") or ""
+        entry: dict[str, Any] = {
+            "id": original,
+            "name": _rfc1123_name(original),
+        }
         # Per-VM target namespace override only when it diverges from the
         # plan-level target — keeps the YAML compact in the common case.
         if vm_ns and vm_ns != plan_target_ns:

@@ -272,6 +272,97 @@ def test_wave_mtv_yaml_endpoint_renders_three_documents(client, db_session):
     assert "warm: true" in body
     assert "DB Backend" in body
     assert "nfs-prod-fast" in body
+    # Provider names come from the mapping's vcenter + target rows.
+    assert "name: vc-east" in body
+    assert "name: ocp-east" in body
+    # VM names emitted lowercase (RFC1123).
+    assert "name: db-prod-01" in body
+    # Original VM names preserved on ``id`` for traceback.
+    assert "id: db-prod-01" in body
+
+
+def test_plan_yaml_bundle_returns_zip(client, db_session):
+    """The plan-level /yaml route bundles every wave's multi-doc YAML
+    into a single zip — operators apply the whole plan in one shot."""
+    import io
+    import zipfile
+
+    from app.models.plan import MigrationPlan
+    from app.models.target import OCPTarget, ResourceMapping
+    from app.models.vcenter import VCenterSource
+
+    vc = VCenterSource(name="vc-bundle", hostname="vc-bundle.example")
+    target = OCPTarget(name="ocp-bundle", api_endpoint="https://ocp-bundle.example")
+    db_session.add_all([vc, target])
+    db_session.commit()
+    mapping = ResourceMapping(
+        name="b-map",
+        vcenter_source_id=vc.id,
+        ocp_target_id=target.id,
+        network_mappings=[
+            {
+                "source_network": "n1",
+                "target_network_name": "nad-1",
+                "target_network_type": "nad",
+                "target_namespace": "openshift-multus",
+            }
+        ],
+        storage_mappings=[{"source_datastore": "d1", "target_storage_class": "sc-1"}],
+        namespace_mappings=[{"criteria": "default", "target_namespace": "bundle-ns"}],
+    )
+    db_session.add(mapping)
+    db_session.commit()
+    db_session.add_all(
+        [
+            _vm(
+                "bundle-a-01",
+                vsphere_networks=["n1"],
+                vsphere_datastores=["d1"],
+                source_vcenter_id=vc.id,
+                target_cluster_id_override=target.id,
+            ),
+            _vm(
+                "bundle-b-01",
+                vsphere_networks=["n1"],
+                vsphere_datastores=["d1"],
+                source_vcenter_id=vc.id,
+                target_cluster_id_override=target.id,
+            ),
+        ]
+    )
+    db_session.commit()
+    from app.models.vm import VM
+
+    rows = db_session.query(VM).order_by(VM.id).all()
+    plan = MigrationPlan(
+        name="bundle-plan",
+        vm_ids=[v.id for v in rows],
+        waves=[
+            {"wave_number": 1, "vm_ids": [rows[0].id], "rationale": "wave 1"},
+            {"wave_number": 2, "vm_ids": [rows[1].id], "rationale": "wave 2"},
+        ],
+        model="test-model",
+        mapping_ids=[mapping.id],
+    )
+    db_session.add(plan)
+    db_session.commit()
+
+    r = client.get(f"/api/plans/{plan.id}/yaml")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("application/zip")
+    assert "attachment" in r.headers["content-disposition"]
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        names = sorted(zf.namelist())
+        assert names == [
+            f"plan-{plan.id}-wave-1.yaml",
+            f"plan-{plan.id}-wave-2.yaml",
+        ]
+        for name in names:
+            with zf.open(name) as f:
+                doc = f.read().decode()
+                assert "kind: NetworkMap" in doc
+                assert "kind: Plan" in doc
+                assert "kind: StorageMap" in doc
 
 
 def _vm(name: str, **kwargs):

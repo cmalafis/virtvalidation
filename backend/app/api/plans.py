@@ -763,10 +763,27 @@ def wave_mtv_yaml(
 
         mapping_for_wave.last_used_at = datetime.now(timezone.utc)
 
+    # Provider names: the source MTV Provider CR is by VCenterSource.name,
+    # the destination Provider CR by OCPTarget.name. Both must already
+    # exist on the cluster — VirtValidate emits Plan/NetworkMap/
+    # StorageMap that reference them by name.
+    source_provider_name = None
+    destination_provider_name = None
+    if mapping_for_wave is not None:
+        from app.models.target import OCPTarget
+        from app.models.vcenter import VCenterSource
+
+        vc = db.get(VCenterSource, mapping_for_wave.vcenter_source_id)
+        tgt = db.get(OCPTarget, mapping_for_wave.ocp_target_id)
+        source_provider_name = vc.name if vc is not None else None
+        destination_provider_name = tgt.name if tgt is not None else None
+
     ctx = WaveContext.from_settings(
         plan_id=plan_id,
         wave_number=wave_number,
         rationale=wave.get("rationale", ""),
+        source_provider=source_provider_name,
+        destination_provider=destination_provider_name,
     )
     try:
         yaml_text = generate_wave_yaml(ctx, vm_payloads, resolver=resolver)
@@ -787,6 +804,102 @@ def wave_mtv_yaml(
     return Response(
         content=yaml_text,
         media_type="application/yaml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{plan_id}/yaml", responses={200: {"content": {"application/zip": {}}}})
+def plan_yaml_bundle(plan_id: int, db: Session = Depends(get_db)) -> Response:
+    """Bundle every wave's MTV YAML for this plan into a single zip
+    download. Each file is one wave's NetworkMap + StorageMap + Plan
+    multi-doc YAML — same shape as the per-wave endpoint, just
+    aggregated for one-click apply."""
+    import io
+    import zipfile
+
+    plan = db.get(MigrationPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+    if not plan.waves:
+        raise HTTPException(status_code=422, detail=f"Plan {plan_id} has no waves yet")
+
+    # Re-walk the per-wave generator so the bundle stays in lockstep
+    # with the single-wave route (same resolver, same error
+    # surfacing). We collect into an in-memory zip rather than
+    # streaming because the YAML payload is small.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for wave in sorted(plan.waves, key=lambda w: w.get("wave_number", 0)):
+            wave_number = wave.get("wave_number")
+            if wave_number is None:
+                continue
+            vm_ids: list[int] = list(wave.get("vm_ids") or [])
+            if not vm_ids:
+                continue
+            vms_by_id = {vm.id: vm for vm in db.scalars(select(VM).where(VM.id.in_(vm_ids))).all()}
+            vm_payloads = [
+                {
+                    "name": vms_by_id[vid].name,
+                    "vsphere_networks": list(vms_by_id[vid].vsphere_networks or []),
+                    "vsphere_datastores": list(vms_by_id[vid].vsphere_datastores or []),
+                    "environment": vms_by_id[vid].environment or "",
+                    "application_hint": vms_by_id[vid].application_hint or "",
+                    "target_namespace": vms_by_id[vid].target_namespace_override or "",
+                }
+                for vid in vm_ids
+                if vid in vms_by_id
+            ]
+            wave_vcenter_ids = sorted(
+                {
+                    vms_by_id[vid].source_vcenter_id
+                    for vid in vm_ids
+                    if vid in vms_by_id and vms_by_id[vid].source_vcenter_id is not None
+                }
+            )
+            mapping_for_wave: ResourceMapping | None = None
+            for m in db.scalars(
+                select(ResourceMapping).where(ResourceMapping.id.in_(plan.mapping_ids or []))
+            ).all():
+                if m.vcenter_source_id in wave_vcenter_ids:
+                    mapping_for_wave = m
+                    break
+            resolver = None
+            source_name = None
+            destination_name = None
+            if mapping_for_wave is not None:
+                resolver = MappingResolver(
+                    network_mappings=list(mapping_for_wave.network_mappings or []),
+                    storage_mappings=list(mapping_for_wave.storage_mappings or []),
+                    namespace_mappings=mapping_for_wave.namespace_mappings or [],
+                )
+                from app.models.target import OCPTarget
+                from app.models.vcenter import VCenterSource
+
+                vc = db.get(VCenterSource, mapping_for_wave.vcenter_source_id)
+                tgt = db.get(OCPTarget, mapping_for_wave.ocp_target_id)
+                source_name = vc.name if vc is not None else None
+                destination_name = tgt.name if tgt is not None else None
+            ctx = WaveContext.from_settings(
+                plan_id=plan_id,
+                wave_number=wave_number,
+                rationale=wave.get("rationale", ""),
+                source_provider=source_name,
+                destination_provider=destination_name,
+            )
+            try:
+                yaml_text = generate_wave_yaml(ctx, vm_payloads, resolver=resolver)
+            except MTVGenerationError as e:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Wave {wave_number}: {e}",
+                ) from e
+            zf.writestr(f"plan-{plan_id}-wave-{wave_number}.yaml", yaml_text)
+
+    body = buf.getvalue()
+    filename = f"plan-{plan_id}-mtv-bundle.zip"
+    return Response(
+        content=body,
+        media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
