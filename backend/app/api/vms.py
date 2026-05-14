@@ -11,6 +11,11 @@ from app.core.baseline import synthesize_profile
 from app.core.capture import run_capture_task, task_store
 from app.core.db import get_db
 from app.core.limits import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from app.core.target_resolution import (
+    ResolvedTarget,
+    resolve_vm_target,
+    resolve_vms_iter,
+)
 from app.core.validation import run_validation_task
 from app.core.validation import task_store as validation_task_store
 from app.core.vm_lifecycle import LifecycleTransitionError, patch_transition
@@ -23,8 +28,12 @@ from app.schemas.validation import (
 )
 from app.schemas.vm import (
     BaselineProfile,
+    BulkClearTargetRequest,
     BulkEnvironmentSetRequest,
     BulkEnvironmentSetResult,
+    BulkSetTargetClusterRequest,
+    BulkSetTargetNamespaceRequest,
+    BulkTargetOverrideResult,
     BulkVMCreate,
     BulkVMDelete,
     BulkVMDeleteResult,
@@ -69,6 +78,52 @@ def _get_vm_or_404(db: Session, vm_id: int) -> VM:
     if vm is None:
         raise HTTPException(status_code=404, detail=f"VM {vm_id} not found")
     return vm
+
+
+def _vm_with_resolution(vm: VM, resolved: ResolvedTarget | None) -> dict:
+    """Render a VM ORM row + its :class:`ResolvedTarget` as a flat dict
+    that ``VMRead`` validates without extra schema gymnastics. The
+    resolver fields default to ``None`` / empty when ``resolved`` is
+    ``None`` — keeps the shape stable for endpoints that haven't
+    threaded the resolver yet.
+    """
+    body = VMRead.model_validate(vm, from_attributes=True).model_dump(mode="json")
+    if resolved is not None:
+        body["resolved_target_cluster_id"] = resolved.cluster_id
+        body["resolved_target_cluster_name"] = resolved.cluster_name
+        body["resolved_target_namespace"] = resolved.namespace
+        body["resolved_networks"] = [
+            {
+                "source": n.source,
+                "target_network_id": n.target_network_id,
+                "target_network_name": n.target_network_name,
+                "target_network_namespace": n.target_network_namespace,
+                "target_network_type": n.target_network_type,
+            }
+            for n in resolved.networks
+        ]
+        body["resolved_storage"] = [
+            {
+                "source": s.source,
+                "target_storage_class_name": s.target_storage_class_name,
+                "access_mode": s.access_mode,
+            }
+            for s in resolved.storage
+        ]
+        body["resolution_is_complete"] = resolved.is_complete
+        body["resolution_reasons"] = list(resolved.reasons)
+        body["resolution_mapping_id"] = resolved.mapping_id
+    return body
+
+
+def _decorate_with_resolution(vms: list[VM], db: Session) -> list[dict]:
+    """Resolve every VM in ``vms`` in one pass and return the dict
+    shape :class:`VMRead` consumes. Empty list → empty list, no DB hit.
+    """
+    if not vms:
+        return []
+    resolutions = resolve_vms_iter(vms, db)
+    return [_vm_with_resolution(vm, resolutions.get(vm.id)) for vm in vms]
 
 
 @router.post("", response_model=VMRead, status_code=status.HTTP_201_CREATED)
@@ -266,7 +321,12 @@ def list_vms(
     ordered = ordered.order_by(VM.id.asc())
     page_stmt = ordered.limit(limit).offset(skip)
     items = list(db.scalars(page_stmt).all())
-    return {"items": items, "total": total, "skip": skip, "limit": limit}
+    return {
+        "items": _decorate_with_resolution(items, db),
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
 
 
 @router.get("/facets", response_model=VMFacetsResponse)
@@ -533,6 +593,125 @@ def bulk_set_environment(
     return {"updated": len(found), "not_found": []}
 
 
+# ---------------------------------------------------------------------------
+# Bulk target overrides — same routing rule as bulk-set-environment.
+# These four routes set/clear ``target_cluster_id_override`` and
+# ``target_namespace_override`` on N VMs in one shot. Per-VM single
+# patches go through the standard PATCH /api/vms/{id}; these bulk
+# endpoints exist so the inventory bulk-action bar can apply an
+# override to every selected row in one request.
+# ---------------------------------------------------------------------------
+def _apply_bulk_target_overrides(
+    *,
+    db: Session,
+    vm_ids: list[int],
+    field: str,
+    value: int | str | None,
+    audit_action: str,
+    audit_details_extra: dict,
+    request: Request,
+) -> dict:
+    requested = list(dict.fromkeys(vm_ids))
+    found = {vm.id: vm for vm in db.scalars(select(VM).where(VM.id.in_(requested))).all()}
+    missing = [vid for vid in requested if vid not in found]
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"VMs not found: {missing[:20]}",
+        )
+    if field == "target_cluster_id_override" and value is not None:
+        # Validate the override points at a known OCPTarget. Skipping
+        # the check on None lets clear-override paths reuse the helper.
+        from app.models.target import OCPTarget
+
+        if db.get(OCPTarget, int(value)) is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"OCPTarget {value} not found",
+            )
+    for vm in found.values():
+        setattr(vm, field, value)
+    record_audit(
+        db,
+        action=audit_action,
+        actor=request.headers.get("x-actor", "user"),
+        resource_type="vm",
+        resource_id=None,
+        details={"vm_ids": requested, "count": len(found), **audit_details_extra},
+    )
+    db.commit()
+    request.state.skip_audit_log = True
+    return {"updated": len(found), "not_found": []}
+
+
+@router.post("/bulk-set-target-cluster", response_model=BulkTargetOverrideResult)
+def bulk_set_target_cluster(
+    request: Request,
+    payload: BulkSetTargetClusterRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return _apply_bulk_target_overrides(
+        db=db,
+        vm_ids=payload.vm_ids,
+        field="target_cluster_id_override",
+        value=payload.target_cluster_id_override,
+        audit_action="vm.target_cluster_override.bulk_set",
+        audit_details_extra={"target_cluster_id_override": payload.target_cluster_id_override},
+        request=request,
+    )
+
+
+@router.post("/bulk-clear-target-cluster", response_model=BulkTargetOverrideResult)
+def bulk_clear_target_cluster(
+    request: Request,
+    payload: BulkClearTargetRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return _apply_bulk_target_overrides(
+        db=db,
+        vm_ids=payload.vm_ids,
+        field="target_cluster_id_override",
+        value=None,
+        audit_action="vm.target_cluster_override.bulk_clear",
+        audit_details_extra={},
+        request=request,
+    )
+
+
+@router.post("/bulk-set-target-namespace", response_model=BulkTargetOverrideResult)
+def bulk_set_target_namespace(
+    request: Request,
+    payload: BulkSetTargetNamespaceRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return _apply_bulk_target_overrides(
+        db=db,
+        vm_ids=payload.vm_ids,
+        field="target_namespace_override",
+        value=payload.target_namespace_override,
+        audit_action="vm.target_namespace_override.bulk_set",
+        audit_details_extra={"target_namespace_override": payload.target_namespace_override},
+        request=request,
+    )
+
+
+@router.post("/bulk-clear-target-namespace", response_model=BulkTargetOverrideResult)
+def bulk_clear_target_namespace(
+    request: Request,
+    payload: BulkClearTargetRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    return _apply_bulk_target_overrides(
+        db=db,
+        vm_ids=payload.vm_ids,
+        field="target_namespace_override",
+        value=None,
+        audit_action="vm.target_namespace_override.bulk_clear",
+        audit_details_extra={},
+        request=request,
+    )
+
+
 @router.post("/redetect-environment", response_model=RedetectEnvironmentResult)
 def redetect_environment(
     request: Request,
@@ -664,8 +843,9 @@ def set_vm_environment(
 
 
 @router.get("/{vm_id}", response_model=VMRead)
-def get_vm(vm_id: int, db: Session = Depends(get_db)) -> VM:
-    return _get_vm_or_404(db, vm_id)
+def get_vm(vm_id: int, db: Session = Depends(get_db)) -> dict:
+    vm = _get_vm_or_404(db, vm_id)
+    return _vm_with_resolution(vm, resolve_vm_target(vm, db))
 
 
 def _diff_for_audit(before: dict, after: dict) -> dict:
@@ -688,7 +868,7 @@ def update_vm(
     vm_id: int,
     payload: VMUpdate,
     db: Session = Depends(get_db),
-) -> VM:
+) -> dict:
     vm = _get_vm_or_404(db, vm_id)
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
@@ -732,7 +912,7 @@ def update_vm(
     db.commit()
     db.refresh(vm)
     request.state.skip_audit_log = True
-    return vm
+    return _vm_with_resolution(vm, resolve_vm_target(vm, db))
 
 
 @router.delete("/{vm_id}", status_code=status.HTTP_204_NO_CONTENT)

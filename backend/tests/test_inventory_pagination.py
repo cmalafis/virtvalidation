@@ -89,9 +89,7 @@ def test_filter_by_multi_value_status(client):
     client.patch(f"/api/vms/{a['id']}", json={"status": "baseline_captured"})
     client.patch(f"/api/vms/{b['id']}", json={"status": "validated"})
 
-    body = client.get(
-        "/api/vms?status=baseline_captured&status=validated&sort_by=name"
-    ).json()
+    body = client.get("/api/vms?status=baseline_captured&status=validated&sort_by=name").json()
     assert body["total"] == 2
     assert {v["name"] for v in body["items"]} == {"a", "b"}
 
@@ -124,16 +122,25 @@ def test_search_matches_name_owner_app_hint(client):
 
 def test_filters_combine_with_and_semantics(client):
     _create_vm(
-        client, name="match",
-        source_hostname="match.local", environment="prod", os_family="rhel",
+        client,
+        name="match",
+        source_hostname="match.local",
+        environment="prod",
+        os_family="rhel",
     )
     _create_vm(
-        client, name="only_env",
-        source_hostname="o1.local", environment="prod", os_family="windows",
+        client,
+        name="only_env",
+        source_hostname="o1.local",
+        environment="prod",
+        os_family="windows",
     )
     _create_vm(
-        client, name="only_os",
-        source_hostname="o2.local", environment="dev", os_family="rhel",
+        client,
+        name="only_os",
+        source_hostname="o2.local",
+        environment="dev",
+        os_family="rhel",
     )
     body = client.get("/api/vms?environment=prod&os_family=rhel").json()
     assert body["total"] == 1
@@ -278,3 +285,187 @@ def test_delete_all_cascades_snapshots(client):
     # The VM is gone; the snapshot listing returns 404 for the now-deleted VM.
     r = client.get(f"/api/vms/{vm['id']}/snapshots")
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Resolved-target surfacing on list + get + bulk override endpoints
+# ---------------------------------------------------------------------------
+def _seed_mapping(client) -> dict:
+    """vCenter + OCPTarget + mapping covering vlan-100 / tier1 / namespace=prod."""
+    vcs = client.get("/api/sources/vcenters").json()
+    if isinstance(vcs, dict):
+        vcs = vcs.get("items", [])
+    vc = next((v for v in vcs if v["name"] == "vc-res"), None)
+    if vc is None:
+        vc = client.post(
+            "/api/sources/vcenters",
+            json={"name": "vc-res", "hostname": "vc-res.example"},
+        ).json()
+    targets = client.get("/api/sources/targets").json()
+    tgt = next((t for t in targets if t["name"] == "ocp-res"), None)
+    if tgt is None:
+        tgt = client.post(
+            "/api/sources/targets",
+            json={"name": "ocp-res", "api_endpoint": "https://ocp-res.example"},
+        ).json()
+    existing = [
+        m
+        for m in client.get("/api/mappings").json()
+        if m["vcenter_source_id"] == vc["id"] and m["ocp_target_id"] == tgt["id"]
+    ]
+    if not existing:
+        client.post(
+            "/api/mappings",
+            json={
+                "name": "res-map",
+                "vcenter_source_id": vc["id"],
+                "ocp_target_id": tgt["id"],
+                "network_mappings": [
+                    {
+                        "source_network": "vlan-100",
+                        "target_network_name": "vlan-100-nad",
+                        "target_network_type": "nad",
+                        "target_namespace": "openshift-multus",
+                    }
+                ],
+                "storage_mappings": [
+                    {"source_datastore": "tier1", "target_storage_class": "ocs-rbd"}
+                ],
+                "namespace_mappings": [{"criteria": "default", "target_namespace": "prod"}],
+            },
+        ).raise_for_status()
+    mapping = next(
+        m
+        for m in client.get("/api/mappings").json()
+        if m["vcenter_source_id"] == vc["id"] and m["ocp_target_id"] == tgt["id"]
+    )
+    return {"vc_id": vc["id"], "target_id": tgt["id"], "mapping_id": mapping["id"]}
+
+
+def test_list_surfaces_resolved_target_fields(client):
+    seed = _seed_mapping(client)
+    client.post(
+        "/api/vms",
+        json={
+            "name": "vm-res-1",
+            "source_hostname": "vm-res-1.local",
+            "source_vcenter_id": seed["vc_id"],
+            "vsphere_networks": ["vlan-100"],
+            "vsphere_datastores": ["tier1"],
+        },
+    ).raise_for_status()
+    items = client.get("/api/vms").json()["items"]
+    vm = next(v for v in items if v["name"] == "vm-res-1")
+    assert vm["resolved_target_cluster_id"] == seed["target_id"]
+    assert vm["resolved_target_cluster_name"] == "ocp-res"
+    assert vm["resolved_target_namespace"] == "prod"
+    assert vm["resolution_is_complete"] is True
+    assert vm["resolution_mapping_id"] == seed["mapping_id"]
+    nets = vm["resolved_networks"]
+    assert len(nets) == 1
+    assert nets[0]["source"] == "vlan-100"
+    assert nets[0]["target_network_name"] == "vlan-100-nad"
+    assert nets[0]["target_network_namespace"] == "openshift-multus"
+
+
+def test_patch_returns_resolved_view_after_setting_override(client):
+    seed = _seed_mapping(client)
+    vm = client.post(
+        "/api/vms",
+        json={
+            "name": "vm-override",
+            "source_hostname": "vm-override.local",
+            "source_vcenter_id": seed["vc_id"],
+            "vsphere_networks": ["vlan-100"],
+            "vsphere_datastores": ["tier1"],
+        },
+    ).json()
+    r = client.patch(
+        f"/api/vms/{vm['id']}",
+        json={"target_namespace_override": "custom-ns"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["target_namespace_override"] == "custom-ns"
+    assert body["resolved_target_namespace"] == "custom-ns"  # override wins
+
+
+def test_bulk_set_target_cluster_persists_and_clears(client):
+    seed = _seed_mapping(client)
+    vm_ids = []
+    for i in range(1, 4):
+        vm = client.post(
+            "/api/vms",
+            json={
+                "name": f"vm-bulk-{i:02d}",
+                "source_hostname": f"vm-bulk-{i:02d}.local",
+                "source_vcenter_id": seed["vc_id"],
+                "vsphere_networks": ["vlan-100"],
+                "vsphere_datastores": ["tier1"],
+            },
+        ).json()
+        vm_ids.append(vm["id"])
+
+    r = client.post(
+        "/api/vms/bulk-set-target-cluster",
+        json={"vm_ids": vm_ids, "target_cluster_id_override": seed["target_id"]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["updated"] == 3
+
+    for vid in vm_ids:
+        body = client.get(f"/api/vms/{vid}").json()
+        assert body["target_cluster_id_override"] == seed["target_id"]
+
+    r = client.post("/api/vms/bulk-clear-target-cluster", json={"vm_ids": vm_ids})
+    assert r.status_code == 200
+    for vid in vm_ids:
+        body = client.get(f"/api/vms/{vid}").json()
+        assert body["target_cluster_id_override"] is None
+
+
+def test_bulk_set_target_namespace_persists(client):
+    seed = _seed_mapping(client)
+    vm = client.post(
+        "/api/vms",
+        json={
+            "name": "vm-ns-bulk",
+            "source_hostname": "vm-ns-bulk.local",
+            "source_vcenter_id": seed["vc_id"],
+            "vsphere_networks": ["vlan-100"],
+            "vsphere_datastores": ["tier1"],
+        },
+    ).json()
+    r = client.post(
+        "/api/vms/bulk-set-target-namespace",
+        json={"vm_ids": [vm["id"]], "target_namespace_override": "pinned-ns"},
+    )
+    assert r.status_code == 200
+    body = client.get(f"/api/vms/{vm['id']}").json()
+    assert body["target_namespace_override"] == "pinned-ns"
+    assert body["resolved_target_namespace"] == "pinned-ns"
+
+
+def test_bulk_set_target_cluster_unknown_target_404(client):
+    seed = _seed_mapping(client)
+    vm = client.post(
+        "/api/vms",
+        json={
+            "name": "vm-bad-cluster",
+            "source_hostname": "vm-bad-cluster.local",
+            "source_vcenter_id": seed["vc_id"],
+        },
+    ).json()
+    r = client.post(
+        "/api/vms/bulk-set-target-cluster",
+        json={"vm_ids": [vm["id"]], "target_cluster_id_override": 99999},
+    )
+    assert r.status_code == 404, r.text
+
+
+def test_bulk_set_target_cluster_unknown_vm_404(client):
+    r = client.post(
+        "/api/vms/bulk-set-target-cluster",
+        json={"vm_ids": [99999], "target_cluster_id_override": None},
+    )
+    assert r.status_code == 404, r.text

@@ -304,16 +304,22 @@ def _resolve_vm_with_caches(vm: VM, caches: _ResolverCaches) -> ResolvedTarget:
             if tgt_name:
                 net.target_network_name = tgt_name
                 net.target_network_type = tgt_type
+                # Mapping rows may carry an inline ``target_namespace``
+                # (the legacy shape and the row the editor saves today).
+                # Prefer that; fall back to the cluster catalog entry.
+                inline_namespace = (entry.get("target_namespace") or "").strip() or None
                 catalog_hit = network_catalog.get(tgt_name)
                 if catalog_hit is not None:
                     net.target_network_id = catalog_hit.id
-                    net.target_network_namespace = catalog_hit.namespace
                     if net.target_network_type is None:
                         net.target_network_type = (
                             catalog_hit.network_type.value
                             if hasattr(catalog_hit.network_type, "value")
                             else str(catalog_hit.network_type)
                         )
+                net.target_network_namespace = inline_namespace or (
+                    catalog_hit.namespace if catalog_hit is not None else None
+                )
                 if (net.target_network_type or "").lower() == "pod":
                     net.target_network_namespace = None
                 if (
@@ -322,10 +328,11 @@ def _resolve_vm_with_caches(vm: VM, caches: _ResolverCaches) -> ResolvedTarget:
                 ):
                     # Default NAD namespace heuristic — the operator
                     # declared NAD lives in the workload namespace if
-                    # the catalog row left it empty. Mark it as a gap
-                    # rather than fabricating one.
+                    # neither the mapping row nor the catalog declared
+                    # one. Mark it as a gap rather than fabricating one.
                     result.reasons.append(
-                        f"target network {tgt_name!r} has no declared namespace in the cluster catalog"
+                        f"target network {tgt_name!r} has no declared namespace "
+                        "(missing on mapping row and cluster catalog)"
                     )
             elif (tgt_type or "").lower() == "pod":
                 net.target_network_type = "pod"

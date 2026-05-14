@@ -73,6 +73,22 @@ class VMUpdate(BaseModel):
     application_hint: str | None = Field(default=None, max_length=128)
 
 
+class ResolvedNetworkRead(BaseModel):
+    """One source-network resolution row surfaced to the inventory UI."""
+
+    source: str
+    target_network_id: int | None = None
+    target_network_name: str | None = None
+    target_network_namespace: str | None = None
+    target_network_type: str | None = None
+
+
+class ResolvedStorageRead(BaseModel):
+    source: str
+    target_storage_class_name: str | None = None
+    access_mode: str | None = None
+
+
 class VMRead(VMBase):
     # use_enum_values=True so Pydantic serializes both ``status`` and
     # ``lifecycle_state`` as their string values rather than enum
@@ -86,6 +102,19 @@ class VMRead(VMBase):
     lifecycle_state_changed_at: datetime
     created_at: datetime
     updated_at: datetime
+
+    # Resolved-target fields populated by :func:`list_vms`,
+    # :func:`get_vm`, and the bulk override endpoints. Defaults keep
+    # the schema compatible with detached VM rows (test fixtures,
+    # background jobs) that haven't gone through the resolver.
+    resolved_target_cluster_id: int | None = None
+    resolved_target_cluster_name: str | None = None
+    resolved_target_namespace: str | None = None
+    resolved_networks: list[ResolvedNetworkRead] = Field(default_factory=list)
+    resolved_storage: list[ResolvedStorageRead] = Field(default_factory=list)
+    resolution_is_complete: bool = False
+    resolution_reasons: list[str] = Field(default_factory=list)
+    resolution_mapping_id: int | None = None
 
 
 class VMListResponse(BaseModel):
@@ -220,6 +249,33 @@ class BulkVMDelete(BaseModel):
 class BulkVMDeleteResult(BaseModel):
     requested: int
     deleted: list[int]
+    not_found: list[int]
+
+
+# ---------- bulk target override endpoints ----------
+class BulkSetTargetClusterRequest(BaseModel):
+    """Body for POST /api/vms/bulk-set-target-cluster.
+
+    ``target_cluster_id_override`` accepts an int (apply override) or
+    ``None`` (clear override). The dedicated bulk-clear endpoint is a
+    thin alias for callers that want intent-named routes.
+    """
+
+    vm_ids: list[int] = Field(min_length=1, max_length=MAX_VMS_PER_BULK_CREATE)
+    target_cluster_id_override: int | None = Field(default=None)
+
+
+class BulkSetTargetNamespaceRequest(BaseModel):
+    vm_ids: list[int] = Field(min_length=1, max_length=MAX_VMS_PER_BULK_CREATE)
+    target_namespace_override: str | None = Field(default=None, max_length=253)
+
+
+class BulkClearTargetRequest(BaseModel):
+    vm_ids: list[int] = Field(min_length=1, max_length=MAX_VMS_PER_BULK_CREATE)
+
+
+class BulkTargetOverrideResult(BaseModel):
+    updated: int
     not_found: list[int]
 
 
