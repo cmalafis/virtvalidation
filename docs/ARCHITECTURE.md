@@ -29,7 +29,7 @@ Enrolling, listing, editing, and deleting VMs.
 <details><summary><strong><code>app.api.vms</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/vms.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.limits`, `app.core.validation`, `app.core.vm_lifecycle`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
+Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.limits`, `app.core.target_resolution`, `app.core.validation`, `app.core.vm_lifecycle`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
 
 **Routes**
 
@@ -42,6 +42,10 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core
 | `GET` | `/api/vms/stats` | `vm_stats(db)` | Cheap dashboard counters — no filter set, no row reads. |
 | `DELETE` | `/api/vms/all` | `delete_all_vms(request, db, confirm, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Bulk-delete every VM that matches the given filters. |
 | `POST` | `/api/vms/bulk-set-environment` | `bulk_set_environment(request, payload, db)` | Atomically set the environment of N VMs. |
+| `POST` | `/api/vms/bulk-set-target-cluster` | `bulk_set_target_cluster(request, payload, db)` | — |
+| `POST` | `/api/vms/bulk-clear-target-cluster` | `bulk_clear_target_cluster(request, payload, db)` | — |
+| `POST` | `/api/vms/bulk-set-target-namespace` | `bulk_set_target_namespace(request, payload, db)` | — |
+| `POST` | `/api/vms/bulk-clear-target-namespace` | `bulk_clear_target_namespace(request, payload, db)` | — |
 | `POST` | `/api/vms/redetect-environment` | `redetect_environment(request, payload, db)` | Re-run the detection cascade on the fleet (or one vCenter). |
 | `PATCH` | `/api/vms/{vm_id}/environment` | `set_vm_environment(request, vm_id, payload, db)` | Operator override of one VM&#x27;s environment. |
 | `GET` | `/api/vms/{vm_id}` | `get_vm(vm_id, db)` | — |
@@ -72,7 +76,7 @@ Depends on: `app.core.db`
 - **`VMLifecycleState`** (Class)
   - Plan-membership lifecycle, orthogonal to ``VMStatus``.
 - **`VM`** (SQLAlchemy model · table `vms`)
-  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`, `environment_source`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
+  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_cluster_id_override`, `target_namespace_override`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`, `environment_source`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
 - **`BaselineSnapshot`** (SQLAlchemy model · table `baseline_snapshots`)
   - Fields: `id`, `vm_id`, `snapshot_number`, `ssh_user`, `raw_data`, `checksum`, `collected_at`, `vm`
 
@@ -86,12 +90,17 @@ Depends on: `app.core.limits`, `app.models.vm`
 **Classes**
 
 - **`VMBase`** (Pydantic schema)
-  - Fields: `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`
+  - Fields: `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_cluster_id_override`, `target_namespace_override`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`
 - **`VMCreate`** (Class)
 - **`VMUpdate`** (Pydantic schema)
-  - Fields: `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `lifecycle_state`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_namespace`, `target_storage_class`, `target_network_attachment`, `source_vcenter_id`, `application_hint`
+  - Fields: `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `lifecycle_state`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_cluster_id_override`, `target_namespace_override`, `source_vcenter_id`, `application_hint`
+- **`ResolvedNetworkRead`** (Pydantic schema)
+  - One source-network resolution row surfaced to the inventory UI.
+  - Fields: `source`, `target_network_id`, `target_network_name`, `target_network_namespace`, `target_network_type`
+- **`ResolvedStorageRead`** (Pydantic schema)
+  - Fields: `source`, `target_storage_class_name`, `access_mode`
 - **`VMRead`** (Class)
-  - Fields: `id`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `created_at`, `updated_at`
+  - Fields: `id`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `created_at`, `updated_at`, `resolved_target_cluster_id`, `resolved_target_cluster_name`, `resolved_target_namespace`, `resolved_networks`, `resolved_storage`, `resolution_is_complete`, `resolution_reasons`, `resolution_mapping_id`
 - **`VMListResponse`** (Pydantic schema)
   - Paginated wrapper for the inventory listing.
   - Fields: `items`, `total`, `skip`, `limit`
@@ -126,6 +135,15 @@ Depends on: `app.core.limits`, `app.models.vm`
   - Fields: `vm_ids`
 - **`BulkVMDeleteResult`** (Pydantic schema)
   - Fields: `requested`, `deleted`, `not_found`
+- **`BulkSetTargetClusterRequest`** (Pydantic schema)
+  - Body for POST /api/vms/bulk-set-target-cluster.
+  - Fields: `vm_ids`, `target_cluster_id_override`
+- **`BulkSetTargetNamespaceRequest`** (Pydantic schema)
+  - Fields: `vm_ids`, `target_namespace_override`
+- **`BulkClearTargetRequest`** (Pydantic schema)
+  - Fields: `vm_ids`
+- **`BulkTargetOverrideResult`** (Pydantic schema)
+  - Fields: `updated`, `not_found`
 - **`CaptureTaskRead`** (Pydantic schema)
   - Fields: `task_id`, `vm_id`, `status`, `started_at`, `completed_at`, `snapshot_id`, `error`
 - **`BulkCaptureSpawn`** (Pydantic schema)
@@ -262,13 +280,14 @@ LLM-driven wave planning + MTV/Forklift YAML generation.
 <details><summary><strong><code>app.api.plans</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/plans.py`  
-Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_generation`, `app.core.preclassifier`, `app.core.reporter`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
+Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_generation`, `app.core.preclassifier`, `app.core.reporter`, `app.core.target_resolution`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
 
 **Routes**
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
 | `POST` | `/api/plans` | `create_plan(payload, background_tasks, db)` | Kick off async migration plan generation. |
+| `POST` | `/api/plans/preview` | `preview_plan_partitions(payload, db)` | Show how the selection will fan out into Plan CRs without |
 | `POST` | `/api/plans/preview-groups` | `preview_groups(payload, db)` | Show how the pre-classifier WOULD group these VMs — no LLM, no plan. |
 | `GET` | `/api/plans` | `list_plans(db, limit)` | — |
 | `GET` | `/api/plans/{plan_id}` | `get_plan(plan_id, db)` | — |
@@ -277,6 +296,7 @@ Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mappin
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/report` | `wave_report(request, plan_id, wave_number, format, db)` | — |
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/report/pdf` | `wave_report_pdf(request, plan_id, wave_number, db)` | Dedicated PDF endpoint — always returns Content-Type: application/pdf. |
 | `GET` | `/api/plans/{plan_id}/waves/{wave_number}/mtv-yaml` | `wave_mtv_yaml(request, plan_id, wave_number, db)` | Render the wave as a multi-doc MTV/Forklift YAML for ``oc apply -f``. |
+| `GET` | `/api/plans/{plan_id}/yaml` | `plan_yaml_bundle(plan_id, db)` | Bundle every wave&#x27;s MTV YAML for this plan into a single zip |
 | `GET` | `/api/planning-strategies` | `list_strategies(db)` | — |
 | `POST` | `/api/planning-strategies` | `create_strategy(request, payload, db)` | — |
 | `GET` | `/api/planning-strategies/{strategy_id}` | `get_strategy(strategy_id, db)` | — |
@@ -345,7 +365,7 @@ Depends on: `app.core.db`
   - Customer intent captured by the planning wizard.
   - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
 - **`MigrationPlan`** (SQLAlchemy model · table `migration_plans`)
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_id`, `mapping_ids`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `created_at`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `created_at`
 
 </details>
 
@@ -366,12 +386,21 @@ Depends on: `app.models.plan`
   - Fields: `wave_number`, `name`, `vm_ids`, `vm_names`, `rationale`, `estimated_duration`, `estimated_risk`, `risk_level`, `considerations`, `applications_included`, `applications_split_warning`
 - **`PlanRead`** (Pydantic schema)
   - API response shape for a stored plan.
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_id`, `mapping_ids`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`, `plans`, `plan_count`
 - **`PlanCreate`** (Pydantic schema)
-  - Fields: `vm_ids`, `name`, `mapping_ids`, `mapping_id`, `preclassification_enabled`, `ha_strategy`
+  - Fields: `vm_ids`, `name`, `mapping_ids`, `preclassification_enabled`, `ha_strategy`
 - **`PreviewGroupsResponse`** (Pydantic schema)
   - Result of POST /api/plans/preview-groups — no plan persisted.
   - Fields: `vm_count`, `groups_formed`, `groups`, `over_ceiling`, `ceiling`
+- **`PreviewPartitionGroup`** (Pydantic schema)
+  - One ``(vcenter, cluster, namespace)`` partition the operator's
+  - Fields: `source_vcenter_id`, `source_vcenter_name`, `target_cluster_id`, `target_cluster_name`, `target_namespace`, `vm_count`, `estimated_waves`, `mapping_id`, `mapping_name`, `network_targets`, `storage_targets`
+- **`PreviewUnresolvedVM`** (Pydantic schema)
+  - Fields: `vm_id`, `vm_name`, `reasons`
+- **`PlanPreviewResponse`** (Pydantic schema)
+  - Fields: `total_vms`, `resolvable`, `unresolvable`, `groups`, `unresolved`
+- **`MultiPlanCreateResponse`** (Pydantic schema)
+  - Fields: `plans`
 
 </details>
 
@@ -679,7 +708,7 @@ Depends on: `app.core`, `app.core.audit`, `app.core.db`, `app.core.storage_revie
 <details><summary><strong><code>app.api.target_entities</code></strong> — <em>API endpoints</em> · CRUD endpoints for operator-defined TargetNetwork / TargetStorageClass.</summary>
 
 Path: `backend/app/api/target_entities.py`  
-Depends on: `app.core.audit`, `app.core.db`, `app.models.target`, `app.models.target_network`, `app.models.target_storage_class`, `app.schemas.target_entities`
+Depends on: `app.core.audit`, `app.core.db`, `app.models.ocp_namespace`, `app.models.target`, `app.models.target_network`, `app.models.target_storage_class`, `app.models.vm`, `app.schemas.ocp_namespace`, `app.schemas.target_entities`
 
 **Routes**
 
@@ -695,13 +724,18 @@ Depends on: `app.core.audit`, `app.core.db`, `app.models.target`, `app.models.ta
 | `GET` | `/api/sources/targets/{target_id}/storage-classes/{sc_id}` | `get_storage_class(target_id, sc_id, db)` | — |
 | `PATCH` | `/api/sources/targets/{target_id}/storage-classes/{sc_id}` | `update_storage_class(request, target_id, sc_id, payload, db)` | — |
 | `DELETE` | `/api/sources/targets/{target_id}/storage-classes/{sc_id}` | `delete_storage_class(request, target_id, sc_id, db)` | — |
+| `GET` | `/api/sources/targets/{target_id}/namespaces` | `list_namespaces(target_id, skip, limit, db)` | — |
+| `POST` | `/api/sources/targets/{target_id}/namespaces` | `create_namespace(request, target_id, payload, db)` | — |
+| `GET` | `/api/sources/targets/{target_id}/namespaces/{ns_id}` | `get_namespace(target_id, ns_id, db)` | — |
+| `PATCH` | `/api/sources/targets/{target_id}/namespaces/{ns_id}` | `update_namespace(request, target_id, ns_id, payload, db)` | — |
+| `DELETE` | `/api/sources/targets/{target_id}/namespaces/{ns_id}` | `delete_namespace(request, target_id, ns_id, db)` | — |
 
 </details>
 
 <details><summary><strong><code>app.api.targets</code></strong> — <em>API endpoints</em> · OCP target cluster registry + ResourceMapping CRUD + plan-time mapping resolution.</summary>
 
 Path: `backend/app/api/targets.py`  
-Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.core.ocp_discovery`, `app.models.plan`, `app.models.target`, `app.models.target_network`, `app.models.target_storage_class`, `app.models.vcenter`, `app.models.vm`, `app.schemas.target`
+Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.models.plan`, `app.models.target`, `app.models.target_network`, `app.models.target_storage_class`, `app.models.vcenter`, `app.models.vm`, `app.schemas.target`
 
 **Routes**
 
@@ -712,7 +746,6 @@ Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.
 | `GET` | `/api/sources/targets/{target_id}` | `get_target(target_id, db)` | — |
 | `PATCH` | `/api/sources/targets/{target_id}` | `update_target(request, target_id, payload, db)` | — |
 | `DELETE` | `/api/sources/targets/{target_id}` | `delete_target(request, target_id, db)` | — |
-| `POST` | `/api/sources/targets/{target_id}/discover` | `discover_target(request, target_id, payload, db)` | Run discovery against the target cluster. |
 | `GET` | `/api/mappings` | `list_mappings(db)` | — |
 | `POST` | `/api/mappings` | `create_mapping(request, payload, db)` | — |
 | `GET` | `/api/mappings/{mapping_id}` | `get_mapping(mapping_id, db)` | — |
@@ -1215,34 +1248,6 @@ Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.models.vm`
 
 </details>
 
-<details><summary><strong><code>app.core.ocp_discovery</code></strong> — <em>Business logic</em> · OCP target cluster resource discovery.</summary>
-
-Path: `backend/app/core/ocp_discovery.py`  
-
-**Classes**
-
-- **`DiscoveryResult`** (Class)
-  - What ``discover_all`` returns. Each list is exactly the shape
-  - Fields: `storage_classes`, `network_attachments`, `namespaces`, `cluster_capacity`, `mtv_namespace`, `ocp_version`, `kubernetes_version`
-- **`OCPDiscoveryError`** (Class)
-  - Raised when the cluster is unreachable, rejects auth, or returns
-- **`OCPDiscoveryClient`** (Class)
-  - HTTP-REST client for OCP discovery.
-  - Methods:
-    - `discover_storage_classes(self, client)`
-    - `discover_network_attachments(self, client)`
-    - `discover_namespaces(self, client)`
-    - `discover_capacity(self, client)`
-    - `discover_mtv_namespace(self, client)` — Find the namespace where MTV/Forklift is installed.
-    - `discover_versions(self, client)` — Return ``(ocp_version, kubernetes_version)``. The OCP version
-    - `discover_all(self)` — Run every discovery call against one cluster connection.
-
-**Functions**
-
-- `storage_class_count(target_row)` — Helper used by the dashboard summary endpoint — returns 0 when
-
-</details>
-
 <details><summary><strong><code>app.core.os_profile</code></strong> — <em>Business logic</em> · OS detection for the SSH collector.</summary>
 
 Path: `backend/app/core/os_profile.py`  
@@ -1302,13 +1307,13 @@ Depends on: `app.core.concurrency`, `app.core.family`, `app.core.mapping_validat
 <details><summary><strong><code>app.core.preclassifier</code></strong> — <em>Business logic</em> · Mechanical pre-classification for the migration planner.</summary>
 
 Path: `backend/app/core/preclassifier.py`  
-Depends on: `app.core.config`, `app.models.vm`
+Depends on: `app.models.vm`
 
 **Classes**
 
 - **`GroupKey`** (Class)
   - Composite identifier for a group.
-  - Fields: `vcenter_id`, `target_namespace`, `role`, `state`, `discriminator`, `environment`
+  - Fields: `vcenter_id`, `target_namespace`, `role`, `state`, `discriminator`, `environment`, `target_cluster_id`
   - Methods:
     - `as_string(self)`
 - **`RiskAssessment`** (Class)
@@ -1428,6 +1433,36 @@ Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.models.vm`
 
 - `build_storage_source_summary(db)` — Aggregate vSphere datastores + per-datastore VM membership.
 - `normalize_findings(items)` — Public re-export — same shape as network_review.normalize_findings.
+
+</details>
+
+<details><summary><strong><code>app.core.target_resolution</code></strong> — <em>Business logic</em> · Per-VM target resolution.</summary>
+
+Path: `backend/app/core/target_resolution.py`  
+Depends on: `app.models.ocp_namespace`, `app.models.target`, `app.models.target_network`, `app.models.target_storage_class`, `app.models.vm`
+
+**Classes**
+
+- **`ResolvedNetwork`** (Class)
+  - Per-source-network resolution. ``target_network_*`` fields are
+  - Fields: `source`, `target_network_id`, `target_network_name`, `target_network_namespace`, `target_network_type`
+  - Methods:
+    - `is_resolved(self)`
+- **`ResolvedStorage`** (Class)
+  - Fields: `source`, `target_storage_class_name`, `access_mode`
+  - Methods:
+    - `is_resolved(self)`
+- **`ResolvedTarget`** (Class)
+  - Outcome of resolution for a single VM. ``is_complete`` is True
+  - Fields: `cluster_id`, `cluster_name`, `namespace`, `networks`, `storage`, `mapping_id`, `is_complete`, `reasons`
+- **`_ResolverCaches`** (Class)
+  - Fields: `mappings_by_vcenter`, `mappings_by_pair`, `clusters`, `networks_by_cluster`, `storage_by_cluster`, `namespaces_by_cluster`
+
+**Functions**
+
+- `resolve_vm_target(vm, db)` — Resolve a single VM's target. Pre-loads only the catalogs for
+- `resolve_vms_bulk(vm_ids, db)` — Resolve many VMs in O(1) mapping/catalog queries.
+- `resolve_vms_iter(vms, db)` — Same as :func:`resolve_vms_bulk` but takes the loaded VM rows
 
 </details>
 
@@ -1627,6 +1662,18 @@ Depends on: `app.core.db`
 
 </details>
 
+<details><summary><strong><code>app.models.ocp_namespace</code></strong> — <em>Data models / schemas</em> · Operator-declared target namespaces on an OCP cluster.</summary>
+
+Path: `backend/app/models/ocp_namespace.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`OCPTargetNamespace`** (SQLAlchemy model · table `ocp_target_namespaces`)
+  - Fields: `id`, `ocp_target_id`, `name`, `description`, `created_at`, `updated_at`
+
+</details>
+
 <details><summary><strong><code>app.models.settings</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/models/settings.py`  
@@ -1667,17 +1714,15 @@ Depends on: `app.core.db`, `app.models.vcenter`
 
 **Classes**
 
-- **`OCPAuthType`** (Class)
-  - How VirtValidate authenticates to the target cluster.
 - **`OCPTargetStatus`** (Class)
 - **`OCPTarget`** (SQLAlchemy model · table `ocp_targets`)
   - A registered OpenShift Virtualization target cluster.
-  - Fields: `id`, `name`, `api_endpoint`, `region`, `site`, `classification_level`, `status`, `auth_type`, `auth_credential_secret_ref`, `verify_ssl`, `storage_classes`, `network_attachments`, `namespaces`, `cluster_capacity`, `mtv_namespace`, `ocp_version`, `kubernetes_version`, `last_synced_at`, `last_error`, `notes`, `created_at`, `updated_at`
+  - Fields: `id`, `name`, `api_endpoint`, `region`, `site`, `classification_level`, `status`, `mtv_namespace`, `ocp_version`, `kubernetes_version`, `notes`, `created_at`, `updated_at`
 - **`ResourceMappingStatus`** (Class)
   - Lifecycle of a mapping. ``incomplete`` means at least one
 - **`ResourceMapping`** (SQLAlchemy model · table `resource_mappings`)
   - Concrete network/storage/namespace mapping between a vCenter
-  - Fields: `id`, `name`, `vcenter_source_id`, `ocp_target_id`, `status`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`, `last_used_at`, `created_at`, `updated_at`
+  - Fields: `id`, `name`, `vcenter_source_id`, `ocp_target_id`, `status`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `last_used_at`, `created_at`, `updated_at`
 
 </details>
 
@@ -1774,6 +1819,28 @@ Depends on: `app.models.network_review`
 
 </details>
 
+<details><summary><strong><code>app.schemas.ocp_namespace</code></strong> — <em>Data models / schemas</em> · Pydantic schemas for the operator-declared OCPTargetNamespace</summary>
+
+Path: `backend/app/schemas/ocp_namespace.py`  
+
+**Classes**
+
+- **`OCPTargetNamespaceBase`** (Pydantic schema)
+  - Fields: `name`, `description`
+- **`OCPTargetNamespaceCreate`** (Class)
+- **`OCPTargetNamespaceUpdate`** (Pydantic schema)
+  - Fields: `name`, `description`
+- **`OCPTargetNamespaceRead`** (Class)
+  - Fields: `id`, `ocp_target_id`, `created_at`, `updated_at`
+- **`OCPTargetNamespaceListResponse`** (Pydantic schema)
+  - Paginated wrapper — same shape as VMListResponse and the rest of
+  - Fields: `items`, `total`, `skip`, `limit`
+- **`OCPTargetNamespaceDeleteConflict`** (Pydantic schema)
+  - 409 body shape returned when a namespace is referenced by a VM
+  - Fields: `detail`, `referenced_by`
+
+</details>
+
 <details><summary><strong><code>app.schemas.settings</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/schemas/settings.py`  
@@ -1848,27 +1915,13 @@ Depends on: `app.models.target`, `app.models.vcenter`
 
 **Classes**
 
-- **`StorageClassDiscovered`** (Pydantic schema)
-  - One row from the discovered StorageClass list. Field set is the
-  - Fields: `name`, `provisioner`, `is_default`, `access_modes`, `reclaim_policy`, `volume_binding_mode`
-- **`NetworkAttachmentDiscovered`** (Pydantic schema)
-  - Fields: `name`, `namespace`, `type`, `config_summary`
-- **`NamespaceDiscovered`** (Pydantic schema)
-  - Fields: `name`, `labels`
-- **`ClusterCapacity`** (Pydantic schema)
-  - Fields: `node_count`, `total_cpu_millicores`, `total_memory_bytes`, `existing_vm_count`
 - **`OCPTargetBase`** (Pydantic schema)
-  - Fields: `name`, `api_endpoint`, `region`, `site`, `classification_level`, `auth_type`, `auth_credential_secret_ref`, `verify_ssl`, `notes`
+  - Fields: `name`, `api_endpoint`, `region`, `site`, `classification_level`, `mtv_namespace`, `ocp_version`, `kubernetes_version`, `notes`
 - **`OCPTargetCreate`** (Class)
 - **`OCPTargetUpdate`** (Pydantic schema)
-  - Fields: `name`, `api_endpoint`, `region`, `site`, `classification_level`, `auth_type`, `auth_credential_secret_ref`, `verify_ssl`, `notes`
+  - Fields: `name`, `api_endpoint`, `region`, `site`, `classification_level`, `mtv_namespace`, `ocp_version`, `kubernetes_version`, `notes`
 - **`OCPTargetRead`** (Class)
-  - Fields: `id`, `status`, `storage_classes`, `network_attachments`, `namespaces`, `cluster_capacity`, `mtv_namespace`, `ocp_version`, `kubernetes_version`, `last_synced_at`, `last_error`, `created_at`, `updated_at`
-- **`OCPDiscoveryRequest`** (Pydantic schema)
-  - Optional: paste a pre-discovered resource bundle instead of
-  - Fields: `bearer_token`, `manual_storage_classes`, `manual_network_attachments`, `manual_namespaces`
-- **`OCPDiscoveryResponse`** (Pydantic schema)
-  - Fields: `target_id`, `status`, `last_synced_at`, `storage_class_count`, `network_attachment_count`, `namespace_count`, `last_error`
+  - Fields: `id`, `status`, `created_at`, `updated_at`
 - **`NetworkMappingItem`** (Pydantic schema)
   - One source network → target network row.
   - Fields: `source_network`, `target_network_name`, `target_network_type`, `target_namespace`, `confidence`, `rationale`
@@ -1881,13 +1934,13 @@ Depends on: `app.models.target`, `app.models.vcenter`
   - Newer namespace-mapping shape: instead of a list of criteria
   - Fields: `strategy`, `single_namespace`, `per_env_namespaces`, `per_app_prefix`
 - **`ResourceMappingBase`** (Pydantic schema)
-  - Fields: `name`, `vcenter_source_id`, `ocp_target_id`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`
+  - Fields: `name`, `vcenter_source_id`, `ocp_target_id`, `network_mappings`, `storage_mappings`, `namespace_mappings`
 - **`ResourceMappingCreate`** (Class)
 - **`ResourceMappingUpdate`** (Pydantic schema)
-  - Fields: `name`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`
+  - Fields: `name`, `network_mappings`, `storage_mappings`, `namespace_mappings`
 - **`ResourceMappingRead`** (Pydantic schema)
   - Read-side schema. Decouples from ResourceMappingBase because the
-  - Fields: `id`, `name`, `vcenter_source_id`, `ocp_target_id`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `is_active`, `status`, `last_used_at`, `created_at`, `updated_at`
+  - Fields: `id`, `name`, `vcenter_source_id`, `ocp_target_id`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `status`, `last_used_at`, `created_at`, `updated_at`
 - **`MappingSuggestionResponse`** (Pydantic schema)
   - Fields: `suggestions`, `rationale_summary`
 - **`PreflightCheckResponse`** (Pydantic schema)
@@ -1996,14 +2049,25 @@ Exports / inner components:
 <details><summary><strong><code>frontend/src/components/InventoryTable.jsx</code></strong> — <em>Frontend component</em> · Paginated inventory table for the dashboard&#x27;s inventory tab.</summary>
 
 API calls:
+- `/api/ocp-targets/{id}/namespaces?limit=500`
+- `/api/sources/targets`
 - `/api/vms/all?{id}`
+- `/api/vms/bulk-set-target-cluster`
+- `/api/vms/bulk-set-target-namespace`
 - `/api/vms/facets?{id}`
+- `/api/vms/{id}`
 - `/api/vms?{id}`
 
 Exports / inner components:
 - **`StatusPill`** (component)
 - **`LifecyclePill`** (component)
 - **`fmt`** (helper)
+- **`TargetClusterCell`** (component)
+- **`TargetClusterPopover`** (component)
+- **`TargetNamespaceCell`** (component)
+- **`TargetNamespacePopover`** (component)
+- **`TargetNetworksCell`** (component)
+- **`BulkActionBar`** (component)
 - **`formatTimestamp`** (helper)
 - **`readStateFromUrl`** (helper)
 - **`writeStateToUrl`** (helper)
@@ -2056,6 +2120,8 @@ Exports / inner components:
 <details><summary><strong><code>frontend/src/components/OCPTargetDetail.jsx</code></strong> — <em>Frontend component</em> · OCP target detail page. Two operator-driven catalogs hang off the</summary>
 
 API calls:
+- `/api/ocp-targets/{id}/namespaces/{id}`
+- `/api/ocp-targets/{id}/namespaces?limit=500`
 - `/api/ocp-targets/{id}/networks`
 - `/api/ocp-targets/{id}/networks/{id}`
 - `/api/ocp-targets/{id}/storage-classes`
@@ -2068,6 +2134,8 @@ Exports / inner components:
 - **`StorageTab`** (component)
 - **`NetworkModal`** (component)
 - **`StorageModal`** (component)
+- **`NamespacesTab`** (component)
+- **`NamespaceModal`** (component)
 - **`Tab`** (component)
 - **`Empty`** (component)
 - **`Pill`** (component)
@@ -2082,13 +2150,11 @@ Exports / inner components:
 API calls:
 - `/api/sources/targets`
 - `/api/sources/targets/{id}`
-- `/api/sources/targets/{id}/discover`
 
 Exports / inner components:
 - **`OCPTargets`** (component)
 - **`Row`** (component)
 - **`CreateModal`** (component)
-- **`DiscoverModal`** (component)
 - **`Empty`** (component)
 - **`Pill`** (component)
 - **`Field`** (component)

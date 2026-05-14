@@ -312,6 +312,30 @@ const DATA = {
           },
           {
             "method": "POST",
+            "path": "/api/vms/bulk-set-target-cluster",
+            "handler": "bulk_set_target_cluster",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/vms/bulk-clear-target-cluster",
+            "handler": "bulk_clear_target_cluster",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/vms/bulk-set-target-namespace",
+            "handler": "bulk_set_target_namespace",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/vms/bulk-clear-target-namespace",
+            "handler": "bulk_clear_target_namespace",
+            "summary": ""
+          },
+          {
+            "method": "POST",
             "path": "/api/vms/redetect-environment",
             "handler": "redetect_environment",
             "summary": "Re-run the detection cascade on the fleet (or one vCenter)."
@@ -415,6 +439,7 @@ const DATA = {
           "app.core.capture",
           "app.core.db",
           "app.core.limits",
+          "app.core.target_resolution",
           "app.core.validation",
           "app.core.vm_lifecycle",
           "app.models.validation",
@@ -472,9 +497,8 @@ const DATA = {
               "notes",
               "vsphere_networks",
               "vsphere_datastores",
-              "target_namespace",
-              "target_storage_class",
-              "target_network_attachment",
+              "target_cluster_id_override",
+              "target_namespace_override",
               "source_vcenter_id",
               "application_hint",
               "vsphere_cluster",
@@ -542,9 +566,8 @@ const DATA = {
               "notes",
               "vsphere_networks",
               "vsphere_datastores",
-              "target_namespace",
-              "target_storage_class",
-              "target_network_attachment",
+              "target_cluster_id_override",
+              "target_namespace_override",
               "source_vcenter_id",
               "application_hint",
               "vsphere_cluster",
@@ -582,11 +605,36 @@ const DATA = {
               "notes",
               "vsphere_networks",
               "vsphere_datastores",
-              "target_namespace",
-              "target_storage_class",
-              "target_network_attachment",
+              "target_cluster_id_override",
+              "target_namespace_override",
               "source_vcenter_id",
               "application_hint"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ResolvedNetworkRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "source",
+              "target_network_id",
+              "target_network_name",
+              "target_network_namespace",
+              "target_network_type"
+            ],
+            "methods": [],
+            "summary": "One source-network resolution row surfaced to the inventory UI."
+          },
+          {
+            "name": "ResolvedStorageRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "source",
+              "target_storage_class_name",
+              "access_mode"
             ],
             "methods": [],
             "summary": ""
@@ -601,7 +649,15 @@ const DATA = {
               "lifecycle_state",
               "lifecycle_state_changed_at",
               "created_at",
-              "updated_at"
+              "updated_at",
+              "resolved_target_cluster_id",
+              "resolved_target_cluster_name",
+              "resolved_target_namespace",
+              "resolved_networks",
+              "resolved_storage",
+              "resolution_is_complete",
+              "resolution_reasons",
+              "resolution_mapping_id"
             ],
             "methods": [],
             "summary": ""
@@ -769,6 +825,49 @@ const DATA = {
             "fields": [
               "requested",
               "deleted",
+              "not_found"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkSetTargetClusterRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids",
+              "target_cluster_id_override"
+            ],
+            "methods": [],
+            "summary": "Body for POST /api/vms/bulk-set-target-cluster."
+          },
+          {
+            "name": "BulkSetTargetNamespaceRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids",
+              "target_namespace_override"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkClearTargetRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_ids"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "BulkTargetOverrideResult",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "updated",
               "not_found"
             ],
             "methods": [],
@@ -1142,6 +1241,12 @@ const DATA = {
           },
           {
             "method": "POST",
+            "path": "/api/plans/preview",
+            "handler": "preview_plan_partitions",
+            "summary": "Show how the selection will fan out into Plan CRs without"
+          },
+          {
+            "method": "POST",
             "path": "/api/plans/preview-groups",
             "handler": "preview_groups",
             "summary": "Show how the pre-classifier WOULD group these VMs \u2014 no LLM, no plan."
@@ -1190,6 +1295,12 @@ const DATA = {
           },
           {
             "method": "GET",
+            "path": "/api/plans/{plan_id}/yaml",
+            "handler": "plan_yaml_bundle",
+            "summary": "Bundle every wave's MTV YAML for this plan into a single zip"
+          },
+          {
+            "method": "GET",
             "path": "/api/planning-strategies",
             "handler": "list_strategies",
             "summary": ""
@@ -1230,6 +1341,7 @@ const DATA = {
           "app.core.plan_generation",
           "app.core.preclassifier",
           "app.core.reporter",
+          "app.core.target_resolution",
           "app.core.vm_lifecycle",
           "app.models.plan",
           "app.models.target",
@@ -1438,7 +1550,6 @@ const DATA = {
               "waves",
               "summary",
               "model",
-              "mapping_id",
               "mapping_ids",
               "status",
               "progress_message",
@@ -1552,7 +1663,6 @@ const DATA = {
               "waves",
               "summary",
               "model",
-              "mapping_id",
               "mapping_ids",
               "created_at",
               "status",
@@ -1564,7 +1674,9 @@ const DATA = {
               "groups",
               "groups_formed",
               "method",
-              "attempts"
+              "attempts",
+              "plans",
+              "plan_count"
             ],
             "methods": [],
             "summary": "API response shape for a stored plan."
@@ -1577,7 +1689,6 @@ const DATA = {
               "vm_ids",
               "name",
               "mapping_ids",
-              "mapping_id",
               "preclassification_enabled",
               "ha_strategy"
             ],
@@ -1597,6 +1708,62 @@ const DATA = {
             ],
             "methods": [],
             "summary": "Result of POST /api/plans/preview-groups \u2014 no plan persisted."
+          },
+          {
+            "name": "PreviewPartitionGroup",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "source_vcenter_id",
+              "source_vcenter_name",
+              "target_cluster_id",
+              "target_cluster_name",
+              "target_namespace",
+              "vm_count",
+              "estimated_waves",
+              "mapping_id",
+              "mapping_name",
+              "network_targets",
+              "storage_targets"
+            ],
+            "methods": [],
+            "summary": "One ``(vcenter, cluster, namespace)`` partition the operator's"
+          },
+          {
+            "name": "PreviewUnresolvedVM",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "vm_name",
+              "reasons"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanPreviewResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "total_vms",
+              "resolvable",
+              "unresolvable",
+              "groups",
+              "unresolved"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "MultiPlanCreateResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "plans"
+            ],
+            "methods": [],
+            "summary": ""
           }
         ],
         "functions": [],
@@ -2429,6 +2596,36 @@ const DATA = {
             "path": "/api/sources/targets/{target_id}/storage-classes/{sc_id}",
             "handler": "delete_storage_class",
             "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/targets/{target_id}/namespaces",
+            "handler": "list_namespaces",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/targets/{target_id}/namespaces",
+            "handler": "create_namespace",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/targets/{target_id}/namespaces/{ns_id}",
+            "handler": "get_namespace",
+            "summary": ""
+          },
+          {
+            "method": "PATCH",
+            "path": "/api/sources/targets/{target_id}/namespaces/{ns_id}",
+            "handler": "update_namespace",
+            "summary": ""
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/sources/targets/{target_id}/namespaces/{ns_id}",
+            "handler": "delete_namespace",
+            "summary": ""
           }
         ],
         "classes": [],
@@ -2436,9 +2633,12 @@ const DATA = {
         "depends_on": [
           "app.core.audit",
           "app.core.db",
+          "app.models.ocp_namespace",
           "app.models.target",
           "app.models.target_network",
           "app.models.target_storage_class",
+          "app.models.vm",
+          "app.schemas.ocp_namespace",
           "app.schemas.target_entities"
         ]
       },
@@ -2479,12 +2679,6 @@ const DATA = {
             "path": "/api/sources/targets/{target_id}",
             "handler": "delete_target",
             "summary": ""
-          },
-          {
-            "method": "POST",
-            "path": "/api/sources/targets/{target_id}/discover",
-            "handler": "discover_target",
-            "summary": "Run discovery against the target cluster."
           },
           {
             "method": "GET",
@@ -2541,7 +2735,6 @@ const DATA = {
           "app.core.audit",
           "app.core.db",
           "app.core.mapping_suggester",
-          "app.core.ocp_discovery",
           "app.models.plan",
           "app.models.target",
           "app.models.target_network",
@@ -3938,85 +4131,6 @@ const DATA = {
       },
       {
         "kind": "module",
-        "id": "app.core.ocp_discovery",
-        "title": "app.core.ocp_discovery",
-        "subtitle": "backend/app/core/ocp_discovery.py",
-        "summary": "OCP target cluster resource discovery.",
-        "category": "logic",
-        "routes": [],
-        "classes": [
-          {
-            "name": "DiscoveryResult",
-            "kind": "class",
-            "table": "",
-            "fields": [
-              "storage_classes",
-              "network_attachments",
-              "namespaces",
-              "cluster_capacity",
-              "mtv_namespace",
-              "ocp_version",
-              "kubernetes_version"
-            ],
-            "methods": [],
-            "summary": "What ``discover_all`` returns. Each list is exactly the shape"
-          },
-          {
-            "name": "OCPDiscoveryError",
-            "kind": "class",
-            "table": "",
-            "fields": [],
-            "methods": [],
-            "summary": "Raised when the cluster is unreachable, rejects auth, or returns"
-          },
-          {
-            "name": "OCPDiscoveryClient",
-            "kind": "class",
-            "table": "",
-            "fields": [],
-            "methods": [
-              {
-                "name": "discover_storage_classes",
-                "summary": ""
-              },
-              {
-                "name": "discover_network_attachments",
-                "summary": ""
-              },
-              {
-                "name": "discover_namespaces",
-                "summary": ""
-              },
-              {
-                "name": "discover_capacity",
-                "summary": ""
-              },
-              {
-                "name": "discover_mtv_namespace",
-                "summary": "Find the namespace where MTV/Forklift is installed."
-              },
-              {
-                "name": "discover_versions",
-                "summary": "Return ``(ocp_version, kubernetes_version)``. The OCP version"
-              },
-              {
-                "name": "discover_all",
-                "summary": "Run every discovery call against one cluster connection."
-              }
-            ],
-            "summary": "HTTP-REST client for OCP discovery."
-          }
-        ],
-        "functions": [
-          {
-            "name": "storage_class_count",
-            "summary": "Helper used by the dashboard summary endpoint \u2014 returns 0 when"
-          }
-        ],
-        "depends_on": []
-      },
-      {
-        "kind": "module",
         "id": "app.core.os_profile",
         "title": "app.core.os_profile",
         "subtitle": "backend/app/core/os_profile.py",
@@ -4180,7 +4294,8 @@ const DATA = {
               "role",
               "state",
               "discriminator",
-              "environment"
+              "environment",
+              "target_cluster_id"
             ],
             "methods": [
               {
@@ -4298,7 +4413,6 @@ const DATA = {
           }
         ],
         "depends_on": [
-          "app.core.config",
           "app.models.vm"
         ]
       },
@@ -4537,6 +4651,106 @@ const DATA = {
         "depends_on": [
           "app.core.llm.base",
           "app.core.llm.factory",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.target_resolution",
+        "title": "app.core.target_resolution",
+        "subtitle": "backend/app/core/target_resolution.py",
+        "summary": "Per-VM target resolution.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ResolvedNetwork",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "source",
+              "target_network_id",
+              "target_network_name",
+              "target_network_namespace",
+              "target_network_type"
+            ],
+            "methods": [
+              {
+                "name": "is_resolved",
+                "summary": ""
+              }
+            ],
+            "summary": "Per-source-network resolution. ``target_network_*`` fields are"
+          },
+          {
+            "name": "ResolvedStorage",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "source",
+              "target_storage_class_name",
+              "access_mode"
+            ],
+            "methods": [
+              {
+                "name": "is_resolved",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "ResolvedTarget",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "cluster_id",
+              "cluster_name",
+              "namespace",
+              "networks",
+              "storage",
+              "mapping_id",
+              "is_complete",
+              "reasons"
+            ],
+            "methods": [],
+            "summary": "Outcome of resolution for a single VM. ``is_complete`` is True"
+          },
+          {
+            "name": "_ResolverCaches",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "mappings_by_vcenter",
+              "mappings_by_pair",
+              "clusters",
+              "networks_by_cluster",
+              "storage_by_cluster",
+              "namespaces_by_cluster"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "resolve_vm_target",
+            "summary": "Resolve a single VM's target. Pre-loads only the catalogs for"
+          },
+          {
+            "name": "resolve_vms_bulk",
+            "summary": "Resolve many VMs in O(1) mapping/catalog queries."
+          },
+          {
+            "name": "resolve_vms_iter",
+            "summary": "Same as :func:`resolve_vms_bulk` but takes the loaded VM rows"
+          }
+        ],
+        "depends_on": [
+          "app.models.ocp_namespace",
+          "app.models.target",
+          "app.models.target_network",
+          "app.models.target_storage_class",
           "app.models.vm"
         ]
       },
@@ -5133,6 +5347,36 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.models.ocp_namespace",
+        "title": "app.models.ocp_namespace",
+        "subtitle": "backend/app/models/ocp_namespace.py",
+        "summary": "Operator-declared target namespaces on an OCP cluster.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "OCPTargetNamespace",
+            "kind": "model",
+            "table": "ocp_target_namespaces",
+            "fields": [
+              "id",
+              "ocp_target_id",
+              "name",
+              "description",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.models.settings",
         "title": "app.models.settings",
         "subtitle": "backend/app/models/settings.py",
@@ -5260,14 +5504,6 @@ const DATA = {
         "routes": [],
         "classes": [
           {
-            "name": "OCPAuthType",
-            "kind": "class",
-            "table": "",
-            "fields": [],
-            "methods": [],
-            "summary": "How VirtValidate authenticates to the target cluster."
-          },
-          {
             "name": "OCPTargetStatus",
             "kind": "class",
             "table": "",
@@ -5287,18 +5523,9 @@ const DATA = {
               "site",
               "classification_level",
               "status",
-              "auth_type",
-              "auth_credential_secret_ref",
-              "verify_ssl",
-              "storage_classes",
-              "network_attachments",
-              "namespaces",
-              "cluster_capacity",
               "mtv_namespace",
               "ocp_version",
               "kubernetes_version",
-              "last_synced_at",
-              "last_error",
               "notes",
               "created_at",
               "updated_at"
@@ -5327,7 +5554,6 @@ const DATA = {
               "network_mappings",
               "storage_mappings",
               "namespace_mappings",
-              "is_active",
               "last_used_at",
               "created_at",
               "updated_at"
@@ -5672,6 +5898,86 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.schemas.ocp_namespace",
+        "title": "app.schemas.ocp_namespace",
+        "subtitle": "backend/app/schemas/ocp_namespace.py",
+        "summary": "Pydantic schemas for the operator-declared OCPTargetNamespace",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "OCPTargetNamespaceBase",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "description"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OCPTargetNamespaceCreate",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OCPTargetNamespaceUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "description"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OCPTargetNamespaceRead",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "id",
+              "ocp_target_id",
+              "created_at",
+              "updated_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "OCPTargetNamespaceListResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "items",
+              "total",
+              "skip",
+              "limit"
+            ],
+            "methods": [],
+            "summary": "Paginated wrapper \u2014 same shape as VMListResponse and the rest of"
+          },
+          {
+            "name": "OCPTargetNamespaceDeleteConflict",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "detail",
+              "referenced_by"
+            ],
+            "methods": [],
+            "summary": "409 body shape returned when a namespace is referenced by a VM"
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
         "id": "app.schemas.settings",
         "title": "app.schemas.settings",
         "subtitle": "backend/app/schemas/settings.py",
@@ -6005,58 +6311,6 @@ const DATA = {
         "routes": [],
         "classes": [
           {
-            "name": "StorageClassDiscovered",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "name",
-              "provisioner",
-              "is_default",
-              "access_modes",
-              "reclaim_policy",
-              "volume_binding_mode"
-            ],
-            "methods": [],
-            "summary": "One row from the discovered StorageClass list. Field set is the"
-          },
-          {
-            "name": "NetworkAttachmentDiscovered",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "name",
-              "namespace",
-              "type",
-              "config_summary"
-            ],
-            "methods": [],
-            "summary": ""
-          },
-          {
-            "name": "NamespaceDiscovered",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "name",
-              "labels"
-            ],
-            "methods": [],
-            "summary": ""
-          },
-          {
-            "name": "ClusterCapacity",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "node_count",
-              "total_cpu_millicores",
-              "total_memory_bytes",
-              "existing_vm_count"
-            ],
-            "methods": [],
-            "summary": ""
-          },
-          {
             "name": "OCPTargetBase",
             "kind": "schema",
             "table": "",
@@ -6066,9 +6320,9 @@ const DATA = {
               "region",
               "site",
               "classification_level",
-              "auth_type",
-              "auth_credential_secret_ref",
-              "verify_ssl",
+              "mtv_namespace",
+              "ocp_version",
+              "kubernetes_version",
               "notes"
             ],
             "methods": [],
@@ -6092,9 +6346,9 @@ const DATA = {
               "region",
               "site",
               "classification_level",
-              "auth_type",
-              "auth_credential_secret_ref",
-              "verify_ssl",
+              "mtv_namespace",
+              "ocp_version",
+              "kubernetes_version",
               "notes"
             ],
             "methods": [],
@@ -6107,46 +6361,8 @@ const DATA = {
             "fields": [
               "id",
               "status",
-              "storage_classes",
-              "network_attachments",
-              "namespaces",
-              "cluster_capacity",
-              "mtv_namespace",
-              "ocp_version",
-              "kubernetes_version",
-              "last_synced_at",
-              "last_error",
               "created_at",
               "updated_at"
-            ],
-            "methods": [],
-            "summary": ""
-          },
-          {
-            "name": "OCPDiscoveryRequest",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "bearer_token",
-              "manual_storage_classes",
-              "manual_network_attachments",
-              "manual_namespaces"
-            ],
-            "methods": [],
-            "summary": "Optional: paste a pre-discovered resource bundle instead of"
-          },
-          {
-            "name": "OCPDiscoveryResponse",
-            "kind": "schema",
-            "table": "",
-            "fields": [
-              "target_id",
-              "status",
-              "last_synced_at",
-              "storage_class_count",
-              "network_attachment_count",
-              "namespace_count",
-              "last_error"
             ],
             "methods": [],
             "summary": ""
@@ -6215,8 +6431,7 @@ const DATA = {
               "ocp_target_id",
               "network_mappings",
               "storage_mappings",
-              "namespace_mappings",
-              "is_active"
+              "namespace_mappings"
             ],
             "methods": [],
             "summary": ""
@@ -6237,8 +6452,7 @@ const DATA = {
               "name",
               "network_mappings",
               "storage_mappings",
-              "namespace_mappings",
-              "is_active"
+              "namespace_mappings"
             ],
             "methods": [],
             "summary": ""
@@ -6255,7 +6469,6 @@ const DATA = {
               "network_mappings",
               "storage_mappings",
               "namespace_mappings",
-              "is_active",
               "status",
               "last_used_at",
               "created_at",
@@ -6678,8 +6891,13 @@ const DATA = {
         "summary": "Paginated inventory table for the dashboard's inventory tab.",
         "category": "frontend",
         "api_calls": [
+          "/api/ocp-targets/{id}/namespaces?limit=500",
+          "/api/sources/targets",
           "/api/vms/all?{id}",
+          "/api/vms/bulk-set-target-cluster",
+          "/api/vms/bulk-set-target-namespace",
           "/api/vms/facets?{id}",
+          "/api/vms/{id}",
           "/api/vms?{id}"
         ],
         "members": [
@@ -6694,6 +6912,30 @@ const DATA = {
           {
             "name": "fmt",
             "kind": "helper"
+          },
+          {
+            "name": "TargetClusterCell",
+            "kind": "component"
+          },
+          {
+            "name": "TargetClusterPopover",
+            "kind": "component"
+          },
+          {
+            "name": "TargetNamespaceCell",
+            "kind": "component"
+          },
+          {
+            "name": "TargetNamespacePopover",
+            "kind": "component"
+          },
+          {
+            "name": "TargetNetworksCell",
+            "kind": "component"
+          },
+          {
+            "name": "BulkActionBar",
+            "kind": "component"
           },
           {
             "name": "formatTimestamp",
@@ -6834,6 +7076,8 @@ const DATA = {
         "summary": "OCP target detail page. Two operator-driven catalogs hang off the",
         "category": "frontend",
         "api_calls": [
+          "/api/ocp-targets/{id}/namespaces/{id}",
+          "/api/ocp-targets/{id}/namespaces?limit=500",
           "/api/ocp-targets/{id}/networks",
           "/api/ocp-targets/{id}/networks/{id}",
           "/api/ocp-targets/{id}/storage-classes",
@@ -6859,6 +7103,14 @@ const DATA = {
           },
           {
             "name": "StorageModal",
+            "kind": "component"
+          },
+          {
+            "name": "NamespacesTab",
+            "kind": "component"
+          },
+          {
+            "name": "NamespaceModal",
             "kind": "component"
           },
           {
@@ -6896,8 +7148,7 @@ const DATA = {
         "category": "frontend",
         "api_calls": [
           "/api/sources/targets",
-          "/api/sources/targets/{id}",
-          "/api/sources/targets/{id}/discover"
+          "/api/sources/targets/{id}"
         ],
         "members": [
           {
@@ -6910,10 +7161,6 @@ const DATA = {
           },
           {
             "name": "CreateModal",
-            "kind": "component"
-          },
-          {
-            "name": "DiscoverModal",
             "kind": "component"
           },
           {
