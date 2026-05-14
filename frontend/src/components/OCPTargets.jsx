@@ -4,9 +4,10 @@ import { Link } from "react-router-dom";
 import { fetchJSON } from "../utils/fetchJSON";
 
 // OCP target cluster registry. Operators register the cluster they're
-// migrating to, run discovery (or paste oc-output for air-gapped flow),
-// and the resulting StorageClasses / NetworkAttachments / namespaces
-// drive the resource-mapping editor at /mappings.
+// migrating to and declare the available resources via the per-cluster
+// detail page (TargetNetworks / TargetStorageClasses / Namespaces tabs).
+// VirtValidate does NOT authenticate to clusters — operator declares
+// ground truth, the appliance generates MTV YAML for `oc apply`.
 
 const TOAST_OPTS = {
   style: {
@@ -19,7 +20,7 @@ const TOAST_OPTS = {
 
 const STATUS_LABEL = {
   active: { label: "ACTIVE", color: "#00ff88" },
-  inactive: { label: "NOT DISCOVERED", color: "#aaaacc" },
+  inactive: { label: "INACTIVE", color: "#aaaacc" },
   error: { label: "ERROR", color: "#ff5577" },
 };
 
@@ -29,7 +30,6 @@ export default function OCPTargets() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [discoveringFor, setDiscoveringFor] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,7 +42,7 @@ export default function OCPTargets() {
   useEffect(() => { load(); }, [load]);
 
   const onDelete = async (t) => {
-    if (!window.confirm(`Delete target ${t.name}? Active mappings on this target will fail to load.`)) return;
+    if (!window.confirm(`Delete target ${t.name}? Mappings pointing at this cluster will need to be reassigned.`)) return;
     try {
       await fetchJSON(`/api/sources/targets/${t.id}`, { method: "DELETE" });
       toast.success(`Deleted ${t.name}`, TOAST_OPTS);
@@ -57,9 +57,10 @@ export default function OCPTargets() {
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>OCP Target Clusters</h1>
           <p style={{ color: "#aaaacc", fontSize: 13, margin: "4px 0 0", lineHeight: 1.5 }}>
-            Register destination OpenShift Virtualization clusters. Discovery
-            populates StorageClasses, network attachments, and namespaces so
-            resource mappings reference real cluster resources.
+            Register destination OpenShift Virtualization clusters and declare
+            their available networks, storage classes, and namespaces on the
+            cluster detail page. Mappings then route source vSphere resources
+            onto operator-declared targets — no live cluster authentication.
           </p>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
@@ -76,15 +77,12 @@ export default function OCPTargets() {
         : (
           <div style={{ border: "1px solid #1a1a2e", background: "#0a0a18" }}>
             <div style={tableHeaderStyle}>
-              {["Name", "Endpoint", "OCP", "Resources", "Status", "Last Synced", "Actions"].map((h) => (
+              {["Name", "Endpoint", "OCP", "Region/Site", "Status", "Actions"].map((h) => (
                 <span key={h}>{h}</span>
               ))}
             </div>
             {targets.map((t) => (
-              <Row key={t.id} t={t}
-                onDelete={() => onDelete(t)}
-                onDiscover={() => setDiscoveringFor(t)}
-              />
+              <Row key={t.id} t={t} onDelete={() => onDelete(t)} />
             ))}
           </div>
         )}
@@ -95,21 +93,13 @@ export default function OCPTargets() {
           setCreateOpen(false); await load();
         }} />
       )}
-      {discoveringFor && (
-        <DiscoverModal target={discoveringFor}
-          onClose={() => setDiscoveringFor(null)}
-          onDiscovered={async () => { setDiscoveringFor(null); await load(); }}
-        />
-      )}
     </Shell>
   );
 }
 
-function Row({ t, onDelete, onDiscover }) {
+function Row({ t, onDelete }) {
   const stat = STATUS_LABEL[t.status] || STATUS_LABEL.inactive;
-  const sc = t.storage_classes?.length ?? 0;
-  const nets = t.network_attachments?.length ?? 0;
-  const nss = t.namespaces?.length ?? 0;
+  const regionSite = [t.region, t.site].filter(Boolean).join(" / ") || "—";
   return (
     <div style={tableRowStyle}>
       <Link to={`/sources/targets/${t.id}`}
@@ -118,15 +108,10 @@ function Row({ t, onDelete, onDiscover }) {
       </Link>
       <span style={{ color: "#ccccee", fontFamily: "'Share Tech Mono', monospace", fontSize: 12 }}>{t.api_endpoint}</span>
       <span style={{ color: "#ccccee", fontFamily: "'Share Tech Mono', monospace", fontSize: 12 }}>{t.ocp_version || "—"}</span>
-      <span style={{ color: "#ccccee", fontSize: 12 }}>
-        {sc} SC · {nets} NAD · {nss} ns
-      </span>
+      <span style={{ color: "#ccccee", fontSize: 12 }}>{regionSite}</span>
       <Pill label={stat.label} color={stat.color} />
-      <span style={{ color: "#aaaacc", fontFamily: "'Share Tech Mono', monospace", fontSize: 11 }}>
-        {t.last_synced_at ? new Date(t.last_synced_at).toLocaleString() : "—"}
-      </span>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-        <button onClick={onDiscover} style={btnGhost}>↻ Discover</button>
+        <Link to={`/sources/targets/${t.id}`} style={btnGhost}>Open</Link>
         <button onClick={onDelete} style={{ ...btnGhost, color: "#ff99aa", borderColor: "#ff557755" }}>Delete</button>
       </div>
     </div>
@@ -138,8 +123,6 @@ function CreateModal({ onClose, onSaved }) {
     name: "", api_endpoint: "https://api.ocp.example.com:6443",
     region: "", site: "",
     classification_level: "unclassified",
-    auth_type: "token",
-    verify_ssl: true,
     notes: "",
   });
   const [saving, setSaving] = useState(false);
@@ -169,7 +152,7 @@ function CreateModal({ onClose, onSaved }) {
         <div style={{ borderBottom: "1px solid #1a1a2e", padding: "18px 22px" }}>
           <div style={{ fontSize: 16, fontWeight: 700 }}>Register OCP Target</div>
           <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 4 }}>
-            Run discovery after registration to populate cluster resources.
+            Declare networks, storage classes, and namespaces on the cluster detail page after registration.
           </div>
         </div>
         <div style={{ padding: "18px 22px", display: "grid", gap: 12 }}>
@@ -198,19 +181,6 @@ function CreateModal({ onClose, onSaved }) {
               <option value="top_secret">Top Secret</option>
             </select>
           </Field>
-          <Field label="Auth type">
-            <select style={inputStyle} value={form.auth_type}
-              onChange={(e) => setForm({ ...form, auth_type: e.target.value })}>
-              <option value="token">Bearer token</option>
-              <option value="service_account">Service account</option>
-              <option value="kubeconfig">Kubeconfig</option>
-            </select>
-          </Field>
-          <label style={{ display: "flex", gap: 8, color: "#ccccee", fontSize: 13 }}>
-            <input type="checkbox" checked={form.verify_ssl}
-              onChange={(e) => setForm({ ...form, verify_ssl: e.target.checked })} />
-            Verify TLS (uncheck only for dev clusters with self-signed certs)
-          </label>
           <Field label="Notes">
             <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }}
               value={form.notes}
@@ -225,89 +195,6 @@ function CreateModal({ onClose, onSaved }) {
           </button>
         </div>
       </form>
-    </div>
-  );
-}
-
-function DiscoverModal({ target, onClose, onDiscovered }) {
-  // Two paths: live (bearer token) or manual (paste JSON arrays).
-  const [mode, setMode] = useState("live");
-  const [token, setToken] = useState("");
-  const [scJson, setScJson] = useState("[]");
-  const [nadJson, setNadJson] = useState("[]");
-  const [nsJson, setNsJson] = useState("[]");
-  const [running, setRunning] = useState(false);
-
-  const submit = async () => {
-    setRunning(true);
-    try {
-      const body = mode === "live"
-        ? { bearer_token: token }
-        : {
-            manual_storage_classes: JSON.parse(scJson || "[]"),
-            manual_network_attachments: JSON.parse(nadJson || "[]"),
-            manual_namespaces: JSON.parse(nsJson || "[]"),
-          };
-      const result = await fetchJSON(`/api/sources/targets/${target.id}/discover`,
-        { method: "POST", body });
-      toast.success(
-        `Discovered ${result.storage_class_count} SC · ${result.network_attachment_count} NAD · ${result.namespace_count} ns`,
-        TOAST_OPTS,
-      );
-      await onDiscovered();
-    } catch (e) { toast.error(e.message, TOAST_OPTS); }
-    finally { setRunning(false); }
-  };
-
-  return (
-    <div style={modalOverlay} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ ...modalBox, width: 720 }}>
-        <div style={{ borderBottom: "1px solid #1a1a2e", padding: "18px 22px" }}>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>Discover {target.name}</div>
-          <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 4 }}>
-            Pulls StorageClasses, NetworkAttachmentDefinitions, and namespaces.
-          </div>
-        </div>
-        <div style={{ padding: "18px 22px", display: "grid", gap: 14 }}>
-          <div style={{ display: "flex", gap: 10 }}>
-            {[["live", "Live (bearer token)"], ["manual", "Manual paste (air-gapped)"]].map(([k, l]) => (
-              <button key={k} onClick={() => setMode(k)}
-                style={{ ...btnGhost, ...(mode === k ? { borderColor: "#4488ff", color: "#eeeeff" } : {}) }}>
-                {l}
-              </button>
-            ))}
-          </div>
-
-          {mode === "live" ? (
-            <Field label="OAuth bearer token" hint="oc whoami -t">
-              <input type="password" style={inputStyle}
-                value={token} onChange={(e) => setToken(e.target.value)} />
-            </Field>
-          ) : (
-            <>
-              <Field label="StorageClasses (JSON array)" hint='[{"name":"…","provisioner":"…","is_default":true,"access_modes":["ReadWriteOnce"]}]'>
-                <textarea style={{ ...inputStyle, minHeight: 80, fontFamily: "'Share Tech Mono', monospace", fontSize: 11 }}
-                  value={scJson} onChange={(e) => setScJson(e.target.value)} />
-              </Field>
-              <Field label="NetworkAttachments (JSON array)">
-                <textarea style={{ ...inputStyle, minHeight: 80, fontFamily: "'Share Tech Mono', monospace", fontSize: 11 }}
-                  value={nadJson} onChange={(e) => setNadJson(e.target.value)} />
-              </Field>
-              <Field label="Namespaces (JSON array)">
-                <textarea style={{ ...inputStyle, minHeight: 60, fontFamily: "'Share Tech Mono', monospace", fontSize: 11 }}
-                  value={nsJson} onChange={(e) => setNsJson(e.target.value)} />
-              </Field>
-            </>
-          )}
-        </div>
-        <div style={{ borderTop: "1px solid #1a1a2e", padding: "14px 22px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <button onClick={onClose} style={btnSecondary} disabled={running}>Cancel</button>
-          <button onClick={submit} disabled={running || (mode === "live" && !token)}
-            style={{ ...btnPrimary, opacity: running ? 0.5 : 1 }}>
-            {running ? "Discovering…" : "Run discovery"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -381,14 +268,14 @@ const headerStyle = {
 };
 const tableHeaderStyle = {
   display: "grid",
-  gridTemplateColumns: "1.2fr 1.6fr 0.6fr 1.4fr 1fr 1.2fr 1.2fr",
+  gridTemplateColumns: "1.2fr 1.6fr 0.6fr 1.2fr 1fr 1.4fr",
   padding: "12px 18px", borderBottom: "1px solid #1a1a2e", background: "#0a0a16",
   fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
   fontWeight: 700, textTransform: "uppercase",
 };
 const tableRowStyle = {
   display: "grid",
-  gridTemplateColumns: "1.2fr 1.6fr 0.6fr 1.4fr 1fr 1.2fr 1.2fr",
+  gridTemplateColumns: "1.2fr 1.6fr 0.6fr 1.2fr 1fr 1.4fr",
   padding: "14px 18px", borderBottom: "1px solid #0f0f1e",
   alignItems: "center", fontSize: 13,
 };

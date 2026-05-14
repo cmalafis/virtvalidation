@@ -96,7 +96,6 @@ export default function ResourceMappings() {
               <Link key={m.id} to={`/mappings/${m.id}`} style={{ textDecoration: "none" }}>
                 <div style={tableRowStyle}>
                   <span style={{ color: "#eeeeff", fontWeight: 600 }}>
-                    {m.is_active && <span title="Active mapping" style={{ color: "#00ff88", marginRight: 6 }}>●</span>}
                     {m.name}
                   </span>
                   <span style={{ color: "#ccccee", fontFamily: "'Share Tech Mono', monospace", fontSize: 12 }}>
@@ -223,7 +222,6 @@ function CreateModal({ vcenters, targets, onClose, onSaved }) {
   const [name, setName] = useState("");
   const [vcId, setVcId] = useState(vcenters[0]?.id || "");
   const [tgId, setTgId] = useState(targets[0]?.id || "");
-  const [active, setActive] = useState(false);
   const [saving, setSaving] = useState(false);
   const navigate = useNavigate();
 
@@ -235,7 +233,7 @@ function CreateModal({ vcenters, targets, onClose, onSaved }) {
         method: "POST",
         body: {
           name: name.trim(), vcenter_source_id: Number(vcId),
-          ocp_target_id: Number(tgId), is_active: active,
+          ocp_target_id: Number(tgId),
           network_mappings: [], storage_mappings: [], namespace_mappings: [],
         },
       });
@@ -252,7 +250,8 @@ function CreateModal({ vcenters, targets, onClose, onSaved }) {
         <div style={{ borderBottom: "1px solid #1a1a2e", padding: "18px 22px" }}>
           <div style={{ fontSize: 16, fontWeight: 700 }}>New Resource Mapping</div>
           <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 4 }}>
-            You&apos;ll edit network/storage rows on the next screen.
+            One mapping per (vCenter, target cluster) pair. You&apos;ll edit
+            network/storage rows on the next screen.
           </div>
         </div>
         <div style={{ padding: "18px 22px", display: "grid", gap: 12 }}>
@@ -270,10 +269,6 @@ function CreateModal({ vcenters, targets, onClose, onSaved }) {
               {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </Field>
-          <label style={{ display: "flex", gap: 8, color: "#ccccee", fontSize: 13 }}>
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
-            Mark this mapping active (deactivates other mappings for this source/target pair)
-          </label>
         </div>
         <div style={{ borderTop: "1px solid #1a1a2e", padding: "14px 22px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
           <button type="button" onClick={onClose} style={btnSecondary} disabled={saving}>Cancel</button>
@@ -349,7 +344,6 @@ export function ResourceMappingDetail() {
   const [storageRows, setStorageRows] = useState([]);
   const [nsStrategy, setNsStrategy] = useState(DEFAULT_NS_STRATEGY);
   const [name, setName] = useState("");
-  const [active, setActive] = useState(false);
   const [saving, setSaving] = useState(false);
   const [preflight, setPreflight] = useState(null);
   // When the operator picks "+ Create new …" we stash the row that
@@ -386,17 +380,15 @@ export function ResourceMappingDetail() {
       setMapping(m); setTarget(t);
       setTargetNetworks(nets || []); setTargetSCs(scs || []);
       const initName = m?.name ?? "";
-      const initActive = !!m?.is_active;
       const initNetRows = m?.network_mappings ?? [];
       const initStoreRows = m?.storage_mappings ?? [];
       const initNs = normaliseNamespaceStrategy(m?.namespace_mappings);
-      setName(initName); setActive(initActive);
+      setName(initName);
       setNetworkRows(initNetRows);
       setStorageRows(initStoreRows);
       setNsStrategy(initNs);
       setLoadedSnapshot({
         name: initName,
-        active: initActive,
         networkRows: initNetRows,
         storageRows: initStoreRows,
         nsStrategy: initNs,
@@ -453,12 +445,11 @@ export function ResourceMappingDetail() {
     if (!loadedSnapshot) return false;
     return (
       loadedSnapshot.name !== name
-      || loadedSnapshot.active !== active
       || JSON.stringify(loadedSnapshot.networkRows) !== JSON.stringify(networkRows)
       || JSON.stringify(loadedSnapshot.storageRows) !== JSON.stringify(storageRows)
       || JSON.stringify(loadedSnapshot.nsStrategy) !== JSON.stringify(nsStrategy)
     );
-  }, [loadedSnapshot, name, active, networkRows, storageRows, nsStrategy]);
+  }, [loadedSnapshot, name, networkRows, storageRows, nsStrategy]);
 
   // Pick the chosen target's metadata so we can auto-fill the read-only
   // type + namespace columns when the operator picks a target.
@@ -564,7 +555,6 @@ export function ResourceMappingDetail() {
         method: "PATCH",
         body: {
           name: name.trim(),
-          is_active: active,
           network_mappings: patchedNetworkRows,
           storage_mappings: patchedStorageRows,
           namespace_mappings: nsStrategy,
@@ -575,7 +565,6 @@ export function ResourceMappingDetail() {
       // Reset the dirty baseline to what we just saved.
       setLoadedSnapshot({
         name: name.trim(),
-        active,
         networkRows: patched?.network_mappings ?? patchedNetworkRows,
         storageRows: patched?.storage_mappings ?? patchedStorageRows,
         nsStrategy,
@@ -668,10 +657,6 @@ export function ResourceMappingDetail() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label style={{ display: "flex", gap: 6, alignItems: "center", color: "#ccccee", fontSize: 12 }}>
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
-            Active
-          </label>
           <button onClick={runPreflight} style={btnGhost}>✓ Preflight</button>
           <button onClick={save} style={{ ...btnPrimary, opacity: (saving || !isDirty) ? 0.5 : 1 }} disabled={saving || !isDirty}
             title={!isDirty ? "No changes to save" : ""}>
@@ -901,7 +886,7 @@ function TargetEntityManagerModal({ targetId, kind, onClose, onChanged }) {
             <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 4 }}>
               Manage the catalog of {isNet ? "NADs / CUDNs / UDNs / pod-network" : "StorageClasses"}{" "}
               this cluster knows about. Delete entries you created by mistake; entries
-              still referenced by an active mapping are protected.
+              still referenced by a mapping are protected.
             </div>
           </div>
           <button type="button" onClick={onClose} style={btnSecondary}

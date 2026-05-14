@@ -21,11 +21,19 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.db import get_db
+from app.models.ocp_namespace import OCPTargetNamespace
 from app.models.target import OCPTarget, ResourceMapping
 from app.models.target_network import TargetNetwork, TargetNetworkType
 from app.models.target_storage_class import (
     StorageAccessMode,
     TargetStorageClass,
+)
+from app.models.vm import VM
+from app.schemas.ocp_namespace import (
+    OCPTargetNamespaceCreate,
+    OCPTargetNamespaceListResponse,
+    OCPTargetNamespaceRead,
+    OCPTargetNamespaceUpdate,
 )
 from app.schemas.target_entities import (
     TargetNetworkCreate,
@@ -433,3 +441,216 @@ def delete_storage_class(
     db.delete(sc)
     db.commit()
     request.state.skip_audit_log = True
+
+
+# ---------------------------------------------------------------------------
+# OCPTargetNamespace CRUD
+# ---------------------------------------------------------------------------
+# Operator-declared catalog of target namespaces per cluster. Plan
+# generation (target resolution) uses these to validate that a VM's
+# resolved namespace is actually known to the cluster. Live discovery
+# is intentionally absent — the operator declares ground truth, the
+# appliance does not authenticate to clusters.
+def _namespace_referencing_vms(db: Session, target_id: int, namespace_name: str) -> list[VM]:
+    """VMs whose target_cluster_id_override + target_namespace_override
+    pin them to this namespace on this cluster. Used by the catalog
+    delete endpoint to block removal while the namespace is in use."""
+    return list(
+        db.scalars(
+            select(VM).where(
+                VM.target_cluster_id_override == target_id,
+                VM.target_namespace_override == namespace_name,
+            )
+        ).all()
+    )
+
+
+def _namespace_referencing_mappings(
+    db: Session, target_id: int, namespace_name: str
+) -> list[ResourceMapping]:
+    """ResourceMappings whose namespace_mappings JSON references this
+    namespace name. Walks both the legacy criteria-row shape and the
+    NamespaceStrategy dict shape."""
+    mappings = db.scalars(
+        select(ResourceMapping).where(ResourceMapping.ocp_target_id == target_id)
+    ).all()
+    out: list[ResourceMapping] = []
+    for m in mappings:
+        nm = m.namespace_mappings or []
+        if isinstance(nm, dict):
+            if (nm.get("single_namespace") or "") == namespace_name:
+                out.append(m)
+                continue
+            if namespace_name in (nm.get("per_env_namespaces") or {}).values():
+                out.append(m)
+                continue
+        else:
+            for row in nm:
+                if (row or {}).get("target_namespace") == namespace_name:
+                    out.append(m)
+                    break
+    return out
+
+
+@router.get(
+    "/{target_id}/namespaces",
+    response_model=OCPTargetNamespaceListResponse,
+)
+def list_namespaces(
+    target_id: int,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+) -> dict:
+    _get_target_or_404(db, target_id)
+    base = select(OCPTargetNamespace).where(OCPTargetNamespace.ocp_target_id == target_id)
+    total = db.scalar(select(_count_star()).select_from(base.subquery())) or 0
+    items = list(db.scalars(base.order_by(OCPTargetNamespace.name).offset(skip).limit(limit)).all())
+    return {"items": items, "total": int(total), "skip": skip, "limit": limit}
+
+
+@router.post(
+    "/{target_id}/namespaces",
+    response_model=OCPTargetNamespaceRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_namespace(
+    request: Request,
+    target_id: int,
+    payload: OCPTargetNamespaceCreate,
+    db: Session = Depends(get_db),
+) -> OCPTargetNamespace:
+    _get_target_or_404(db, target_id)
+    ns = OCPTargetNamespace(
+        ocp_target_id=target_id,
+        name=payload.name,
+        description=payload.description,
+    )
+    db.add(ns)
+    try:
+        db.flush()
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Namespace named {payload.name!r} already exists on this cluster",
+        ) from e
+    db.commit()
+    db.refresh(ns)
+    record_audit(
+        db,
+        action="ocp_target_namespace.create",
+        actor=request.headers.get("x-actor", "user"),
+        resource_type="ocp_target_namespace",
+        resource_id=ns.id,
+        details={"ocp_target_id": target_id, "name": ns.name},
+    )
+    db.commit()
+    request.state.skip_audit_log = True
+    return ns
+
+
+@router.get(
+    "/{target_id}/namespaces/{ns_id}",
+    response_model=OCPTargetNamespaceRead,
+)
+def get_namespace(target_id: int, ns_id: int, db: Session = Depends(get_db)) -> OCPTargetNamespace:
+    ns = db.get(OCPTargetNamespace, ns_id)
+    if ns is None or ns.ocp_target_id != target_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Namespace {ns_id} not found on cluster {target_id}",
+        )
+    return ns
+
+
+@router.patch(
+    "/{target_id}/namespaces/{ns_id}",
+    response_model=OCPTargetNamespaceRead,
+)
+def update_namespace(
+    request: Request,
+    target_id: int,
+    ns_id: int,
+    payload: OCPTargetNamespaceUpdate,
+    db: Session = Depends(get_db),
+) -> OCPTargetNamespace:
+    ns = db.get(OCPTargetNamespace, ns_id)
+    if ns is None or ns.ocp_target_id != target_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Namespace {ns_id} not found on cluster {target_id}",
+        )
+    updates = payload.model_dump(exclude_unset=True)
+    for field in ("name", "description"):
+        if field in updates and updates[field] is not None:
+            setattr(ns, field, updates[field])
+    try:
+        db.flush()
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Namespace named {ns.name!r} already exists on this cluster",
+        ) from e
+    db.commit()
+    db.refresh(ns)
+    request.state.skip_audit_log = True
+    return ns
+
+
+@router.delete(
+    "/{target_id}/namespaces/{ns_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_namespace(
+    request: Request,
+    target_id: int,
+    ns_id: int,
+    db: Session = Depends(get_db),
+) -> None:
+    ns = db.get(OCPTargetNamespace, ns_id)
+    if ns is None or ns.ocp_target_id != target_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Namespace {ns_id} not found on cluster {target_id}",
+        )
+    referencing_vms = _namespace_referencing_vms(db, target_id, ns.name)
+    referencing_mappings = _namespace_referencing_mappings(db, target_id, ns.name)
+    if referencing_vms or referencing_mappings:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": (
+                    f"Namespace {ns.name!r} is still referenced by "
+                    f"{len(referencing_vms)} VM(s) and "
+                    f"{len(referencing_mappings)} mapping(s); clear the "
+                    "references before deleting."
+                ),
+                "referenced_by": (
+                    [{"type": "vm", "id": v.id, "name": v.name} for v in referencing_vms]
+                    + [
+                        {"type": "mapping", "id": m.id, "name": m.name}
+                        for m in referencing_mappings
+                    ]
+                ),
+            },
+        )
+    record_audit(
+        db,
+        action="ocp_target_namespace.delete",
+        actor=request.headers.get("x-actor", "user"),
+        resource_type="ocp_target_namespace",
+        resource_id=ns.id,
+        details={"ocp_target_id": target_id, "name": ns.name},
+    )
+    db.delete(ns)
+    db.commit()
+    request.state.skip_audit_log = True
+
+
+def _count_star():
+    """Tiny shim around sqlalchemy.func.count() so the import list stays clean."""
+    from sqlalchemy import func
+
+    return func.count()

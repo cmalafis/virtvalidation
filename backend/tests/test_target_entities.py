@@ -234,3 +234,129 @@ def test_route_alias_under_sources_targets(client, target):
     r = client.get(f"/api/sources/targets/{target.id}/networks")
     assert r.status_code == 200
     assert any(n["name"] == "alias-net" for n in r.json())
+
+
+# ---------------------------------------------------------------------------
+# OCPTargetNamespace CRUD
+# ---------------------------------------------------------------------------
+def test_create_and_list_namespaces_paginated(client, target):
+    for name in ("billing-prod", "billing-dev", "ehr-prod"):
+        r = client.post(
+            f"/api/ocp-targets/{target.id}/namespaces",
+            json={"name": name, "description": f"ns {name}"},
+        )
+        assert r.status_code == 201, r.text
+    r = client.get(f"/api/ocp-targets/{target.id}/namespaces?limit=2")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 3
+    assert body["limit"] == 2
+    assert body["skip"] == 0
+    assert len(body["items"]) == 2
+
+
+def test_duplicate_namespace_per_cluster_returns_409(client, target):
+    client.post(
+        f"/api/ocp-targets/{target.id}/namespaces",
+        json={"name": "prod-only", "description": "first"},
+    ).raise_for_status()
+    r = client.post(
+        f"/api/ocp-targets/{target.id}/namespaces",
+        json={"name": "prod-only", "description": "second"},
+    )
+    assert r.status_code == 409
+
+
+def test_same_namespace_name_on_two_clusters_is_fine(client, target, second_target):
+    """Two clusters can both declare a namespace named ``shared-name``
+    — uniqueness is scoped to (cluster, name)."""
+    a = client.post(f"/api/ocp-targets/{target.id}/namespaces", json={"name": "shared-name"})
+    b = client.post(f"/api/ocp-targets/{second_target.id}/namespaces", json={"name": "shared-name"})
+    assert a.status_code == 201
+    assert b.status_code == 201
+
+
+def test_update_namespace_name_and_description(client, target):
+    created = client.post(
+        f"/api/ocp-targets/{target.id}/namespaces",
+        json={"name": "draft", "description": "v1"},
+    ).json()
+    r = client.patch(
+        f"/api/ocp-targets/{target.id}/namespaces/{created['id']}",
+        json={"name": "renamed", "description": "v2"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["name"] == "renamed"
+    assert body["description"] == "v2"
+
+
+def test_delete_namespace_blocks_when_vm_pins_it(client, db_session, target):
+    from app.models.vcenter import VCenterSource
+    from app.models.vm import VM
+
+    created = client.post(
+        f"/api/ocp-targets/{target.id}/namespaces",
+        json={"name": "in-use-ns"},
+    ).json()
+    vc = VCenterSource(name="vc-ns-block", hostname="vc-ns-block.example")
+    db_session.add(vc)
+    db_session.commit()
+    db_session.refresh(vc)
+    vm = VM(
+        name="vm-pinned",
+        source_hostname="vm-pinned.local",
+        source_vcenter_id=vc.id,
+        target_cluster_id_override=target.id,
+        target_namespace_override="in-use-ns",
+    )
+    db_session.add(vm)
+    db_session.commit()
+
+    r = client.delete(f"/api/ocp-targets/{target.id}/namespaces/{created['id']}")
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "still referenced" in detail["detail"]
+    assert any(ref["type"] == "vm" and ref["id"] == vm.id for ref in detail["referenced_by"])
+
+
+def test_delete_namespace_blocks_when_mapping_references_it(client, db_session, target):
+    """A mapping with a NamespaceStrategy dict pointing at this namespace
+    must block deletion. Same for legacy criteria-row shape."""
+    from app.models.vcenter import VCenterSource
+
+    created = client.post(
+        f"/api/ocp-targets/{target.id}/namespaces", json={"name": "by-mapping"}
+    ).json()
+    vc = VCenterSource(name="vc-ns-map", hostname="vc-ns-map.example")
+    db_session.add(vc)
+    db_session.commit()
+    db_session.refresh(vc)
+    mapping = ResourceMapping(
+        name="m-with-ns",
+        vcenter_source_id=vc.id,
+        ocp_target_id=target.id,
+        network_mappings=[],
+        storage_mappings=[],
+        namespace_mappings={"strategy": "single", "single_namespace": "by-mapping"},
+    )
+    db_session.add(mapping)
+    db_session.commit()
+
+    r = client.delete(f"/api/ocp-targets/{target.id}/namespaces/{created['id']}")
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert any(
+        ref["type"] == "mapping" and ref["id"] == mapping.id for ref in detail["referenced_by"]
+    )
+
+
+def test_namespace_route_alias_under_sources_targets(client, target):
+    r = client.post(
+        f"/api/sources/targets/{target.id}/namespaces",
+        json={"name": "alias-ns"},
+    )
+    assert r.status_code == 201
+    r = client.get(f"/api/sources/targets/{target.id}/namespaces")
+    assert r.status_code == 200
+    assert r.json()["total"] == 1

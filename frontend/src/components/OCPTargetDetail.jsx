@@ -30,21 +30,30 @@ export default function OCPTargetDetail() {
   const [target, setTarget] = useState(null);
   const [networks, setNetworks] = useState([]);
   const [storageClasses, setStorageClasses] = useState([]);
+  const [namespaces, setNamespaces] = useState([]);
+  const [namespacesTotal, setNamespacesTotal] = useState(0);
   const [tab, setTab] = useState("networks");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [editNet, setEditNet] = useState(null);    // null = closed; {} = new; row = edit
   const [editSc, setEditSc] = useState(null);
+  const [editNs, setEditNs] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     try {
-      const [t, n, s] = await Promise.all([
+      const [t, n, s, nsResp] = await Promise.all([
         fetchJSON(`/api/sources/targets/${id}`),
         fetchJSON(`/api/ocp-targets/${id}/networks`),
         fetchJSON(`/api/ocp-targets/${id}/storage-classes`),
+        // Namespaces listing is paginated; pull up to 500 for the tab
+        // (operators don't typically declare more than that per cluster
+        // and the UI is read+inline-edit; no virtualization needed).
+        fetchJSON(`/api/ocp-targets/${id}/namespaces?limit=500`),
       ]);
       setTarget(t); setNetworks(n); setStorageClasses(s);
+      setNamespaces(nsResp?.items ?? []);
+      setNamespacesTotal(nsResp?.total ?? 0);
     } catch (e) { setErr(e.message); }
     finally { setLoading(false); }
   }, [id]);
@@ -69,6 +78,18 @@ export default function OCPTargetDetail() {
     if (!window.confirm(`Delete target StorageClass "${row.name}"?`)) return;
     try {
       await fetchJSON(`/api/ocp-targets/${id}/storage-classes/${row.id}`,
+        { method: "DELETE" });
+      toast.success(`Deleted ${row.name}`, TOAST_OPTS);
+      await load();
+    } catch (e) {
+      toast.error(e.message, TOAST_OPTS);
+    }
+  };
+
+  const deleteNs = async (row) => {
+    if (!window.confirm(`Delete target namespace "${row.name}"?`)) return;
+    try {
+      await fetchJSON(`/api/ocp-targets/${id}/namespaces/${row.id}`,
         { method: "DELETE" });
       toast.success(`Deleted ${row.name}`, TOAST_OPTS);
       await load();
@@ -109,21 +130,33 @@ export default function OCPTargetDetail() {
           <Tab active={tab === "storage"} onClick={() => setTab("storage")}>
             Storage Classes ({storageClasses.length})
           </Tab>
+          <Tab active={tab === "namespaces"} onClick={() => setTab("namespaces")}>
+            Namespaces ({namespacesTotal})
+          </Tab>
         </div>
 
-        {tab === "networks" ? (
+        {tab === "networks" && (
           <NetworksTab
             networks={networks}
             onAdd={() => setEditNet({})}
             onEdit={(row) => setEditNet(row)}
             onDelete={deleteNetwork}
           />
-        ) : (
+        )}
+        {tab === "storage" && (
           <StorageTab
             rows={storageClasses}
             onAdd={() => setEditSc({})}
             onEdit={(row) => setEditSc(row)}
             onDelete={deleteSc}
+          />
+        )}
+        {tab === "namespaces" && (
+          <NamespacesTab
+            rows={namespaces}
+            onAdd={() => setEditNs({})}
+            onEdit={(row) => setEditNs(row)}
+            onDelete={deleteNs}
           />
         )}
       </main>
@@ -142,6 +175,14 @@ export default function OCPTargetDetail() {
           row={editSc.id ? editSc : null}
           onClose={() => setEditSc(null)}
           onSaved={async () => { setEditSc(null); await load(); }}
+        />
+      )}
+      {editNs !== null && (
+        <NamespaceModal
+          targetId={id}
+          row={editNs.id ? editNs : null}
+          onClose={() => setEditNs(null)}
+          onSaved={async () => { setEditNs(null); await load(); }}
         />
       )}
     </Shell>
@@ -407,6 +448,108 @@ function StorageModal({ targetId, row, onClose, onSaved }) {
   );
 }
 
+function NamespacesTab({ rows, onAdd, onEdit, onDelete }) {
+  if (!rows.length) {
+    return (
+      <Empty
+        icon="◐"
+        title="No target namespaces declared for this cluster"
+        body="Add the namespaces where migrated VMs will land. MTV auto-creates them at plan-apply time if they don't yet exist on the cluster — this catalog is operator intent."
+        action={<button onClick={onAdd} style={btnPrimary}>+ Add Namespace</button>}
+      />
+    );
+  }
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+        <button onClick={onAdd} style={btnPrimary}>+ Add Namespace</button>
+      </div>
+      <div style={{ border: "1px solid #1a1a2e", background: "#0a0a18" }}>
+        <div style={nsHeader}>
+          {["Name", "Description", "Actions"].map((h) => <span key={h}>{h}</span>)}
+        </div>
+        {rows.map((r) => (
+          <div key={r.id} style={nsRow}>
+            <span style={{ color: "#eeeeff", fontWeight: 600, fontFamily: "'Share Tech Mono', monospace", fontSize: 13 }}>
+              {r.name}
+            </span>
+            <span style={{ color: "#aaaacc", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {r.description || ""}
+            </span>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button style={btnGhost} onClick={() => onEdit(r)}>Edit</button>
+              <button style={{ ...btnGhost, color: "#ff99aa", borderColor: "#ff557755" }}
+                onClick={() => onDelete(r)}>Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NamespaceModal({ targetId, row, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: row?.name || "",
+    description: row?.description || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const canSave = form.name.trim().length > 0;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!canSave) return;
+    setSaving(true);
+    try {
+      const payload = {
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+      };
+      const url = row
+        ? `/api/ocp-targets/${targetId}/namespaces/${row.id}`
+        : `/api/ocp-targets/${targetId}/namespaces`;
+      await fetchJSON(url, { method: row ? "PATCH" : "POST", body: payload });
+      toast.success(row ? `Updated ${form.name}` : `Added ${form.name}`, TOAST_OPTS);
+      await onSaved();
+    } catch (e) { toast.error(e.message, TOAST_OPTS); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={modalOverlay} onClick={onClose}>
+      <form onSubmit={submit} onClick={(e) => e.stopPropagation()} style={modalBox}>
+        <div style={modalHeader}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>
+            {row ? "Edit Target Namespace" : "Add Target Namespace"}
+          </div>
+          <div style={{ fontSize: 12, color: "#aaaacc", marginTop: 4 }}>
+            RFC1123 lowercase letters, digits, and `-`. Max 253 chars.
+          </div>
+        </div>
+        <div style={{ padding: "18px 22px", display: "grid", gap: 12 }}>
+          <Field label="Namespace name" required>
+            <input style={inputStyle} value={form.name} autoFocus
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              maxLength={253} required />
+          </Field>
+          <Field label="Description" hint="Free-form note — what lands here">
+            <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }}
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </Field>
+        </div>
+        <div style={modalFooter}>
+          <button type="button" onClick={onClose} style={btnSecondary} disabled={saving}>Cancel</button>
+          <button type="submit" disabled={!canSave || saving}
+            style={{ ...btnPrimary, opacity: (!canSave || saving) ? 0.5 : 1 }}>
+            {saving ? "Saving…" : row ? "Save" : "Add"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Shared bits
 // ---------------------------------------------------------------------------
@@ -518,6 +661,19 @@ const scHeader = {
 const scRow = {
   display: "grid",
   gridTemplateColumns: "1.2fr 0.8fr 0.6fr 1.4fr 1fr",
+  padding: "14px 18px", borderBottom: "1px solid #0f0f1e",
+  alignItems: "center", fontSize: 13,
+};
+const nsHeader = {
+  display: "grid",
+  gridTemplateColumns: "1.4fr 2fr 1fr",
+  padding: "12px 18px", borderBottom: "1px solid #1a1a2e", background: "#0a0a16",
+  fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
+  fontWeight: 700, textTransform: "uppercase",
+};
+const nsRow = {
+  display: "grid",
+  gridTemplateColumns: "1.4fr 2fr 1fr",
   padding: "14px 18px", borderBottom: "1px solid #0f0f1e",
   alignItems: "center", fontSize: 13,
 };

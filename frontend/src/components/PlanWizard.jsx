@@ -557,7 +557,6 @@ function MappingMultiSelect({ mappings, selected, onChange }) {
                 <span style={{ fontWeight: 600 }}>{m.name}</span>
                 <span style={{ color: "#888899", marginLeft: 8, fontSize: 12 }}>
                   · {m.status}
-                  {m.is_active ? " · active" : ""}
                 </span>
               </span>
             </label>
