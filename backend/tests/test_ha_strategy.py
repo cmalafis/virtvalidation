@@ -33,7 +33,7 @@ def _vm(id_: int, name: str, **kwargs) -> VM:
         name=name,
         source_hostname=f"{name}.local",
         source_vcenter_id=kwargs.get("vcenter", 1),
-        target_namespace=kwargs.get("target_namespace", "prod"),
+        target_namespace_override=kwargs.get("target_namespace", "prod"),
         application_hint=kwargs.get("application_hint"),
         environment=kwargs.get("environment"),
         os_family=kwargs.get("os_family", "rhel"),
@@ -312,6 +312,31 @@ def test_post_plans_accepts_ha_strategy_field(client, monkeypatch):
     from app.core.llm.factory import reset_backend_cache
 
     reset_backend_cache()
+    # Networks/storage come from a ResourceMapping now — set one up.
+    vc = client.post(
+        "/api/sources/vcenters", json={"name": "vc-ha", "hostname": "vc-ha.example"}
+    ).json()
+    tgt = client.post(
+        "/api/sources/targets",
+        json={"name": "ocp-ha", "api_endpoint": "https://ocp-ha.example"},
+    ).json()
+    client.post(
+        "/api/mappings",
+        json={
+            "name": "ha-mapping",
+            "vcenter_source_id": vc["id"],
+            "ocp_target_id": tgt["id"],
+            "network_mappings": [
+                {
+                    "source_network": "db-net",
+                    "target_network_name": "db-nad",
+                    "target_network_type": "nad",
+                }
+            ],
+            "storage_mappings": [{"source_datastore": "db-ds", "target_storage_class": "ocs-rbd"}],
+            "namespace_mappings": [{"criteria": "default", "target_namespace": "prod"}],
+        },
+    ).raise_for_status()
     # Seed three sequentially-named VMs.
     for i in range(1, 4):
         client.post(
@@ -322,9 +347,8 @@ def test_post_plans_accepts_ha_strategy_field(client, monkeypatch):
                 "application_hint": "app1",
                 "vsphere_networks": ["db-net"],
                 "vsphere_datastores": ["db-ds"],
-                "target_namespace": "prod",
-                "target_network_attachment": "db-nad",
-                "target_storage_class": "ocs-rbd",
+                "source_vcenter_id": vc["id"],
+                "target_namespace_override": "prod",
             },
         ).raise_for_status()
     vm_ids = [r["id"] for r in client.get("/api/vms").json()["items"]]

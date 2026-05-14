@@ -5,10 +5,14 @@ A migration runs from one or more :class:`VCenterSource` instances
 have to know:
 
   - which OCP cluster they're landing on (target),
-  - what resources are *actually* present on that cluster (the
-    discovered StorageClasses / NADs / namespaces — not placeholders),
+  - which target namespaces / NADs / StorageClasses the operator
+    declares are available on that cluster (operator-declared
+    catalogs in ``ocp_target_namespaces`` / ``target_networks`` /
+    ``target_storage_classes`` — VirtValidate does not authenticate
+    to clusters, the operator declares ground truth),
   - how each source vSphere resource maps to a target cluster
-    resource (the :class:`ResourceMapping`).
+    resource (the :class:`ResourceMapping`, unique per
+    ``(vcenter_source_id, ocp_target_id)``).
 
 Without these, generated MTV YAML references made-up resource names
 that won't apply on the real cluster. That was a real failure mode
@@ -21,7 +25,6 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -37,26 +40,6 @@ from app.core.db import Base, JSONType
 from app.models.vcenter import ClassificationLevel
 
 
-class OCPAuthType(str, enum.Enum):
-    """How VirtValidate authenticates to the target cluster.
-
-    ``token`` — operator-supplied OAuth token (most common for
-    ad-hoc connections).
-
-    ``service_account`` — in-cluster SA token mounted at the standard
-    path. Only available when VirtValidate runs as a pod in the same
-    cluster.
-
-    ``kubeconfig`` — multi-step path where the operator pastes a
-    full kubeconfig. Useful for clusters with custom certs but
-    requires more credential handling.
-    """
-
-    token = "token"
-    service_account = "service_account"
-    kubeconfig = "kubeconfig"
-
-
 class OCPTargetStatus(str, enum.Enum):
     active = "active"
     inactive = "inactive"
@@ -66,9 +49,12 @@ class OCPTargetStatus(str, enum.Enum):
 class OCPTarget(Base):
     """A registered OpenShift Virtualization target cluster.
 
-    Discovery results are cached on this row so the mapping editor
-    doesn't have to re-query on every render. Refresh is explicit
-    via the ``POST /discover`` endpoint.
+    Metadata only — VirtValidate does not authenticate to clusters.
+    ``api_endpoint`` is informational (written into emitted MTV
+    Provider YAML, never opened by the appliance). Available
+    resources are declared via the per-cluster catalogs
+    (``ocp_target_namespaces``, ``target_networks``,
+    ``target_storage_classes``).
     """
 
     __tablename__ = "ocp_targets"
@@ -86,52 +72,14 @@ class OCPTarget(Base):
     )
     status: Mapped[OCPTargetStatus] = mapped_column(
         Enum(OCPTargetStatus, name="ocp_target_status"),
-        default=OCPTargetStatus.inactive,
-        server_default=OCPTargetStatus.inactive.value,
+        default=OCPTargetStatus.active,
+        server_default=OCPTargetStatus.active.value,
         nullable=False,
     )
 
-    # ---- Auth ----
-    # Bearer token / kubeconfig blob lives in a separate Secret-store
-    # row (or k8s Secret in production). The DB only carries the
-    # reference name so a SQL dump never includes credentials.
-    auth_type: Mapped[OCPAuthType] = mapped_column(
-        Enum(OCPAuthType, name="ocp_target_auth_type"),
-        default=OCPAuthType.token,
-        server_default=OCPAuthType.token.value,
-        nullable=False,
-    )
-    auth_credential_secret_ref: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )
-    # When verify_ssl is False, discovery bypasses cert verification —
-    # only set this for dev clusters with self-signed certs. Federal
-    # deployments should keep this on.
-    verify_ssl: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default="1", nullable=False
-    )
-
-    # ---- Discovery cache ----
-    # Each blob is set at discovery time. NULL means "not discovered yet"
-    # — the UI surfaces this as "Run discovery to populate."
-    storage_classes: Mapped[list[dict] | None] = mapped_column(
-        JSONType, nullable=True
-    )
-    network_attachments: Mapped[list[dict] | None] = mapped_column(
-        JSONType, nullable=True
-    )
-    namespaces: Mapped[list[dict] | None] = mapped_column(
-        JSONType, nullable=True
-    )
-    cluster_capacity: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     mtv_namespace: Mapped[str | None] = mapped_column(String(253), nullable=True)
     ocp_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     kubernetes_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    last_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -200,17 +148,7 @@ class ResourceMapping(Base):
         JSONType, nullable=False, default=list, server_default="[]"
     )
 
-    # Single-active per (vcenter, target) pair. Constraint enforced at
-    # the application layer (not a DB partial unique — Postgres only,
-    # awkward in batch migrations). The is_active flag is consulted by
-    # plan generation when no mapping_id is explicitly supplied.
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="0", nullable=False
-    )
-
-    last_used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -221,20 +159,19 @@ class ResourceMapping(Base):
         nullable=False,
     )
 
-    vcenter_source = relationship(
-        "VCenterSource", foreign_keys=[vcenter_source_id]
-    )
+    vcenter_source = relationship("VCenterSource", foreign_keys=[vcenter_source_id])
     ocp_target = relationship("OCPTarget", foreign_keys=[ocp_target_id])
 
     __table_args__ = (
-        # Friendly-name uniqueness within a (source, target) pair so
-        # operators can have multiple mappings for the same pair (e.g.
-        # "Q3 cutover" and "Q4 cutover") without name collisions.
+        # Exactly one mapping per (vcenter, target) pair. MTV's
+        # NetworkMap / StorageMap CRs are themselves scoped to a
+        # single (source provider, destination provider) pair, so a
+        # single mapping is the natural granularity. Operators
+        # disambiguate by cluster, not by names like "Q3 cutover".
         UniqueConstraint(
             "vcenter_source_id",
             "ocp_target_id",
-            "name",
-            name="uq_mapping_source_target_name",
+            name="uq_mapping_per_pair",
         ),
         Index("ix_mappings_source_target", "vcenter_source_id", "ocp_target_id"),
         Index("ix_mappings_status", "status"),

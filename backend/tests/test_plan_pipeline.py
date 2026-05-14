@@ -27,9 +27,7 @@ def _vm(
     vcenter_id: int = 1,
     networks=("vlan-100",),
     datastores=("tier1",),
-    target_namespace: str | None = "prod",
-    target_storage_class: str | None = None,
-    target_network_attachment: str | None = None,
+    target_namespace_override: str | None = "prod",
     environment: str = "production",
     application_hint: str | None = None,
 ) -> VM:
@@ -40,9 +38,7 @@ def _vm(
         source_vcenter_id=vcenter_id,
         vsphere_networks=list(networks),
         vsphere_datastores=list(datastores),
-        target_namespace=target_namespace,
-        target_storage_class=target_storage_class,
-        target_network_attachment=target_network_attachment,
+        target_namespace_override=target_namespace_override,
         environment=environment,
         application_hint=application_hint,
     )
@@ -157,7 +153,7 @@ class TestPipelineValidation:
         )
 
     def test_missing_namespace_raises(self):
-        vm = _vm(1, "app-01", target_namespace=None)
+        vm = _vm(1, "app-01", target_namespace_override=None)
         # Mapping has no namespace strategy.
         with pytest.raises(PlanValidationError):
             _run([vm], [_complete_mapping()])

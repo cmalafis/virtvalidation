@@ -18,6 +18,7 @@ from app.models import (  # noqa: F401  (register models on Base)
     grouping,
     llm_usage,
     network_review,
+    ocp_namespace,
     plan,
     settings,
     storage_review,

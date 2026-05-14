@@ -23,7 +23,7 @@ def _vm(id_: int, name: str, *, env: str, vcenter: int = 1, ns: str = "prod") ->
         name=name,
         source_hostname=f"{name}.local",
         source_vcenter_id=vcenter,
-        target_namespace=ns,
+        target_namespace_override=ns,
         environment=env,
         application_hint="app1",
         os_family="rhel",
@@ -52,9 +52,7 @@ def test_prod_and_dev_vms_never_share_a_group():
         for vm in vms:
             if vm.id in g.vm_ids:
                 envs.add(vm.environment)
-        assert len(envs) == 1, (
-            f"group {g.id} mixes environments: {envs}"
-        )
+        assert len(envs) == 1, f"group {g.id} mixes environments: {envs}"
 
 
 def test_prod_dev_dr_produce_three_distinct_partitions():
@@ -63,11 +61,13 @@ def test_prod_dev_dr_produce_three_distinct_partitions():
     vms = []
     for i, env in enumerate(("production", "development", "dr")):
         for j in range(1, 4):
-            vms.append(_vm(
-                id_=i * 10 + j,
-                name=f"{env}-web-{j:02d}",
-                env=env,
-            ))
+            vms.append(
+                _vm(
+                    id_=i * 10 + j,
+                    name=f"{env}-web-{j:02d}",
+                    env=env,
+                )
+            )
     groups = PreClassifier().classify(vms)
     env_per_group: dict[str, set[str]] = {}
     for g in groups:
@@ -144,10 +144,7 @@ def test_plan_with_mixed_envs_uses_separate_waves_or_groups():
                 if g["id"] == gid:
                     group_vm_ids = set(g["vm_ids"])
                     break
-            group_envs = {
-                vm.environment for vm in vms if vm.id in group_vm_ids
-            }
+            group_envs = {vm.environment for vm in vms if vm.id in group_vm_ids}
             assert len(group_envs) <= 1, (
-                f"group {gid} in wave {wave['wave_number']} "
-                f"mixes envs: {group_envs}"
+                f"group {gid} in wave {wave['wave_number']} " f"mixes envs: {group_envs}"
             )

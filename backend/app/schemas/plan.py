@@ -103,12 +103,10 @@ class PlanRead(BaseModel):
     waves: list[dict]
     summary: str | None = None
     model: str
-    # ``mapping_ids`` is the canonical list; ``mapping_id`` is kept for
-    # one release as a legacy alias = mapping_ids[0] if mapping_ids
-    # else None. Both surfaced so existing UI bindings keep rendering
-    # while the wizard switches over. Coerce None → [] for pre-multi-
-    # mapping rows whose mapping_ids column hasn't been backfilled.
-    mapping_id: int | None = None
+    # ``mapping_ids`` is the canonical list of mappings consumed at
+    # plan-generation time (one mapping per ``(vcenter, cluster)``
+    # partition the plan covers). Coerce None → [] for legacy rows
+    # whose mapping_ids column hasn't been backfilled.
     mapping_ids: list[int] = Field(default_factory=list)
     created_at: datetime
 
@@ -152,21 +150,15 @@ class PlanCreate(BaseModel):
     # not supplied so the legacy synchronous-create tests still pass.
     name: str = Field(default="Untitled plan", min_length=1, max_length=255)
     # Resource mappings that drive target namespace + network +
-    # storage resolution. Each VM is routed to the mapping whose
-    # ``vcenter_source_id`` matches the VM's source vCenter. Semantics:
-    #   * field omitted (None)   → auto-resolve active mappings per
-    #     vCenter touched by the selection (preserves CLI / pre-wizard
-    #     behavior)
+    # storage resolution. Each VM is routed via the per-pair-unique
+    # ResourceMapping for its ``(source_vcenter_id, target_cluster_id)``
+    # pair (see ``app.core.target_resolution``). Semantics:
+    #   * field omitted (None)   → auto-resolve via target_resolution
     #   * empty list ``[]``      → operator explicitly opted out; only
-    #     per-VM target fields cover Stage 0 validation
+    #     per-VM target_namespace_override covers Stage 0 validation
     #   * ``[id1, id2, ...]``    → use these mappings, route per-VM by
-    #     vcenter
+    #     resolved (vcenter, cluster)
     mapping_ids: list[int] | None = Field(default=None)
-    # Singular legacy alias kept for one release so existing CLI /
-    # test callers don't break. When provided ALONE (no mapping_ids),
-    # treated as ``mapping_ids=[mapping_id]``. Ignored when
-    # ``mapping_ids`` is also set.
-    mapping_id: int | None = Field(default=None)
     # Retained for back-compat with the synchronous tests; the new
     # pipeline ignores them. The mechanical pre-classifier always
     # runs, and HA spreading is enforced by the family-aware Stage 3

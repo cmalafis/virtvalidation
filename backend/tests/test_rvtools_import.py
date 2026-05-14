@@ -62,37 +62,43 @@ def test_import_creates_new_vms_with_vcenter_scope_and_status(client):
 
 def test_import_updates_tracked_fields_without_clobbering_unrelated_state(client):
     vc = _create_vc(client)
-    _import(client, vc["id"], [
-        {"name": "alpha", "source_hostname": "alpha.corp", "ip_address": "10.0.0.1"}
-    ])
+    _import(
+        client,
+        vc["id"],
+        [{"name": "alpha", "source_hostname": "alpha.corp", "ip_address": "10.0.0.1"}],
+    )
     # Operator manually edits target_namespace via PATCH — that field
     # is *not* part of the RVTools tracked set, so re-importing must
     # leave it intact.
     vm_id = next(v["id"] for v in client.get("/api/vms").json()["items"] if v["name"] == "alpha")
-    client.patch(f"/api/vms/{vm_id}", json={"target_namespace": "finance-prod"})
-    r = _import(client, vc["id"], [
-        {"name": "alpha", "source_hostname": "alpha.corp", "ip_address": "10.0.0.99"}
-    ])
+    client.patch(f"/api/vms/{vm_id}", json={"target_namespace_override": "finance-prod"})
+    r = _import(
+        client,
+        vc["id"],
+        [{"name": "alpha", "source_hostname": "alpha.corp", "ip_address": "10.0.0.99"}],
+    )
     assert r.status_code == 200
     assert r.json()["updated"] == 1
     refreshed = client.get(f"/api/vms/{vm_id}").json()
     assert refreshed["ip_address"] == "10.0.0.99"
-    assert refreshed["target_namespace"] == "finance-prod"
+    assert refreshed["target_namespace_override"] == "finance-prod"
 
 
 def test_import_marks_missing_vm_without_deleting_it(client, db_session):
     from app.models.vm import VM
 
     vc = _create_vc(client)
-    _import(client, vc["id"], [
-        {"name": "alpha", "source_hostname": "alpha.corp"},
-        {"name": "beta", "source_hostname": "beta.corp"},
-    ])
+    _import(
+        client,
+        vc["id"],
+        [
+            {"name": "alpha", "source_hostname": "alpha.corp"},
+            {"name": "beta", "source_hostname": "beta.corp"},
+        ],
+    )
     # Re-upload with `beta` removed — it should be flagged missing,
     # not deleted, and `alpha` stays clean.
-    r = _import(client, vc["id"], [
-        {"name": "alpha", "source_hostname": "alpha.corp"}
-    ])
+    r = _import(client, vc["id"], [{"name": "alpha", "source_hostname": "alpha.corp"}])
     assert r.status_code == 200
     body = r.json()
     assert body["marked_missing"] == 1
@@ -121,17 +127,25 @@ def test_import_clears_missing_flag_when_vm_reappears(client, db_session):
     from app.models.vm import VM
 
     vc = _create_vc(client)
-    _import(client, vc["id"], [
-        {"name": "alpha", "source_hostname": "alpha.corp"},
-        {"name": "beta", "source_hostname": "beta.corp"},
-    ])
+    _import(
+        client,
+        vc["id"],
+        [
+            {"name": "alpha", "source_hostname": "alpha.corp"},
+            {"name": "beta", "source_hostname": "beta.corp"},
+        ],
+    )
     # Drop beta to flag it missing.
     _import(client, vc["id"], [{"name": "alpha", "source_hostname": "alpha.corp"}])
     # Re-include beta — flag must clear.
-    _import(client, vc["id"], [
-        {"name": "alpha", "source_hostname": "alpha.corp"},
-        {"name": "beta", "source_hostname": "beta.corp"},
-    ])
+    _import(
+        client,
+        vc["id"],
+        [
+            {"name": "alpha", "source_hostname": "alpha.corp"},
+            {"name": "beta", "source_hostname": "beta.corp"},
+        ],
+    )
     db_session.expire_all()
     beta = db_session.query(VM).filter_by(name="beta").one()
     assert beta.missing_from_last_upload is False
@@ -139,10 +153,15 @@ def test_import_clears_missing_flag_when_vm_reappears(client, db_session):
 
 def test_import_emits_audit_log_per_change(client):
     vc = _create_vc(client)
-    _import(client, vc["id"], [
-        {"name": "alpha", "source_hostname": "alpha.corp"},
-        {"name": "beta", "source_hostname": "beta.corp"},
-    ], actor="audit-tester")
+    _import(
+        client,
+        vc["id"],
+        [
+            {"name": "alpha", "source_hostname": "alpha.corp"},
+            {"name": "beta", "source_hostname": "beta.corp"},
+        ],
+        actor="audit-tester",
+    )
     audit = client.get(
         "/api/audit?action=vm.rvtools_import.create",
     ).json()
@@ -152,9 +171,9 @@ def test_import_emits_audit_log_per_change(client):
     assert "audit-tester" in audit_actors
 
     # Now drop beta — verify the marked_missing audit entry shows up.
-    _import(client, vc["id"], [
-        {"name": "alpha", "source_hostname": "alpha.corp"}
-    ], actor="audit-tester")
+    _import(
+        client, vc["id"], [{"name": "alpha", "source_hostname": "alpha.corp"}], actor="audit-tester"
+    )
     missing_audit = client.get(
         "/api/audit?action=vm.rvtools_import.marked_missing",
     ).json()
@@ -190,9 +209,7 @@ def test_import_above_threshold_returns_202_with_task_id(client):
     # FastAPI's TestClient runs BackgroundTasks before the response
     # returns control to the test, so by here the task has already
     # completed. Verify via the status endpoint.
-    status = client.get(
-        f"/api/sources/vcenters/{vc['id']}/rvtools/import/{body['task_id']}"
-    )
+    status = client.get(f"/api/sources/vcenters/{vc['id']}/rvtools/import/{body['task_id']}")
     assert status.status_code == 200
     status_body = status.json()
     assert status_body["status"] == "completed"
@@ -215,9 +232,7 @@ def test_import_status_404_when_task_belongs_to_other_vcenter(client):
         for i in range(ASYNC_IMPORT_THRESHOLD)
     ]
     body = _import(client, vc1["id"], big_payload).json()
-    r = client.get(
-        f"/api/sources/vcenters/{vc2['id']}/rvtools/import/{body['task_id']}"
-    )
+    r = client.get(f"/api/sources/vcenters/{vc2['id']}/rvtools/import/{body['task_id']}")
     assert r.status_code == 404
 
 
@@ -229,24 +244,24 @@ def test_preview_unchanged_after_import_changes(client):
     the preview / import pair stays consistent: new+updated counts the
     preview reports match what the subsequent import actually does."""
     vc = _create_vc(client)
-    _import(client, vc["id"], [
-        {"name": "alpha", "source_hostname": "alpha.corp"},
-    ])
+    _import(
+        client,
+        vc["id"],
+        [
+            {"name": "alpha", "source_hostname": "alpha.corp"},
+        ],
+    )
     payload = {
         "vms": [
             {"name": "alpha", "source_hostname": "alpha.corp", "ip_address": "10.0.0.99"},
             {"name": "beta", "source_hostname": "beta.corp"},
         ]
     }
-    preview = client.post(
-        f"/api/sources/vcenters/{vc['id']}/rvtools/preview", json=payload
-    ).json()
+    preview = client.post(f"/api/sources/vcenters/{vc['id']}/rvtools/preview", json=payload).json()
     assert preview["summary"]["new"] == 1
     assert preview["summary"]["updated"] == 1
     assert preview["summary"]["removed"] == 0
-    importr = client.post(
-        f"/api/sources/vcenters/{vc['id']}/rvtools/import", json=payload
-    ).json()
+    importr = client.post(f"/api/sources/vcenters/{vc['id']}/rvtools/import", json=payload).json()
     assert importr["created"] == 1
     assert importr["updated"] == 1
     assert importr["marked_missing"] == 0

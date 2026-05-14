@@ -27,7 +27,7 @@ def _vm(
     name: str,
     *,
     vcenter: int | None = 1,
-    target_namespace: str = "prod",
+    target_namespace_override: str = "prod",
     networks: list[str] | None = None,
     datastores: list[str] | None = None,
     application_hint: str | None = None,
@@ -39,7 +39,7 @@ def _vm(
         name=name,
         source_hostname=f"{name}.local",
         source_vcenter_id=vcenter,
-        target_namespace=target_namespace,
+        target_namespace_override=target_namespace_override,
         vsphere_networks=list(networks or []),
         vsphere_datastores=list(datastores or []),
         application_hint=application_hint,
@@ -54,17 +54,20 @@ def _vm(
 # ---------------------------------------------------------------------------
 # Role / state / risk detection
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("name,expected_role", [
-    ("web-prod-01", "web"),
-    ("nginx-edge-1", "edge"),
-    ("postgres-db-prod", "data"),
-    ("mongo-replica-2", "data"),
-    ("app-api-svc-3", "app"),
-    ("ldap-dc-01", "infrastructure"),
-    ("haproxy-front", "edge"),
-    ("payroll", "other"),
-    ("oracle-db-01", "data"),
-])
+@pytest.mark.parametrize(
+    "name,expected_role",
+    [
+        ("web-prod-01", "web"),
+        ("nginx-edge-1", "edge"),
+        ("postgres-db-prod", "data"),
+        ("mongo-replica-2", "data"),
+        ("app-api-svc-3", "app"),
+        ("ldap-dc-01", "infrastructure"),
+        ("haproxy-front", "edge"),
+        ("payroll", "other"),
+        ("oracle-db-01", "data"),
+    ],
+)
 def test_detect_role_from_name_patterns(name, expected_role):
     vm = _vm(1, name)
     assert detect_role(vm) == expected_role
@@ -130,10 +133,10 @@ def test_application_hint_partitions_with_role_subgroups():
         _vm(1, "web-01", application_hint="epic-emr", networks=["a"]),
         _vm(2, "web-02", application_hint="epic-emr", networks=["a"]),
         _vm(3, "web-03", application_hint="epic-emr", networks=["a"]),
-        _vm(4, "db-01",  application_hint="epic-emr", networks=["b"]),
-        _vm(5, "db-02",  application_hint="epic-emr", networks=["b"]),
-        _vm(6, "db-03",  application_hint="epic-emr", networks=["b"]),
-        _vm(7, "loose-01", target_namespace="staging-only"),
+        _vm(4, "db-01", application_hint="epic-emr", networks=["b"]),
+        _vm(5, "db-02", application_hint="epic-emr", networks=["b"]),
+        _vm(6, "db-03", application_hint="epic-emr", networks=["b"]),
+        _vm(7, "loose-01", target_namespace_override="staging-only"),
     ]
     groups = PreClassifier().classify(vms)
     # Operator hint scopes the partition; within the hint we sub-
@@ -163,8 +166,8 @@ def test_cross_vcenter_vms_never_merge():
 
 def test_cross_target_namespace_vms_never_merge():
     vms = [
-        _vm(1, "web-01", target_namespace="prod"),
-        _vm(2, "web-02", target_namespace="staging"),
+        _vm(1, "web-01", target_namespace_override="prod"),
+        _vm(2, "web-02", target_namespace_override="staging"),
     ]
     groups = PreClassifier().classify(vms)
     ns = {g.key.target_namespace for g in groups}
@@ -202,25 +205,75 @@ def _realistic_fleet() -> list[VM]:
     idx = 1
     # vCenter 1 — epic-emr application
     for i in range(1, 16):
-        vms.append(_vm(idx, f"epic-web-{i:02d}", networks=["epic-web-net"], datastores=["nfs-epic"], application_hint="epic-emr"))
+        vms.append(
+            _vm(
+                idx,
+                f"epic-web-{i:02d}",
+                networks=["epic-web-net"],
+                datastores=["nfs-epic"],
+                application_hint="epic-emr",
+            )
+        )
         idx += 1
     for i in range(1, 11):
-        vms.append(_vm(idx, f"epic-app-{i:02d}", networks=["epic-app-net"], datastores=["nfs-epic"], application_hint="epic-emr"))
+        vms.append(
+            _vm(
+                idx,
+                f"epic-app-{i:02d}",
+                networks=["epic-app-net"],
+                datastores=["nfs-epic"],
+                application_hint="epic-emr",
+            )
+        )
         idx += 1
     for i in range(1, 5):
-        vms.append(_vm(idx, f"epic-db-{i:02d}", networks=["epic-db-net"], datastores=["ssd-epic"], application_hint="epic-emr"))
+        vms.append(
+            _vm(
+                idx,
+                f"epic-db-{i:02d}",
+                networks=["epic-db-net"],
+                datastores=["ssd-epic"],
+                application_hint="epic-emr",
+            )
+        )
         idx += 1
     # vCenter 1 — payroll application
     for i in range(1, 7):
-        vms.append(_vm(idx, f"payroll-app-{i:02d}", networks=["payroll-net"], datastores=["nfs-payroll"], application_hint="payroll"))
+        vms.append(
+            _vm(
+                idx,
+                f"payroll-app-{i:02d}",
+                networks=["payroll-net"],
+                datastores=["nfs-payroll"],
+                application_hint="payroll",
+            )
+        )
         idx += 1
     # vCenter 2 — analytics
     for i in range(1, 13):
-        vms.append(_vm(idx, f"analytics-worker-{i:02d}", vcenter=2, networks=["analytics-net"], datastores=["object-analytics"], application_hint="analytics"))
+        vms.append(
+            _vm(
+                idx,
+                f"analytics-worker-{i:02d}",
+                vcenter=2,
+                networks=["analytics-net"],
+                datastores=["object-analytics"],
+                application_hint="analytics",
+            )
+        )
         idx += 1
     # vCenter 2 — infrastructure
     for i in range(1, 6):
-        vms.append(_vm(idx, f"dc-ldap-{i:02d}", vcenter=2, networks=["infra-net"], datastores=["ssd-infra"], application_hint="infra"))
+        vms.append(
+            _vm(
+                idx,
+                f"dc-ldap-{i:02d}",
+                vcenter=2,
+                networks=["infra-net"],
+                datastores=["ssd-infra"],
+                application_hint="infra",
+            )
+        )
         idx += 1
     return vms
 
@@ -262,6 +315,7 @@ def test_same_input_produces_same_output():
 
 def test_shuffling_input_does_not_change_output_groups():
     import random
+
     vms = _realistic_fleet()
     rng = random.Random(42)
     shuffled = list(vms)
@@ -281,12 +335,15 @@ def test_classify_1000_vms_under_5_seconds():
     vms: list[VM] = []
     for i in range(1, 1001):
         role_token = ["web", "app", "db", "edge"][i % 4]
-        vms.append(_vm(
-            i, f"{role_token}-prod-{i:04d}",
-            networks=[f"net-{i % 8}"],
-            datastores=[f"ds-{i % 4}"],
-            application_hint=f"app-{i % 25}",
-        ))
+        vms.append(
+            _vm(
+                i,
+                f"{role_token}-prod-{i:04d}",
+                networks=[f"net-{i % 8}"],
+                datastores=[f"ds-{i % 4}"],
+                application_hint=f"app-{i % 25}",
+            )
+        )
     started = time.monotonic()
     groups = PreClassifier().classify(vms)
     elapsed = time.monotonic() - started
@@ -299,11 +356,14 @@ def test_consolidation_caps_group_count_at_max_groups():
     # raw groups than the cap allows, then verify consolidation.
     vms = []
     for i in range(1, 51):
-        vms.append(_vm(
-            i, f"vm-{i:02d}",
-            application_hint=f"unique-{i}",
-            networks=[f"net-{i}"],
-        ))
+        vms.append(
+            _vm(
+                i,
+                f"vm-{i:02d}",
+                application_hint=f"unique-{i}",
+                networks=[f"net-{i}"],
+            )
+        )
     classifier = PreClassifier(max_groups=8)
     groups = classifier.classify(vms)
     assert len(groups) <= 8
@@ -313,12 +373,8 @@ def test_consolidation_caps_group_count_at_max_groups():
 
 
 def test_consolidation_never_merges_across_primary_key():
-    vms = [
-        _vm(i, f"vc1-vm-{i}", vcenter=1, application_hint=f"a-{i}")
-        for i in range(1, 11)
-    ] + [
-        _vm(20 + i, f"vc2-vm-{i}", vcenter=2, application_hint=f"b-{i}")
-        for i in range(1, 11)
+    vms = [_vm(i, f"vc1-vm-{i}", vcenter=1, application_hint=f"a-{i}") for i in range(1, 11)] + [
+        _vm(20 + i, f"vc2-vm-{i}", vcenter=2, application_hint=f"b-{i}") for i in range(1, 11)
     ]
     classifier = PreClassifier(max_groups=4)
     groups = classifier.classify(vms)

@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
-from app.models.target import OCPAuthType, OCPTargetStatus, ResourceMappingStatus
+from app.models.target import OCPTargetStatus, ResourceMappingStatus
 from app.models.vcenter import ClassificationLevel
 
 
@@ -23,48 +23,19 @@ _DictRowList = Annotated[list[dict], BeforeValidator(_drop_non_dict_rows)]
 
 
 # ---------------------------------------------------------------------------
-# OCPTarget
+# OCPTarget — metadata only; VirtValidate does not authenticate to clusters.
+# Available cluster resources are operator-declared via the per-cluster
+# catalogs (ocp_target_namespaces, target_networks, target_storage_classes).
 # ---------------------------------------------------------------------------
-class StorageClassDiscovered(BaseModel):
-    """One row from the discovered StorageClass list. Field set is the
-    operator-relevant subset of the full Kubernetes StorageClass spec."""
-
-    name: str
-    provisioner: str
-    is_default: bool = False
-    access_modes: list[str] = Field(default_factory=list)
-    reclaim_policy: str | None = None
-    volume_binding_mode: str | None = None
-
-
-class NetworkAttachmentDiscovered(BaseModel):
-    name: str
-    namespace: str | None = None
-    type: Literal["nad", "cudn", "udn"] = "nad"
-    config_summary: str | None = None  # JSON string of relevant config bits
-
-
-class NamespaceDiscovered(BaseModel):
-    name: str
-    labels: dict[str, str] = Field(default_factory=dict)
-
-
-class ClusterCapacity(BaseModel):
-    node_count: int = 0
-    total_cpu_millicores: int = 0
-    total_memory_bytes: int = 0
-    existing_vm_count: int | None = None
-
-
 class OCPTargetBase(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     api_endpoint: str = Field(min_length=1, max_length=512)
     region: str | None = Field(default=None, max_length=64)
     site: str | None = Field(default=None, max_length=64)
     classification_level: ClassificationLevel = ClassificationLevel.unclassified
-    auth_type: OCPAuthType = OCPAuthType.token
-    auth_credential_secret_ref: str | None = Field(default=None, max_length=255)
-    verify_ssl: bool = True
+    mtv_namespace: str | None = Field(default=None, max_length=253)
+    ocp_version: str | None = Field(default=None, max_length=32)
+    kubernetes_version: str | None = Field(default=None, max_length=32)
     notes: str | None = Field(default=None, max_length=4096)
 
 
@@ -78,9 +49,9 @@ class OCPTargetUpdate(BaseModel):
     region: str | None = Field(default=None, max_length=64)
     site: str | None = Field(default=None, max_length=64)
     classification_level: ClassificationLevel | None = None
-    auth_type: OCPAuthType | None = None
-    auth_credential_secret_ref: str | None = Field(default=None, max_length=255)
-    verify_ssl: bool | None = None
+    mtv_namespace: str | None = Field(default=None, max_length=253)
+    ocp_version: str | None = Field(default=None, max_length=32)
+    kubernetes_version: str | None = Field(default=None, max_length=32)
     notes: str | None = Field(default=None, max_length=4096)
 
 
@@ -89,38 +60,8 @@ class OCPTargetRead(OCPTargetBase):
 
     id: int
     status: OCPTargetStatus
-    storage_classes: list[dict] | None = None
-    network_attachments: list[dict] | None = None
-    namespaces: list[dict] | None = None
-    cluster_capacity: dict | None = None
-    mtv_namespace: str | None = None
-    ocp_version: str | None = None
-    kubernetes_version: str | None = None
-    last_synced_at: datetime | None = None
-    last_error: str | None = None
     created_at: datetime
     updated_at: datetime
-
-
-class OCPDiscoveryRequest(BaseModel):
-    """Optional: paste a pre-discovered resource bundle instead of
-    making the appliance query the cluster directly. Useful for
-    air-gapped operators who run ``oc`` locally and feed the JSON in."""
-
-    bearer_token: str | None = Field(default=None, max_length=8192)
-    manual_storage_classes: list[StorageClassDiscovered] | None = None
-    manual_network_attachments: list[NetworkAttachmentDiscovered] | None = None
-    manual_namespaces: list[NamespaceDiscovered] | None = None
-
-
-class OCPDiscoveryResponse(BaseModel):
-    target_id: int
-    status: OCPTargetStatus
-    last_synced_at: datetime | None = None
-    storage_class_count: int = 0
-    network_attachment_count: int = 0
-    namespace_count: int = 0
-    last_error: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +124,6 @@ class ResourceMappingBase(BaseModel):
     # or a strategy dict (new flow). Pydantic resolves the union by
     # shape; the column type stays JSON either way.
     namespace_mappings: list[NamespaceMappingItem] | NamespaceStrategy = Field(default_factory=list)
-    is_active: bool = False
 
 
 class ResourceMappingCreate(ResourceMappingBase):
@@ -195,7 +135,6 @@ class ResourceMappingUpdate(BaseModel):
     network_mappings: list[NetworkMappingItem] | None = None
     storage_mappings: list[StorageMappingItem] | None = None
     namespace_mappings: list[NamespaceMappingItem] | NamespaceStrategy | None = None
-    is_active: bool | None = None
 
 
 class ResourceMappingRead(BaseModel):
@@ -215,7 +154,6 @@ class ResourceMappingRead(BaseModel):
     storage_mappings: _DictRowList = Field(default_factory=list)
     # JSON column — list (legacy) or dict (new strategy shape).
     namespace_mappings: list[dict] | dict = Field(default_factory=list)
-    is_active: bool = False
     status: ResourceMappingStatus
     last_used_at: datetime | None = None
     created_at: datetime

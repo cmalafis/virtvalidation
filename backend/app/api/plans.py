@@ -28,6 +28,7 @@ from app.core.mtv import (
 from app.core.plan_generation import run_simple_plan_generation
 from app.core.preclassifier import PreClassifier
 from app.core.reporter import ReporterError, WaveReporter, render_pdf
+from app.core.target_resolution import resolve_vms_iter
 from app.core.vm_lifecycle import (
     LifecycleTransitionError,
     transition_to_available_from_deleted_plan,
@@ -53,42 +54,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["plans"])
 
 
-def _resolve_active_mappings_for_vms(db: Session, vms: list[VM]) -> list[ResourceMapping]:
-    """Auto-pick one active ResourceMapping per distinct source vCenter
-    in the selection.
+def _auto_resolve_mappings_for_vms(db: Session, vms: list[VM]) -> list[ResourceMapping]:
+    """Auto-pick the resolved ResourceMapping per VM in the selection.
 
     Used when the caller omitted ``mapping_ids`` entirely (CLI / pre-
-    wizard scripts). Returns one mapping per vCenter touched by the
-    VMs; vCenters with no active mapping contribute no entry to the
-    list — Stage 0 then surfaces the gap synchronously.
-
-    When more than one active mapping exists for the same
-    (vcenter, ocp_target) pair — a data inconsistency the editor's
-    PATCH normally prevents by flipping siblings off — log and pick
-    the lowest id deterministically.
+    wizard scripts). Returns the deduplicated set of mappings reached
+    via :func:`app.core.target_resolution.resolve_vms_iter` — each VM's
+    ``(source_vcenter_id, resolved_cluster_id)`` resolves to at most
+    one mapping under the per-pair uniqueness constraint. VMs whose
+    resolution is incomplete contribute no mapping to the list; Stage 0
+    then surfaces the gap synchronously.
     """
-    vcenter_ids = sorted({vm.source_vcenter_id for vm in vms if vm.source_vcenter_id is not None})
-    out: list[ResourceMapping] = []
-    for vc_id in vcenter_ids:
-        candidates = list(
-            db.scalars(
-                select(ResourceMapping)
-                .where(ResourceMapping.vcenter_source_id == vc_id)
-                .where(ResourceMapping.is_active.is_(True))
-                .order_by(ResourceMapping.id.asc())
-            ).all()
-        )
-        if not candidates:
+    resolved = resolve_vms_iter(vms, db)
+    seen: dict[int, ResourceMapping] = {}
+    for r in resolved.values():
+        if r.mapping_id is None or r.mapping_id in seen:
             continue
-        if len(candidates) > 1:
-            logger.warning(
-                "plan.create.multiple_active_mappings vcenter_id=%d ids=%s picked=%d",
-                vc_id,
-                [m.id for m in candidates],
-                candidates[0].id,
-            )
-        out.append(candidates[0])
-    return out
+        mapping = db.get(ResourceMapping, r.mapping_id)
+        if mapping is not None:
+            seen[mapping.id] = mapping
+    return list(seen.values())
 
 
 @router.post("", response_model=PlanRead, status_code=status.HTTP_202_ACCEPTED)
@@ -135,15 +120,12 @@ def create_plan(
     if missing:
         raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
 
-    # Resolve mapping list. The new wizard always sends
-    # ``mapping_ids`` (possibly empty when the operator opted out);
-    # legacy CLI callers either send a singular ``mapping_id`` or
-    # omit both fields. Three branches:
-    #   1. mapping_ids is a list (incl. empty) → use it verbatim.
-    #   2. only legacy mapping_id provided → treat as [mapping_id].
-    #   3. both omitted → auto-resolve active mappings per vCenter.
+    # Resolve mapping list. Two branches:
+    #   1. caller provides ``mapping_ids`` (incl. empty) → use verbatim.
+    #   2. omitted → auto-resolve via the per-VM target resolver
+    #      (target_cluster_id_override OR sole mapping per vCenter).
     # Stage 0 then validates per-VM against whichever mapping covers
-    # the VM's source vCenter.
+    # the VM's (source vCenter, target cluster) pair.
     mappings: list[ResourceMapping]
     if payload.mapping_ids is not None:
         if payload.mapping_ids:
@@ -162,23 +144,10 @@ def create_plan(
             mappings = rows
         else:
             mappings = []
-    elif payload.mapping_id is not None:
-        legacy = db.get(ResourceMapping, payload.mapping_id)
-        if legacy is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Resource mapping {payload.mapping_id} not found",
-            )
-        mappings = [legacy]
     else:
-        mappings = _resolve_active_mappings_for_vms(db, vms)
+        mappings = _auto_resolve_mappings_for_vms(db, vms)
 
-    # Persist the resolved mapping ids. ``mapping_id`` (legacy
-    # singular) is set to the first entry — back-compat for any
-    # reader that still consults it before the multi-mapping
-    # column-readers ship in a later release.
     mapping_ids_used = [m.id for m in mappings]
-    mapping_id_used = mapping_ids_used[0] if mapping_ids_used else None
 
     coverage = validate_plan_inputs(vms, mappings)
     if not coverage.ok:
@@ -192,7 +161,6 @@ def create_plan(
         # when it completes. Empty string is the sentinel for "not yet
         # generated".
         model="",
-        mapping_id=mapping_id_used,
         mapping_ids=mapping_ids_used,
         status="pending",
         progress_message="Queued",
@@ -535,19 +503,18 @@ def wave_mtv_yaml(
             "vsphere_datastores": list(vms_by_id[vid].vsphere_datastores or []),
             "environment": vms_by_id[vid].environment or "",
             "application_hint": vms_by_id[vid].application_hint or "",
-            "target_namespace": vms_by_id[vid].target_namespace or "",
-            "target_storage_class": vms_by_id[vid].target_storage_class or "",
-            "target_network_attachment": vms_by_id[vid].target_network_attachment or "",
+            # target_namespace fed from the per-VM override so the
+            # MappingResolver's fallback ("vm has no namespace strategy
+            # match" path) lands on the operator's declared namespace.
+            "target_namespace": vms_by_id[vid].target_namespace_override or "",
         }
         for vid in vm_ids
     ]
 
     # Pick the mapping whose vcenter covers this wave's VMs. Per the
     # CLAUDE.md partition rule, every VM in a wave shares one
-    # source_vcenter_id, so the lookup is unambiguous. Prefers
-    # ``plan.mapping_ids`` (the multi-mapping list); falls back to
-    # the singular ``plan.mapping_id`` for legacy rows from before
-    # the multi-mapping migration.
+    # source_vcenter_id, so the lookup is unambiguous. Uses the plan's
+    # mapping_ids snapshot taken at generation time.
     resolver: MappingResolver | None = None
     used_mapping_id: int | None = None
     wave_vcenter_ids = sorted(
@@ -558,8 +525,6 @@ def wave_mtv_yaml(
         }
     )
     candidate_ids = list(plan.mapping_ids or [])
-    if not candidate_ids and plan.mapping_id is not None:
-        candidate_ids = [plan.mapping_id]
 
     mapping_for_wave: ResourceMapping | None = None
     if candidate_ids and wave_vcenter_ids:

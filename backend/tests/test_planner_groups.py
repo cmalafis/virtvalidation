@@ -23,7 +23,7 @@ def _vm(
     name: str,
     *,
     vcenter: int | None = 1,
-    target_namespace: str = "prod",
+    target_namespace_override: str = "prod",
     networks: list[str] | None = None,
     datastores: list[str] | None = None,
     application_hint: str | None = None,
@@ -33,7 +33,7 @@ def _vm(
         name=name,
         source_hostname=f"{name}.local",
         source_vcenter_id=vcenter,
-        target_namespace=target_namespace,
+        target_namespace_override=target_namespace_override,
         vsphere_networks=list(networks or []),
         vsphere_datastores=list(datastores or []),
         application_hint=application_hint,
@@ -137,12 +137,52 @@ def test_plan_with_groups_waves_carry_group_ids():
 # API integration
 # ---------------------------------------------------------------------------
 def _seed_vms(client, count=5, prefix="web"):
-    # Per-VM target_namespace + target_network_attachment +
-    # target_storage_class satisfies Stage 0 (mapping_validation)
-    # AND Stage 7 (MTV YAML emission) without a real ResourceMapping
-    # — both layers accept VM-level fallbacks for callers without a
-    # mapping_id. Real plans go through the mapping editor; these
-    # tests exercise the structural pipeline without that surface.
+    """Stand up a vCenter + OCP target + canonical ResourceMapping,
+    then enroll ``count`` VMs against them. Per-VM target_* fallback
+    columns were removed in the multi-cluster target arch migration,
+    so the mapping is required for Stage 0 to pass.
+    """
+    vcs = client.get("/api/sources/vcenters").json()
+    if isinstance(vcs, dict):
+        vcs = vcs.get("items", [])
+    vc = next((v for v in vcs if v["name"] == "vc-seed"), None)
+    if vc is None:
+        vc = client.post(
+            "/api/sources/vcenters",
+            json={"name": "vc-seed", "hostname": "vc-seed.example"},
+        ).json()
+    targets = client.get("/api/sources/targets").json()
+    tgt = next((t for t in targets if t["name"] == "ocp-seed"), None)
+    if tgt is None:
+        tgt = client.post(
+            "/api/sources/targets",
+            json={"name": "ocp-seed", "api_endpoint": "https://ocp-seed.example"},
+        ).json()
+    existing = [
+        m
+        for m in client.get("/api/mappings").json()
+        if m["vcenter_source_id"] == vc["id"] and m["ocp_target_id"] == tgt["id"]
+    ]
+    if not existing:
+        client.post(
+            "/api/mappings",
+            json={
+                "name": "seed-mapping",
+                "vcenter_source_id": vc["id"],
+                "ocp_target_id": tgt["id"],
+                "network_mappings": [
+                    {
+                        "source_network": f"{prefix}-net",
+                        "target_network_name": f"{prefix}-nad",
+                        "target_network_type": "nad",
+                    }
+                ],
+                "storage_mappings": [
+                    {"source_datastore": f"{prefix}-ds", "target_storage_class": "ocs-rbd"}
+                ],
+                "namespace_mappings": [{"criteria": "default", "target_namespace": "prod"}],
+            },
+        ).raise_for_status()
     for i in range(1, count + 1):
         client.post(
             "/api/vms",
@@ -151,9 +191,7 @@ def _seed_vms(client, count=5, prefix="web"):
                 "source_hostname": f"{prefix}-{i:02d}.local",
                 "vsphere_networks": [f"{prefix}-net"],
                 "vsphere_datastores": [f"{prefix}-ds"],
-                "target_namespace": "prod",
-                "target_network_attachment": f"{prefix}-nad",
-                "target_storage_class": "ocs-rbd",
+                "source_vcenter_id": vc["id"],
                 "application_hint": "test-app",
             },
         ).raise_for_status()

@@ -12,20 +12,18 @@ def _vm(
     *,
     networks=(),
     datastores=(),
-    target_namespace: str | None = None,
-    target_storage_class: str | None = None,
-    target_network_attachment: str | None = None,
+    target_namespace_override: str | None = None,
+    source_vcenter_id: int = 1,
     vid: int = 1,
 ) -> VM:
     return VM(
         id=vid,
         name=name,
         source_hostname=name,
+        source_vcenter_id=source_vcenter_id,
         vsphere_networks=list(networks),
         vsphere_datastores=list(datastores),
-        target_namespace=target_namespace,
-        target_storage_class=target_storage_class,
-        target_network_attachment=target_network_attachment,
+        target_namespace_override=target_namespace_override,
     )
 
 
@@ -53,7 +51,7 @@ class TestStage0Validation:
             "app-01",
             networks=("vlan-100",),
             datastores=("tier1",),
-            target_namespace="prod",
+            target_namespace_override="prod",
         )
         m = _mapping(
             networks=[("vlan-100", "vlan-100-nad")],
@@ -68,7 +66,7 @@ class TestStage0Validation:
             "app-01",
             networks=("vlan-999",),
             datastores=(),
-            target_namespace="prod",
+            target_namespace_override="prod",
         )
         m = _mapping(networks=[])
         result = validate_plan_inputs([vm], [m])
@@ -76,7 +74,7 @@ class TestStage0Validation:
         assert any(g.kind == "network" and g.source_value == "vlan-999" for g in result.gaps)
 
     def test_missing_datastore_reported(self):
-        vm = _vm("app-01", datastores=("tierX",), target_namespace="ns")
+        vm = _vm("app-01", datastores=("tierX",), target_namespace_override="ns")
         m = _mapping()
         result = validate_plan_inputs([vm], [m])
         assert any(g.kind == "datastore" and g.source_value == "tierX" for g in result.gaps)
@@ -88,19 +86,20 @@ class TestStage0Validation:
         # No mapping namespaces + no vm.target_namespace → namespace gap.
         assert any(g.kind == "namespace" for g in result.gaps)
 
-    def test_vm_level_fallback_satisfies_network(self):
-        # The mapping doesn't carry vlan-X but the VM has a per-row NAD;
-        # the MTV emitter accepts this fallback.
+    def test_per_vm_network_fallback_removed(self):
+        # Per-VM ``target_network_attachment`` was removed in the
+        # multi-cluster target arch migration; network resolution now
+        # comes exclusively from the mapping. A VM whose source
+        # network has no mapping entry must surface a network gap.
         vm = _vm(
             "app-01",
             networks=("vlan-X",),
-            target_namespace="ns",
-            target_network_attachment="vlan-X-nad",
+            target_namespace_override="ns",
         )
         m = _mapping()
         result = validate_plan_inputs([vm], [m])
         gaps = [g for g in result.gaps if g.kind == "network"]
-        assert gaps == []
+        assert any(g.source_value == "vlan-X" for g in gaps)
 
     def test_empty_mappings_makes_everything_a_gap(self):
         # Operator opted out of mapping-driven coverage entirely
@@ -119,7 +118,7 @@ class TestStage0Validation:
 
     def test_render_truncates_long_lists(self):
         vms = [
-            _vm(f"app-{i}", datastores=("tier-x",), vid=i, target_namespace="ns")
+            _vm(f"app-{i}", datastores=("tier-x",), vid=i, target_namespace_override="ns")
             for i in range(1, 12)
         ]
         result = validate_plan_inputs(vms, [_mapping()])
@@ -134,7 +133,7 @@ class TestStage0Validation:
             "app-a",
             networks=("vlan-a",),
             datastores=("tier-a",),
-            target_namespace="ns-a",
+            target_namespace_override="ns-a",
             vid=1,
         )
         vm_a.source_vcenter_id = 1
@@ -142,7 +141,7 @@ class TestStage0Validation:
             "app-b",
             networks=("vlan-b",),
             datastores=("tier-b",),
-            target_namespace="ns-b",
+            target_namespace_override="ns-b",
             vid=2,
         )
         vm_b.source_vcenter_id = 2
@@ -169,7 +168,7 @@ class TestStage0Validation:
             "app-a",
             networks=("vlan-a",),
             datastores=("tier-a",),
-            target_namespace="ns",
+            target_namespace_override="ns",
             vid=1,
         )
         vm.source_vcenter_id = 99

@@ -55,10 +55,10 @@ class FleetVMSpec:
     """
 
     name: str
-    application_hint: str          # App custom attribute
-    environment: str               # Production | Development | DR
-    role_token: str                # web | app | data | worker | dc | pki | dns | ntp | backup | sandbox | imaging
-    vcenter_id: int                # source_vcenter_id
+    application_hint: str  # App custom attribute
+    environment: str  # Production | Development | DR
+    role_token: str  # web | app | data | worker | dc | pki | dns | ntp | backup | sandbox | imaging
+    vcenter_id: int  # source_vcenter_id
     target_namespace: str
     networks: list[str] = field(default_factory=list)
     datastores: list[str] = field(default_factory=list)
@@ -72,32 +72,32 @@ _VCENTER_DEV = 2
 _VCENTER_DR = 3
 
 _NETWORKS = {
-    "ehrpro-web":  "VLAN-100-Web-Prod",
-    "ehrpro-app":  "VLAN-110-App-Prod",
+    "ehrpro-web": "VLAN-100-Web-Prod",
+    "ehrpro-app": "VLAN-110-App-Prod",
     "ehrpro-data": "VLAN-120-Data-Prod",
-    "pacs-web":    "VLAN-100-Web-Prod",
-    "pacs-app":    "VLAN-110-App-Prod",
-    "pacs-data":   "VLAN-120-Data-Prod",
-    "identity":    "VLAN-900-Mgmt-Infra",
-    "infra":       "VLAN-900-Mgmt-Infra",
-    "legacy-web":  "VLAN-150-Legacy-Prod",
-    "legacy-app":  "VLAN-160-Legacy-Prod",
+    "pacs-web": "VLAN-100-Web-Prod",
+    "pacs-app": "VLAN-110-App-Prod",
+    "pacs-data": "VLAN-120-Data-Prod",
+    "identity": "VLAN-900-Mgmt-Infra",
+    "infra": "VLAN-900-Mgmt-Infra",
+    "legacy-web": "VLAN-150-Legacy-Prod",
+    "legacy-app": "VLAN-160-Legacy-Prod",
     "legacy-data": "VLAN-170-Legacy-Prod",
-    "dev-web":     "VLAN-200-Web-Dev",
-    "dev-app":     "VLAN-210-App-Dev",
-    "dev-data":    "VLAN-220-Data-Dev",
-    "dr-web":      "VLAN-300-Web-DR",
-    "dr-app":      "VLAN-310-App-DR",
-    "dr-data":     "VLAN-320-Data-DR",
+    "dev-web": "VLAN-200-Web-Dev",
+    "dev-app": "VLAN-210-App-Dev",
+    "dev-data": "VLAN-220-Data-Dev",
+    "dr-web": "VLAN-300-Web-DR",
+    "dr-app": "VLAN-310-App-DR",
+    "dr-data": "VLAN-320-Data-DR",
 }
 
 _DATASTORES = {
-    "prod-gold":     "prod-gold-ssd-01",      # data tier
-    "prod-silver":   "prod-silver-hdd-01",    # app tier
-    "prod-bronze":   "prod-bronze-archive",   # worker / backup
-    "infra-shared":  "infra-shared-01",
-    "dev-shared":    "dev-shared-01",
-    "dr-shared":     "dr-shared-01",
+    "prod-gold": "prod-gold-ssd-01",  # data tier
+    "prod-silver": "prod-silver-hdd-01",  # app tier
+    "prod-bronze": "prod-bronze-archive",  # worker / backup
+    "infra-shared": "infra-shared-01",
+    "dev-shared": "dev-shared-01",
+    "dr-shared": "dr-shared-01",
 }
 
 
@@ -116,49 +116,57 @@ def _ehrpro() -> list[FleetVMSpec]:
     """12 VMs: 3 web + 4 app + 3 data + 2 worker."""
     out: list[FleetVMSpec] = []
     for i in range(1, 4):
-        out.append(FleetVMSpec(
-            name=f"ehrpro-web-{i:02d}",
-            application_hint="ehrpro",
-            environment="production",
-            role_token="web",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="ehrpro-prod",
-            networks=_net("ehrpro-web"),
-            datastores=_ds("prod-silver"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"ehrpro-web-{i:02d}",
+                application_hint="ehrpro",
+                environment="production",
+                role_token="web",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="ehrpro-prod",
+                networks=_net("ehrpro-web"),
+                datastores=_ds("prod-silver"),
+            )
+        )
     for i in range(1, 5):
-        out.append(FleetVMSpec(
-            name=f"ehrpro-app-{i:02d}",
-            application_hint="ehrpro",
-            environment="production",
-            role_token="app",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="ehrpro-prod",
-            networks=_net("ehrpro-app"),
-            datastores=_ds("prod-silver"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"ehrpro-app-{i:02d}",
+                application_hint="ehrpro",
+                environment="production",
+                role_token="app",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="ehrpro-prod",
+                networks=_net("ehrpro-app"),
+                datastores=_ds("prod-silver"),
+            )
+        )
     for i in range(1, 4):
-        out.append(FleetVMSpec(
-            name=f"ehrpro-postgres-db-{i:02d}",
-            application_hint="ehrpro",
-            environment="production",
-            role_token="data",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="ehrpro-prod",
-            networks=_net("ehrpro-data"),
-            datastores=_ds("prod-gold"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"ehrpro-postgres-db-{i:02d}",
+                application_hint="ehrpro",
+                environment="production",
+                role_token="data",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="ehrpro-prod",
+                networks=_net("ehrpro-data"),
+                datastores=_ds("prod-gold"),
+            )
+        )
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"ehrpro-worker-{i:02d}",
-            application_hint="ehrpro",
-            environment="production",
-            role_token="worker",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="ehrpro-prod",
-            networks=_net("ehrpro-app"),
-            datastores=_ds("prod-bronze"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"ehrpro-worker-{i:02d}",
+                application_hint="ehrpro",
+                environment="production",
+                role_token="worker",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="ehrpro-prod",
+                networks=_net("ehrpro-app"),
+                datastores=_ds("prod-bronze"),
+            )
+        )
     return out
 
 
@@ -166,49 +174,57 @@ def _pacs() -> list[FleetVMSpec]:
     """10 VMs: 2 web + 4 app + 2 data + 2 imaging."""
     out: list[FleetVMSpec] = []
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"pacs-web-{i:02d}",
-            application_hint="pacsimaging",
-            environment="production",
-            role_token="web",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="pacs-prod",
-            networks=_net("pacs-web"),
-            datastores=_ds("prod-silver"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"pacs-web-{i:02d}",
+                application_hint="pacsimaging",
+                environment="production",
+                role_token="web",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="pacs-prod",
+                networks=_net("pacs-web"),
+                datastores=_ds("prod-silver"),
+            )
+        )
     for i in range(1, 5):
-        out.append(FleetVMSpec(
-            name=f"pacs-app-{i:02d}",
-            application_hint="pacsimaging",
-            environment="production",
-            role_token="app",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="pacs-prod",
-            networks=_net("pacs-app"),
-            datastores=_ds("prod-silver"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"pacs-app-{i:02d}",
+                application_hint="pacsimaging",
+                environment="production",
+                role_token="app",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="pacs-prod",
+                networks=_net("pacs-app"),
+                datastores=_ds("prod-silver"),
+            )
+        )
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"pacs-db-{i:02d}",
-            application_hint="pacsimaging",
-            environment="production",
-            role_token="data",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="pacs-prod",
-            networks=_net("pacs-data"),
-            datastores=_ds("prod-gold"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"pacs-db-{i:02d}",
+                application_hint="pacsimaging",
+                environment="production",
+                role_token="data",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="pacs-prod",
+                networks=_net("pacs-data"),
+                datastores=_ds("prod-gold"),
+            )
+        )
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"pacs-imaging-process-{i:02d}",
-            application_hint="pacsimaging",
-            environment="production",
-            role_token="imaging",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="pacs-prod",
-            networks=_net("pacs-app"),
-            datastores=_ds("prod-gold"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"pacs-imaging-process-{i:02d}",
+                application_hint="pacsimaging",
+                environment="production",
+                role_token="imaging",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="pacs-prod",
+                networks=_net("pacs-app"),
+                datastores=_ds("prod-gold"),
+            )
+        )
     return out
 
 
@@ -216,38 +232,44 @@ def _identity() -> list[FleetVMSpec]:
     """8 VMs: 4 AD-DC + 2 RHIDM + 2 PKI."""
     out: list[FleetVMSpec] = []
     for i in range(1, 5):
-        out.append(FleetVMSpec(
-            name=f"ad-dc-{i:02d}",
-            application_hint="identityservices",
-            environment="production",
-            role_token="dc",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="identity-prod",
-            networks=_net("identity"),
-            datastores=_ds("infra-shared"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"ad-dc-{i:02d}",
+                application_hint="identityservices",
+                environment="production",
+                role_token="dc",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="identity-prod",
+                networks=_net("identity"),
+                datastores=_ds("infra-shared"),
+            )
+        )
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"rhidm-{i:02d}",
-            application_hint="identityservices",
-            environment="production",
-            role_token="dc",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="identity-prod",
-            networks=_net("identity"),
-            datastores=_ds("infra-shared"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"rhidm-{i:02d}",
+                application_hint="identityservices",
+                environment="production",
+                role_token="dc",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="identity-prod",
+                networks=_net("identity"),
+                datastores=_ds("infra-shared"),
+            )
+        )
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"pki-{i:02d}",
-            application_hint="identityservices",
-            environment="production",
-            role_token="pki",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="identity-prod",
-            networks=_net("identity"),
-            datastores=_ds("infra-shared"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"pki-{i:02d}",
+                application_hint="identityservices",
+                environment="production",
+                role_token="pki",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="identity-prod",
+                networks=_net("identity"),
+                datastores=_ds("infra-shared"),
+            )
+        )
     return out
 
 
@@ -255,38 +277,44 @@ def _infra() -> list[FleetVMSpec]:
     """6 VMs: 2 DNS + 2 NTP + 2 Backup."""
     out: list[FleetVMSpec] = []
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"dns-{i:02d}",
-            application_hint="infraservices",
-            environment="production",
-            role_token="dns",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="infra-prod",
-            networks=_net("infra"),
-            datastores=_ds("infra-shared"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"dns-{i:02d}",
+                application_hint="infraservices",
+                environment="production",
+                role_token="dns",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="infra-prod",
+                networks=_net("infra"),
+                datastores=_ds("infra-shared"),
+            )
+        )
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"ntp-{i:02d}",
-            application_hint="infraservices",
-            environment="production",
-            role_token="ntp",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="infra-prod",
-            networks=_net("infra"),
-            datastores=_ds("infra-shared"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"ntp-{i:02d}",
+                application_hint="infraservices",
+                environment="production",
+                role_token="ntp",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="infra-prod",
+                networks=_net("infra"),
+                datastores=_ds("infra-shared"),
+            )
+        )
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"backup-{i:02d}",
-            application_hint="infraservices",
-            environment="production",
-            role_token="backup",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="infra-prod",
-            networks=_net("infra"),
-            datastores=_ds("prod-bronze"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"backup-{i:02d}",
+                application_hint="infraservices",
+                environment="production",
+                role_token="backup",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="infra-prod",
+                networks=_net("infra"),
+                datastores=_ds("prod-bronze"),
+            )
+        )
     return out
 
 
@@ -294,38 +322,44 @@ def _legacy() -> list[FleetVMSpec]:
     """8 VMs: 2 web + 4 app + 2 data."""
     out: list[FleetVMSpec] = []
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"legacy-web-{i:02d}",
-            application_hint="legacyapp",
-            environment="production",
-            role_token="web",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="legacy-prod",
-            networks=_net("legacy-web"),
-            datastores=_ds("prod-silver"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"legacy-web-{i:02d}",
+                application_hint="legacyapp",
+                environment="production",
+                role_token="web",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="legacy-prod",
+                networks=_net("legacy-web"),
+                datastores=_ds("prod-silver"),
+            )
+        )
     for i in range(1, 5):
-        out.append(FleetVMSpec(
-            name=f"legacy-app-{i:02d}",
-            application_hint="legacyapp",
-            environment="production",
-            role_token="app",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="legacy-prod",
-            networks=_net("legacy-app"),
-            datastores=_ds("prod-silver"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"legacy-app-{i:02d}",
+                application_hint="legacyapp",
+                environment="production",
+                role_token="app",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="legacy-prod",
+                networks=_net("legacy-app"),
+                datastores=_ds("prod-silver"),
+            )
+        )
     for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"legacy-oracle-db-{i:02d}",
-            application_hint="legacyapp",
-            environment="production",
-            role_token="data",
-            vcenter_id=_VCENTER_PROD,
-            target_namespace="legacy-prod",
-            networks=_net("legacy-data"),
-            datastores=_ds("prod-gold"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"legacy-oracle-db-{i:02d}",
+                application_hint="legacyapp",
+                environment="production",
+                role_token="data",
+                vcenter_id=_VCENTER_PROD,
+                target_namespace="legacy-prod",
+                networks=_net("legacy-data"),
+                datastores=_ds("prod-gold"),
+            )
+        )
     return out
 
 
@@ -334,53 +368,61 @@ def _devsan() -> list[FleetVMSpec]:
     out: list[FleetVMSpec] = []
     for i in range(1, 7):
         role = ["web", "web", "app", "app", "data", "data"][i - 1]
-        out.append(FleetVMSpec(
-            name=f"devsan-{role}-{i:02d}",
-            application_hint="devsan",
-            environment="development",
-            role_token=role,
-            vcenter_id=_VCENTER_DEV,
-            target_namespace="devsan",
-            networks=_net(f"dev-{role}"),
-            datastores=_ds("dev-shared"),
-        ))
+        out.append(
+            FleetVMSpec(
+                name=f"devsan-{role}-{i:02d}",
+                application_hint="devsan",
+                environment="development",
+                role_token=role,
+                vcenter_id=_VCENTER_DEV,
+                target_namespace="devsan",
+                networks=_net(f"dev-{role}"),
+                datastores=_ds("dev-shared"),
+            )
+        )
     return out
 
 
 def _ehr_staging() -> list[FleetVMSpec]:
     """4 EHR staging VMs in dev vCenter: 1 web + 2 app + 1 data."""
     out: list[FleetVMSpec] = []
-    out.append(FleetVMSpec(
-        name="ehr-staging-web-01",
-        application_hint="ehrstaging",
-        environment="development",
-        role_token="web",
-        vcenter_id=_VCENTER_DEV,
-        target_namespace="ehr-staging",
-        networks=_net("dev-web"),
-        datastores=_ds("dev-shared"),
-    ))
-    for i in range(1, 3):
-        out.append(FleetVMSpec(
-            name=f"ehr-staging-app-{i:02d}",
+    out.append(
+        FleetVMSpec(
+            name="ehr-staging-web-01",
             application_hint="ehrstaging",
             environment="development",
-            role_token="app",
+            role_token="web",
             vcenter_id=_VCENTER_DEV,
             target_namespace="ehr-staging",
-            networks=_net("dev-app"),
+            networks=_net("dev-web"),
             datastores=_ds("dev-shared"),
-        ))
-    out.append(FleetVMSpec(
-        name="ehr-staging-db-01",
-        application_hint="ehrstaging",
-        environment="development",
-        role_token="data",
-        vcenter_id=_VCENTER_DEV,
-        target_namespace="ehr-staging",
-        networks=_net("dev-data"),
-        datastores=_ds("dev-shared"),
-    ))
+        )
+    )
+    for i in range(1, 3):
+        out.append(
+            FleetVMSpec(
+                name=f"ehr-staging-app-{i:02d}",
+                application_hint="ehrstaging",
+                environment="development",
+                role_token="app",
+                vcenter_id=_VCENTER_DEV,
+                target_namespace="ehr-staging",
+                networks=_net("dev-app"),
+                datastores=_ds("dev-shared"),
+            )
+        )
+    out.append(
+        FleetVMSpec(
+            name="ehr-staging-db-01",
+            application_hint="ehrstaging",
+            environment="development",
+            role_token="data",
+            vcenter_id=_VCENTER_DEV,
+            target_namespace="ehr-staging",
+            networks=_net("dev-data"),
+            datastores=_ds("dev-shared"),
+        )
+    )
     return out
 
 
@@ -451,7 +493,7 @@ def build_dha_fleet_vms() -> list[VM]:
             name=spec.name,
             source_hostname=f"{spec.name}.us-east.example.mil",
             source_vcenter_id=spec.vcenter_id,
-            target_namespace=spec.target_namespace,
+            target_namespace_override=spec.target_namespace,
             application_hint=spec.application_hint,
             environment=spec.environment,
             os_family="rhel" if spec.role_token != "dc" else "windows",
@@ -473,7 +515,7 @@ def persist_dha_fleet(db_session) -> list[VM]:
             name=spec.name,
             source_hostname=f"{spec.name}.us-east.example.mil",
             source_vcenter_id=spec.vcenter_id,
-            target_namespace=spec.target_namespace,
+            target_namespace_override=spec.target_namespace,
             application_hint=spec.application_hint,
             environment=spec.environment,
             os_family="rhel" if spec.role_token != "dc" else "windows",

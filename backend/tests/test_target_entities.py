@@ -136,7 +136,6 @@ def test_delete_network_blocked_when_referenced(client, db_session, target):
         network_mappings=[{"source_network": "prod-vlan", "target_network_name": "tenant-net"}],
         storage_mappings=[],
         namespace_mappings=[],
-        is_active=True,
     )
     db_session.add(m)
     db_session.commit()
@@ -201,7 +200,6 @@ def test_delete_storage_class_blocked_when_referenced(client, db_session, target
         network_mappings=[],
         storage_mappings=[{"source_datastore": "ds-1", "target_storage_class": "bulk-sc"}],
         namespace_mappings=[],
-        is_active=False,
     )
     db_session.add(m)
     db_session.commit()

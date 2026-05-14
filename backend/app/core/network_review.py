@@ -123,12 +123,13 @@ def build_source_summary(db: Session) -> dict:
                 samples.append(vm.name)
         for d in vm.vsphere_datastores or []:
             datastore_counts[d] += 1
-        if vm.target_namespace:
-            target_namespaces[vm.target_namespace] += 1
-        if vm.target_storage_class:
-            target_storage_classes[vm.target_storage_class] += 1
-        if vm.target_network_attachment:
-            target_nads[vm.target_network_attachment] += 1
+        # Per-VM target_storage_class and target_network_attachment were
+        # dropped in the multi-cluster target architecture migration;
+        # storage + network routing comes from the ResourceMapping for
+        # the VM's (vcenter, cluster) pair, so per-VM aggregation is no
+        # longer meaningful.
+        if vm.target_namespace_override:
+            target_namespaces[vm.target_namespace_override] += 1
 
     return {
         "total_vms": len(vms),

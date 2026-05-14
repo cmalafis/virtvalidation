@@ -82,14 +82,29 @@ class VM(Base):
     notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     # MTV migration mapping fields. Source side describes what the VM is wired
-    # to in vSphere; target side describes what it should land on in OCP-Virt.
-    # Lists are stored as JSON arrays so a VM with multiple NICs/disks can map
-    # cleanly through Forklift NetworkMap/StorageMap.
+    # to in vSphere; target side is resolved through ResourceMapping per the
+    # multi-cluster target architecture — networks + storage classes come from
+    # the matching (vcenter, target_cluster) ResourceMapping at plan-render
+    # time. Per-VM target_cluster_id_override and target_namespace_override
+    # below let operators pin specific VMs to a non-default cluster/namespace.
     vsphere_networks: Mapped[list[str]] = mapped_column(JSONType, nullable=False, default=list)
     vsphere_datastores: Mapped[list[str]] = mapped_column(JSONType, nullable=False, default=list)
-    target_namespace: Mapped[str | None] = mapped_column(String(253), nullable=True)
-    target_storage_class: Mapped[str | None] = mapped_column(String(253), nullable=True)
-    target_network_attachment: Mapped[str | None] = mapped_column(String(253), nullable=True)
+
+    # Per-VM target overrides. NULL means "infer from the matching
+    # ResourceMapping for this VM's source vCenter." When the operator
+    # sets these explicitly, the resolver respects them verbatim:
+    #   - target_cluster_id_override: pin this VM to a specific OCP
+    #     cluster. Required when this vCenter has mappings to more
+    #     than one cluster (no sensible default).
+    #   - target_namespace_override: declare a specific destination
+    #     namespace. Wins over the mapping's namespace strategy.
+    # See app.core.target_resolution for the resolution algorithm.
+    target_cluster_id_override: Mapped[int | None] = mapped_column(
+        ForeignKey("ocp_targets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    target_namespace_override: Mapped[str | None] = mapped_column(String(253), nullable=True)
 
     # Multi-vCenter boundary. NULL is allowed for back-compat — VMs
     # enrolled before vCenter source registration was added stay
@@ -161,11 +176,11 @@ class VM(Base):
     # Hot query paths for scale-aware planning. These match the access
     # patterns the scope-selection wizard and Level 1 categorizer drive:
     #   - "VMs in vCenter X with status Y" — inventory pages
-    #   - "VMs in target cluster N" — campaign/wave assignment views
     #   - "VMs by app + env" — Level 1 grouping aggregator
+    # ``target_cluster_id_override`` is indexed inline on the column
+    # for fast "VMs in target cluster N" campaign/wave views.
     __table_args__ = (
         Index("ix_vms_source_vcenter_status", "source_vcenter_id", "status"),
-        Index("ix_vms_target_namespace", "target_namespace"),
         Index("ix_vms_app_env", "application_hint", "environment"),
     )
 

@@ -2,11 +2,13 @@
 
 Run before any structural work on a plan. Every selected VM must have:
 
-  - a target namespace (either ``vm.target_namespace`` is set, or the
-    mapping's namespace strategy resolves the VM, or a default exists),
+  - a target namespace (either ``vm.target_namespace_override`` is set,
+    or the mapping's namespace strategy resolves the VM, or a default
+    exists),
   - a target NetworkAttachmentDefinition for every entry in
-    ``vm.vsphere_networks``,
-  - a target StorageClass for every entry in ``vm.vsphere_datastores``.
+    ``vm.vsphere_networks`` via the mapping,
+  - a target StorageClass for every entry in ``vm.vsphere_datastores``
+    via the mapping.
 
 If anything is missing, ``validate_plan_inputs`` returns the list of
 gaps with VM-level detail. The caller turns that into a 422 so the
@@ -109,7 +111,7 @@ def _has_target_namespace(vm: VM, mapping: ResourceMapping | None) -> bool:
     the same gap earlier (plan creation time) by actually invoking
     the resolver against each VM's attributes.
     """
-    if vm.target_namespace:
+    if vm.target_namespace_override:
         return True
     if mapping is None:
         return False
@@ -152,7 +154,7 @@ def _has_target_namespace_via_any(vm: VM, mappings: list[ResourceMapping]) -> bo
     VM has no vcenter to pin it to. Each mapping's strategy is
     evaluated against the VM's attributes; the first to resolve
     wins."""
-    if vm.target_namespace:
+    if vm.target_namespace_override:
         return True
     for m in mappings:
         if _has_target_namespace(vm, m):
@@ -217,24 +219,23 @@ def validate_plan_inputs(
             mapped_ds = _mapped_datastores(vm_mapping)
             has_namespace = _has_target_namespace(vm, vm_mapping)
 
-        # Networks
+        # Networks — per-VM target_network_attachment was removed in
+        # the multi-cluster target architecture migration; networks
+        # come exclusively from the mapping now.
         for src in vm.vsphere_networks or []:
             if not src:
                 continue
             if src in mapped_nets:
                 continue
-            if vm.target_network_attachment:
-                # VM-level fallback present — emitter will use it.
-                continue
             gaps.append(MappingGap(vm_id=vm.id, vm_name=vm.name, kind="network", source_value=src))
 
-        # Datastores
+        # Datastores — same as networks; per-VM target_storage_class
+        # was removed in the multi-cluster target architecture
+        # migration.
         for src in vm.vsphere_datastores or []:
             if not src:
                 continue
             if src in mapped_ds:
-                continue
-            if vm.target_storage_class:
                 continue
             gaps.append(
                 MappingGap(vm_id=vm.id, vm_name=vm.name, kind="datastore", source_value=src)

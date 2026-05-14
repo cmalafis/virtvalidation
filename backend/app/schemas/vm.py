@@ -22,9 +22,11 @@ class VMBase(BaseModel):
     notes: str | None = Field(default=None, max_length=1024)
     vsphere_networks: list[str] = Field(default_factory=list)
     vsphere_datastores: list[str] = Field(default_factory=list)
-    target_namespace: str | None = Field(default=None, max_length=253)
-    target_storage_class: str | None = Field(default=None, max_length=253)
-    target_network_attachment: str | None = Field(default=None, max_length=253)
+    # Per-VM target overrides. See VM model docstring; NULL means
+    # "infer from the matching ResourceMapping" per
+    # app.core.target_resolution.
+    target_cluster_id_override: int | None = Field(default=None)
+    target_namespace_override: str | None = Field(default=None, max_length=253)
     # Multi-vCenter scope. NULL when the operator hasn't tagged the VM
     # to a vCenter (legacy enrollments or manual single-VM adds).
     source_vcenter_id: int | None = Field(default=None)
@@ -65,9 +67,8 @@ class VMUpdate(BaseModel):
     notes: str | None = Field(default=None, max_length=1024)
     vsphere_networks: list[str] | None = None
     vsphere_datastores: list[str] | None = None
-    target_namespace: str | None = Field(default=None, max_length=253)
-    target_storage_class: str | None = Field(default=None, max_length=253)
-    target_network_attachment: str | None = Field(default=None, max_length=253)
+    target_cluster_id_override: int | None = Field(default=None)
+    target_namespace_override: str | None = Field(default=None, max_length=253)
     source_vcenter_id: int | None = Field(default=None)
     application_hint: str | None = Field(default=None, max_length=128)
 

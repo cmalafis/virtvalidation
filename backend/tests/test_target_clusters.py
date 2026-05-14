@@ -22,9 +22,7 @@ def _create_target(client, **overrides) -> dict:
     payload = {
         "name": "ocp-east-prod",
         "api_endpoint": "https://api.ocp-east.corp:6443",
-        "auth_type": "token",
         "classification_level": "unclassified",
-        "verify_ssl": False,
         **overrides,
     }
     r = client.post("/api/sources/targets", json=payload)
@@ -67,53 +65,32 @@ def _create_vm(
 
 
 def _discover_target_manually(client, target_id: int) -> None:
-    """Pre-populate the target's discovery cache with a small fixture."""
-    payload = {
-        "manual_storage_classes": [
-            {
-                "name": "ocs-rbd",
-                "provisioner": "openshift-storage.rbd.csi.ceph.com",
-                "is_default": True,
-                "access_modes": ["ReadWriteOnce"],
-            },
-            {
-                "name": "ocs-cephfs",
-                "provisioner": "openshift-storage.cephfs.csi.ceph.com",
-                "is_default": False,
-                "access_modes": ["ReadWriteMany"],
-            },
-        ],
-        "manual_network_attachments": [
-            {
-                "name": "prod-vlan-100",
-                "namespace": "openshift-multus",
-                "type": "nad",
-            },
-            {"name": "dmz-vlan-200", "namespace": "openshift-multus", "type": "nad"},
-        ],
-        "manual_namespaces": [
-            {"name": "finance-prod", "labels": {}},
-            {"name": "finance-dev", "labels": {}},
-        ],
-    }
-    r = client.post(f"/api/sources/targets/{target_id}/discover", json=payload)
-    assert r.status_code == 200, r.text
+    """Seed the operator-declared cluster catalogs that the mapping
+    editor reads from. Replaces the legacy /discover endpoint
+    (removed in the multi-cluster target architecture refactor); the
+    catalogs are populated directly via their CRUD endpoints.
+    """
+    for sc in (
+        {"name": "ocs-rbd", "access_mode": "ReadWriteOnce", "is_default": True},
+        {"name": "ocs-cephfs", "access_mode": "ReadWriteMany", "is_default": False},
+    ):
+        r = client.post(f"/api/sources/targets/{target_id}/storage-classes", json=sc)
+        assert r.status_code in (201, 409), r.text
+    for nad in (
+        {"name": "prod-vlan-100", "network_type": "nad", "namespace": "openshift-multus"},
+        {"name": "dmz-vlan-200", "network_type": "nad", "namespace": "openshift-multus"},
+    ):
+        r = client.post(f"/api/sources/targets/{target_id}/networks", json=nad)
+        assert r.status_code in (201, 409), r.text
 
 
 # ---------------------------------------------------------------------------
-# OCP target CRUD + discovery
+# OCP target CRUD
 # ---------------------------------------------------------------------------
 def test_list_targets_empty_by_default(client):
     r = client.get("/api/sources/targets")
     assert r.status_code == 200
     assert r.json() == []
-
-
-def test_create_target_returns_inactive_until_discovered(client):
-    target = _create_target(client)
-    assert target["status"] == "inactive"
-    assert target["last_synced_at"] is None
-    assert target["storage_classes"] is None
 
 
 def test_duplicate_target_name_returns_409(client):
@@ -123,29 +100,10 @@ def test_duplicate_target_name_returns_409(client):
         json={
             "name": "dup",
             "api_endpoint": "https://api.dup:6443",
-            "auth_type": "token",
             "classification_level": "unclassified",
-            "verify_ssl": False,
         },
     )
     assert r.status_code == 409
-
-
-def test_manual_discovery_populates_cache_and_marks_active(client):
-    target = _create_target(client)
-    _discover_target_manually(client, target["id"])
-    refreshed = client.get(f"/api/sources/targets/{target['id']}").json()
-    assert refreshed["status"] == "active"
-    assert len(refreshed["storage_classes"]) == 2
-    assert len(refreshed["network_attachments"]) == 2
-    assert refreshed["last_synced_at"] is not None
-    assert refreshed["last_error"] is None
-
-
-def test_live_discovery_without_token_rejects_422(client):
-    target = _create_target(client)
-    r = client.post(f"/api/sources/targets/{target['id']}/discover", json={})
-    assert r.status_code == 422
 
 
 def test_delete_target_returns_204_even_with_mappings_present(client):
@@ -278,25 +236,35 @@ def test_get_mapping_recomputes_drift_status_when_target_resource_disappears(cli
         },
     ).json()
     assert mapping["status"] == "complete"
-    # Re-discover with a stripped-down resource set — the SC the mapping
-    # references is no longer present on the cluster.
-    client.post(
-        f"/api/sources/targets/{target['id']}/discover",
-        json={
-            "manual_storage_classes": [
-                {
-                    "name": "different-sc",
-                    "provisioner": "x",
-                    "is_default": True,
-                    "access_modes": [],
-                }
-            ],
-            "manual_network_attachments": [
-                {"name": "prod-vlan-100", "namespace": "openshift-multus", "type": "nad"}
-            ],
-            "manual_namespaces": [],
-        },
-    )
+    # Simulate cluster drift: the operator-declared SC catalog is
+    # mutated out-of-band so the row the mapping points at no longer
+    # exists. The catalog DELETE endpoint is FK-protected (returns 409
+    # when a mapping references the row), which is the operator-
+    # facing safety. To force the drift scenario for the test we go
+    # straight at the DB. In production, this state arises when an
+    # operator edits the JSON directly or when a future "purge
+    # catalog" admin path runs.
+    from app.core import db as _db
+    from app.models.target_storage_class import TargetStorageClass
+
+    session = _db.SessionLocal()
+    try:
+        for row in (
+            session.query(TargetStorageClass)
+            .filter(TargetStorageClass.ocp_target_id == target["id"])
+            .all()
+        ):
+            session.delete(row)
+        session.add(
+            TargetStorageClass(
+                ocp_target_id=target["id"],
+                name="different-sc",
+                is_default=True,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
     refreshed = client.get(f"/api/mappings/{mapping['id']}").json()
     assert refreshed["status"] == "needs_review"
 
@@ -500,8 +468,9 @@ def test_delete_mapping_404_when_missing(client):
 
 
 def test_delete_mapping_409_when_referenced_by_plan(client, db_session):
-    """A plan with mapping_id pointed at this row blocks the delete.
-    The 409 body lists the referencing plans so the UI can navigate."""
+    """A plan whose mapping_ids snapshot references this row blocks the
+    delete. The 409 body lists the referencing plans so the UI can
+    navigate."""
     vc = _create_vcenter(client)
     target = _create_target(client)
     mapping = client.post(
@@ -526,7 +495,7 @@ def test_delete_mapping_409_when_referenced_by_plan(client, db_session):
             vm_ids=[],
             waves=[],
             model="mock",
-            mapping_id=mapping["id"],
+            mapping_ids=[mapping["id"]],
             status="complete",
         )
         session.add(plan)
@@ -544,10 +513,12 @@ def test_delete_mapping_409_when_referenced_by_plan(client, db_session):
     assert any(row["plan_id"] == plan_id for row in detail["referenced_by"])
 
 
-def test_setting_active_flips_other_mappings_in_same_pair(client):
+def test_creating_duplicate_mapping_for_pair_returns_409(client):
+    """Mappings are unique per (vcenter, target) pair under the
+    multi-cluster target architecture. The second create should
+    surface the existing mapping in the 409 body."""
     vc = _create_vcenter(client)
     target = _create_target(client)
-    _discover_target_manually(client, target["id"])
     a = client.post(
         "/api/mappings",
         json={
@@ -557,10 +528,9 @@ def test_setting_active_flips_other_mappings_in_same_pair(client):
             "network_mappings": [],
             "storage_mappings": [],
             "namespace_mappings": [],
-            "is_active": True,
         },
     ).json()
-    b = client.post(
+    r = client.post(
         "/api/mappings",
         json={
             "name": "b",
@@ -569,12 +539,12 @@ def test_setting_active_flips_other_mappings_in_same_pair(client):
             "network_mappings": [],
             "storage_mappings": [],
             "namespace_mappings": [],
-            "is_active": True,
         },
-    ).json()
-    refreshed_a = client.get(f"/api/mappings/{a['id']}").json()
-    assert refreshed_a["is_active"] is False
-    assert b["is_active"] is True
+    )
+    assert r.status_code == 409, r.text
+    body = r.json()["detail"]
+    assert body["existing_mapping_id"] == a["id"]
+    assert body["existing_mapping_name"] == "a"
 
 
 def test_preflight_reports_unmapped_resources(client):
@@ -631,7 +601,10 @@ def test_suggest_storage_requires_discovery(client):
         },
     ).json()
     r = client.post(f"/api/mappings/{mapping['id']}/suggest-storage")
-    assert r.status_code == 409
+    # Empty operator catalog → 400, same shape as before; the legacy
+    # "409 when discovery hasn't run" is gone with the removal of the
+    # discovery lifecycle.
+    assert r.status_code == 400, r.text
 
 
 def test_suggest_storage_drops_hallucinated_target_names(client):
@@ -804,7 +777,6 @@ def test_mtv_yaml_export_uses_active_mapping_when_present(client, db_session):
     target = OCPTarget(
         name="ocp",
         api_endpoint="https://api:6443",
-        verify_ssl=False,
     )
     db_session.add(target)
     db_session.flush()
@@ -833,7 +805,6 @@ def test_mtv_yaml_export_uses_active_mapping_when_present(client, db_session):
         ],
         storage_mappings=[{"source_datastore": "src-tier1", "target_storage_class": "ocs-rbd"}],
         namespace_mappings=[{"criteria": "default", "target_namespace": "finance-prod"}],
-        is_active=True,
     )
     db_session.add(mapping)
     db_session.flush()
@@ -842,7 +813,7 @@ def test_mtv_yaml_export_uses_active_mapping_when_present(client, db_session):
         vm_ids=[vm.id],
         waves=[{"wave_number": 1, "vm_ids": [vm.id], "rationale": "only wave"}],
         model="test-model",
-        mapping_id=mapping.id,
+        mapping_ids=[mapping.id],
     )
     db_session.add(plan)
     db_session.commit()
@@ -880,7 +851,7 @@ def test_mtv_yaml_export_409_when_referenced_mapping_deleted(client, db_session)
         vm_ids=[vm.id],
         waves=[{"wave_number": 1, "vm_ids": [vm.id], "rationale": "x"}],
         model="test-model",
-        mapping_id=99_999,  # never existed
+        mapping_ids=[99_999],  # never existed
     )
     db_session.add(plan)
     db_session.commit()
@@ -904,7 +875,7 @@ def test_mtv_yaml_export_handles_dict_shape_namespace_strategy(client, db_sessio
 
     vc = VCenterSource(name="vc-dict", hostname="vc-dict.local")
     db_session.add(vc)
-    target = OCPTarget(name="ocp-dict", api_endpoint="https://api:6443", verify_ssl=False)
+    target = OCPTarget(name="ocp-dict", api_endpoint="https://api:6443")
     db_session.add(target)
     db_session.flush()
     vm = VM(
@@ -939,7 +910,6 @@ def test_mtv_yaml_export_handles_dict_shape_namespace_strategy(client, db_sessio
                 "staging": "stg-vms",
             },
         },
-        is_active=True,
     )
     db_session.add(mapping)
     db_session.flush()
@@ -948,7 +918,7 @@ def test_mtv_yaml_export_handles_dict_shape_namespace_strategy(client, db_sessio
         vm_ids=[vm.id],
         waves=[{"wave_number": 1, "vm_ids": [vm.id], "rationale": "only wave"}],
         model="test-model",
-        mapping_id=mapping.id,
+        mapping_ids=[mapping.id],
     )
     db_session.add(plan)
     db_session.commit()

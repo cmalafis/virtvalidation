@@ -38,7 +38,7 @@ def _vm(id_: int, name: str, **kwargs) -> VM:
         name=name,
         source_hostname=f"{name}.local",
         source_vcenter_id=kwargs.get("vcenter", 1),
-        target_namespace=kwargs.get("target_namespace", "prod"),
+        target_namespace_override=kwargs.get("target_namespace", "prod"),
         application_hint=kwargs.get("application_hint"),
         environment=kwargs.get("environment"),
         os_family=kwargs.get("os_family", "rhel"),

@@ -1,22 +1,21 @@
 """OCP target cluster registry + ResourceMapping CRUD + plan-time mapping resolution.
 
-Three logical groupings live in this file because they all share the
+Two logical groupings live in this file because they all share the
 "plan generation needs real cluster resources, not placeholders" thread:
 
-  - ``/api/sources/targets`` — register OCP target clusters, run
-    discovery, fetch cached resources.
+  - ``/api/sources/targets`` — register OCP target clusters (metadata
+    only; the appliance does not authenticate to clusters). The
+    per-cluster resource catalogs (TargetNetwork / TargetStorageClass /
+    OCPTargetNamespace) are CRUD'd via separate routers.
   - ``/api/mappings`` — CRUD for ResourceMapping rows, with LLM-driven
-    suggestion endpoints + a pre-flight check.
-  - Helpers consumed by ``app.core.plan_generation`` so plan generation
-    can validate "every VM in scope has a network and datastore that's
-    mapped" before calling the LLM.
+    suggestion endpoints + a pre-flight check. Mappings are unique
+    per ``(vcenter_source_id, ocp_target_id)`` pair.
 """
 
 from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -30,11 +29,9 @@ from app.core.mapping_suggester import (
     suggest_network_mappings,
     suggest_storage_mappings,
 )
-from app.core.ocp_discovery import OCPDiscoveryClient, OCPDiscoveryError
 from app.models.plan import MigrationPlan
 from app.models.target import (
     OCPTarget,
-    OCPTargetStatus,
     ResourceMapping,
     ResourceMappingStatus,
 )
@@ -44,8 +41,6 @@ from app.models.vcenter import VCenterSource
 from app.models.vm import VM
 from app.schemas.target import (
     MappingSuggestionResponse,
-    OCPDiscoveryRequest,
-    OCPDiscoveryResponse,
     OCPTargetCreate,
     OCPTargetRead,
     OCPTargetUpdate,
@@ -153,122 +148,6 @@ def delete_target(
 
 
 # ---------------------------------------------------------------------------
-# Discovery
-# ---------------------------------------------------------------------------
-@targets_router.post("/{target_id}/discover", response_model=OCPDiscoveryResponse)
-def discover_target(
-    request: Request,
-    target_id: int,
-    payload: OCPDiscoveryRequest | None = None,
-    db: Session = Depends(get_db),
-) -> dict:
-    """Run discovery against the target cluster.
-
-    Two paths:
-
-    1. **Live discovery** — pass ``bearer_token`` in the request and
-       the appliance queries the K8s API directly. Common for
-       in-network operators with cluster credentials.
-
-    2. **Manual discovery** — pass ``manual_storage_classes`` /
-       ``manual_network_attachments`` / ``manual_namespaces`` from a
-       prior ``oc get -o json`` run. Air-gapped operators use this
-       when the appliance can't reach the target cluster directly.
-
-    Either way the result lands on the OCPTarget row's discovery
-    columns, marking ``last_synced_at`` and clearing ``last_error``.
-    """
-    target = _get_target_or_404(db, target_id)
-    actor = request.headers.get("x-actor", "user")
-    payload = payload or OCPDiscoveryRequest()
-
-    if (
-        payload.manual_storage_classes is not None
-        or payload.manual_network_attachments is not None
-        or payload.manual_namespaces is not None
-    ):
-        # Manual discovery — operator pasted resources. Trust the
-        # input shape (Pydantic already validated it) and write straight
-        # through.
-        target.storage_classes = [s.model_dump() for s in (payload.manual_storage_classes or [])]
-        target.network_attachments = [
-            n.model_dump() for n in (payload.manual_network_attachments or [])
-        ]
-        target.namespaces = [ns.model_dump() for ns in (payload.manual_namespaces or [])]
-        target.cluster_capacity = target.cluster_capacity or {}
-        target.last_synced_at = datetime.now(timezone.utc)
-        target.last_error = None
-        target.status = OCPTargetStatus.active
-    else:
-        # Live discovery. Bearer token is required; we don't fall
-        # back to anonymous access.
-        if not payload.bearer_token:
-            raise HTTPException(
-                status_code=422,
-                detail="Provide bearer_token for live discovery, or pass manual_* fields for offline discovery.",
-            )
-        client = OCPDiscoveryClient(
-            api_endpoint=target.api_endpoint,
-            bearer_token=payload.bearer_token,
-            verify_ssl=target.verify_ssl,
-        )
-        try:
-            result = client.discover_all()
-        except OCPDiscoveryError as e:
-            target.status = OCPTargetStatus.error
-            target.last_error = str(e)
-            db.commit()
-            db.refresh(target)
-            record_audit(
-                db,
-                action="ocp_target.discovery_failed",
-                actor=actor,
-                resource_type="ocp_target",
-                resource_id=target.id,
-                details={"error": str(e), "endpoint": e.endpoint},
-            )
-            db.commit()
-            raise HTTPException(status_code=502, detail=str(e)) from e
-        target.storage_classes = result.storage_classes
-        target.network_attachments = result.network_attachments
-        target.namespaces = result.namespaces
-        target.cluster_capacity = result.cluster_capacity
-        target.mtv_namespace = result.mtv_namespace
-        target.ocp_version = result.ocp_version
-        target.kubernetes_version = result.kubernetes_version
-        target.last_synced_at = datetime.now(timezone.utc)
-        target.last_error = None
-        target.status = OCPTargetStatus.active
-
-    db.commit()
-    db.refresh(target)
-    record_audit(
-        db,
-        action="ocp_target.discovered",
-        actor=actor,
-        resource_type="ocp_target",
-        resource_id=target.id,
-        details={
-            "storage_classes": len(target.storage_classes or []),
-            "network_attachments": len(target.network_attachments or []),
-            "namespaces": len(target.namespaces or []),
-        },
-    )
-    db.commit()
-    request.state.skip_audit_log = True
-
-    return {
-        "target_id": target.id,
-        "status": target.status,
-        "last_synced_at": target.last_synced_at,
-        "storage_class_count": len(target.storage_classes or []),
-        "network_attachment_count": len(target.network_attachments or []),
-        "namespace_count": len(target.namespaces or []),
-        "last_error": target.last_error,
-    }
-
-
-# ---------------------------------------------------------------------------
 # Mappings router
 # ---------------------------------------------------------------------------
 mappings_router = APIRouter(tags=["resource-mappings"])
@@ -373,20 +252,14 @@ def _safe_compute_status(
 
 
 def _target_net_names(db: Session, target: OCPTarget) -> set[str] | None:
-    """Authoritative set of valid target network names for a cluster.
-
-    Prefers operator-declared TargetNetwork rows; falls back to the
-    legacy discovery cache only when no rows have been declared.
-    Returns None when neither source has data so callers can skip
-    drift checks rather than spuriously flagging needs_review."""
+    """Authoritative set of valid target network names for a cluster
+    from the operator-declared :class:`TargetNetwork` catalog. Returns
+    ``None`` when the catalog is empty so callers can skip drift
+    checks rather than spuriously flagging needs_review."""
     declared = list(
         db.scalars(select(TargetNetwork).where(TargetNetwork.ocp_target_id == target.id)).all()
     )
-    if declared:
-        return {n.name for n in declared}
-    if target.network_attachments:
-        return {n.get("name") for n in target.network_attachments if n.get("name")}
-    return None
+    return {n.name for n in declared} if declared else None
 
 
 def _target_sc_names(db: Session, target: OCPTarget) -> set[str] | None:
@@ -395,11 +268,7 @@ def _target_sc_names(db: Session, target: OCPTarget) -> set[str] | None:
             select(TargetStorageClass).where(TargetStorageClass.ocp_target_id == target.id)
         ).all()
     )
-    if declared:
-        return {s.name for s in declared}
-    if target.storage_classes:
-        return {s.get("name") for s in target.storage_classes if s.get("name")}
-    return None
+    return {s.name for s in declared} if declared else None
 
 
 @mappings_router.get("", response_model=list[ResourceMappingRead])
@@ -442,28 +311,41 @@ def create_mapping(
         network_mappings=[m.model_dump() for m in payload.network_mappings],
         storage_mappings=[m.model_dump() for m in payload.storage_mappings],
         namespace_mappings=ns_payload,
-        is_active=payload.is_active,
     )
     db.add(mapping)
     try:
         db.flush()
     except IntegrityError as e:
         db.rollback()
+        # Surface the existing mapping name so the frontend can deep-link
+        # to it. Mappings are unique per (vcenter, target) pair under
+        # ``uq_mapping_per_pair`` (see the multi-cluster target arch
+        # migration); duplicates of any kind hit this branch.
+        existing = db.scalar(
+            select(ResourceMapping).where(
+                ResourceMapping.vcenter_source_id == payload.vcenter_source_id,
+                ResourceMapping.ocp_target_id == payload.ocp_target_id,
+            )
+        )
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "detail": (
+                        f"Mapping already exists for vCenter "
+                        f"{payload.vcenter_source_id} → cluster "
+                        f"{payload.ocp_target_id}: mapping id {existing.id}, "
+                        f"name {existing.name!r}."
+                    ),
+                    "existing_mapping_id": existing.id,
+                    "existing_mapping_name": existing.name,
+                },
+            ) from e
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"Mapping named {payload.name!r} already exists for this " "source/target pair"
-            ),
+            detail=f"Mapping create violated a uniqueness constraint: {e}",
         ) from e
     mapping.status = _safe_compute_status(mapping, db, context="create_mapping")
-    if payload.is_active:
-        # Single-active per (source, target) pair — flip every other
-        # mapping for this pair off.
-        db.query(ResourceMapping).filter(
-            ResourceMapping.vcenter_source_id == mapping.vcenter_source_id,
-            ResourceMapping.ocp_target_id == mapping.ocp_target_id,
-            ResourceMapping.id != mapping.id,
-        ).update({ResourceMapping.is_active: False}, synchronize_session=False)
     db.commit()
     db.refresh(mapping)
     record_audit(
@@ -553,14 +435,6 @@ def update_mapping(
         mapping.namespace_mappings = updates["namespace_mappings"]
     if "name" in updates and updates["name"] is not None:
         mapping.name = updates["name"]
-    if "is_active" in updates and updates["is_active"] is not None:
-        mapping.is_active = updates["is_active"]
-        if mapping.is_active:
-            db.query(ResourceMapping).filter(
-                ResourceMapping.vcenter_source_id == mapping.vcenter_source_id,
-                ResourceMapping.ocp_target_id == mapping.ocp_target_id,
-                ResourceMapping.id != mapping.id,
-            ).update({ResourceMapping.is_active: False}, synchronize_session=False)
     mapping.status = _safe_compute_status(mapping, db, context="update_mapping")
     db.commit()
     db.refresh(mapping)
@@ -584,25 +458,15 @@ def delete_mapping(
     shape used by ``target_entities.delete_network`` so the frontend
     can render referencing rows consistently."""
     mapping = _get_mapping_or_404(db, mapping_id)
-    # Catch references via BOTH columns. ``mapping_id`` is the legacy
-    # singular FK; ``mapping_ids`` is the multi-mapping JSON list. A
-    # plan with this mapping anywhere in mapping_ids should still
-    # block deletion — the YAML emitter looks them up by id at export
+    # Block deletion when any plan's ``mapping_ids`` snapshot references
+    # this mapping — the YAML emitter looks them up by id at export
     # time. JSON-contains semantics vary across dialects so we filter
     # in Python; plan count is bounded by operator usage and this
     # endpoint isn't on a hot path.
     candidate_plans = list(
-        db.scalars(
-            select(MigrationPlan).where(
-                (MigrationPlan.mapping_id == mapping.id) | (MigrationPlan.mapping_ids.is_not(None))
-            )
-        ).all()
+        db.scalars(select(MigrationPlan).where(MigrationPlan.mapping_ids.is_not(None))).all()
     )
-    referencing = [
-        p
-        for p in candidate_plans
-        if p.mapping_id == mapping.id or mapping.id in (p.mapping_ids or [])
-    ]
+    referencing = [p for p in candidate_plans if mapping.id in (p.mapping_ids or [])]
     if referencing:
         raise HTTPException(
             status_code=409,
@@ -664,10 +528,9 @@ def _vcenter_source_signals(db: Session, mapping: ResourceMapping) -> tuple[list
 @mappings_router.post("/{mapping_id}/suggest-network", response_model=MappingSuggestionResponse)
 def suggest_networks(mapping_id: int, db: Session = Depends(get_db)) -> dict:
     """Ask the LLM to match source vSphere networks onto the operator's
-    declared TargetNetwork rows. The legacy discovery-cache path
-    (target.network_attachments) is read as a fallback for clusters
-    that never moved off live discovery, but the TargetNetwork table
-    is the source of truth going forward."""
+    declared :class:`TargetNetwork` rows for the mapping's target
+    cluster. The operator catalog is the only source of truth — the
+    appliance does not authenticate to clusters for live discovery."""
     mapping = _get_mapping_or_404(db, mapping_id)
     target = db.get(OCPTarget, mapping.ocp_target_id)
     if target is None:
@@ -676,32 +539,21 @@ def suggest_networks(mapping_id: int, db: Session = Depends(get_db)) -> dict:
     declared = list(
         db.scalars(select(TargetNetwork).where(TargetNetwork.ocp_target_id == target.id)).all()
     )
-    if not declared and not (target.network_attachments or []):
+    if not declared:
         raise HTTPException(
             status_code=400,
             detail="Define target networks for this cluster first.",
         )
 
     networks, _ = _vcenter_source_signals(db, mapping)
-    target_payload = (
-        [
-            {
-                "name": n.name,
-                "type": n.network_type.value,
-                "namespace": n.namespace,
-            }
-            for n in declared
-        ]
-        if declared
-        else [
-            {
-                "name": n.get("name"),
-                "type": n.get("type"),
-                "namespace": n.get("namespace"),
-            }
-            for n in (target.network_attachments or [])
-        ]
-    )
+    target_payload = [
+        {
+            "name": n.name,
+            "type": n.network_type.value,
+            "namespace": n.namespace,
+        }
+        for n in declared
+    ]
     try:
         result = suggest_network_mappings(sources=networks, targets=target_payload)
     except SuggestionError as e:
@@ -721,34 +573,22 @@ def suggest_storage(mapping_id: int, db: Session = Depends(get_db)) -> dict:
             select(TargetStorageClass).where(TargetStorageClass.ocp_target_id == target.id)
         ).all()
     )
-    if not declared and not (target.storage_classes or []):
+    if not declared:
         raise HTTPException(
             status_code=400,
             detail="Define target storage classes for this cluster first.",
         )
 
     _, datastores = _vcenter_source_signals(db, mapping)
-    target_payload = (
-        [
-            {
-                "name": s.name,
-                "provisioner": "operator-declared",
-                "is_default": s.is_default,
-                "access_modes": [s.access_mode.value],
-            }
-            for s in declared
-        ]
-        if declared
-        else [
-            {
-                "name": s.get("name"),
-                "provisioner": s.get("provisioner"),
-                "is_default": s.get("is_default"),
-                "access_modes": s.get("access_modes") or [],
-            }
-            for s in (target.storage_classes or [])
-        ]
-    )
+    target_payload = [
+        {
+            "name": s.name,
+            "provisioner": "operator-declared",
+            "is_default": s.is_default,
+            "access_modes": [s.access_mode.value],
+        }
+        for s in declared
+    ]
     try:
         result = suggest_storage_mappings(sources=datastores, targets=target_payload)
     except SuggestionError as e:

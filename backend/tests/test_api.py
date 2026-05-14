@@ -165,18 +165,14 @@ def test_create_vm_persists_mtv_mapping_fields(client):
             "source_hostname": "db-mtv.local",
             "vsphere_networks": ["VM Network", "DB Backend"],
             "vsphere_datastores": ["nfs-prod-fast"],
-            "target_namespace": "finance-prod",
-            "target_storage_class": "ocs-storagecluster-cephfs",
-            "target_network_attachment": "db-backend-nad",
+            "target_namespace_override": "finance-prod",
         },
     )
     assert r.status_code == 201
     body = r.json()
     assert body["vsphere_networks"] == ["VM Network", "DB Backend"]
     assert body["vsphere_datastores"] == ["nfs-prod-fast"]
-    assert body["target_namespace"] == "finance-prod"
-    assert body["target_storage_class"] == "ocs-storagecluster-cephfs"
-    assert body["target_network_attachment"] == "db-backend-nad"
+    assert body["target_namespace_override"] == "finance-prod"
 
 
 def test_create_vm_defaults_mtv_lists_to_empty(client, mock_vm_payload):
@@ -185,12 +181,45 @@ def test_create_vm_defaults_mtv_lists_to_empty(client, mock_vm_payload):
     body = r.json()
     assert body["vsphere_networks"] == []
     assert body["vsphere_datastores"] == []
-    assert body["target_namespace"] is None
+    assert body["target_namespace_override"] is None
 
 
 def test_wave_mtv_yaml_endpoint_renders_three_documents(client, db_session):
-    """End-to-end: enroll two VMs, hand-build a plan row, hit the YAML route."""
+    """End-to-end: enroll two VMs, set up a ResourceMapping that routes
+    their network + datastore + namespace, hand-build a plan row, hit
+    the YAML route."""
     from app.models.plan import MigrationPlan
+    from app.models.target import OCPTarget, ResourceMapping
+    from app.models.vcenter import VCenterSource
+
+    vc = VCenterSource(name="vc-east", hostname="vc-east.example")
+    target = OCPTarget(name="ocp-east", api_endpoint="https://ocp-east.example")
+    db_session.add_all([vc, target])
+    db_session.commit()
+
+    mapping = ResourceMapping(
+        name="vc-east → ocp-east",
+        vcenter_source_id=vc.id,
+        ocp_target_id=target.id,
+        network_mappings=[
+            {
+                "source_network": "DB Backend",
+                "target_network_name": "db-backend-nad",
+                "target_network_type": "nad",
+                "target_namespace": "openshift-multus",
+            }
+        ],
+        storage_mappings=[
+            {
+                "source_datastore": "nfs-prod-fast",
+                "target_storage_class": "ocs-storagecluster-cephfs",
+                "access_mode": "ReadWriteMany",
+            }
+        ],
+        namespace_mappings=[{"criteria": "default", "target_namespace": "finance-prod"}],
+    )
+    db_session.add(mapping)
+    db_session.commit()
 
     db_session.add_all(
         [
@@ -198,17 +227,15 @@ def test_wave_mtv_yaml_endpoint_renders_three_documents(client, db_session):
                 "db-prod-01",
                 vsphere_networks=["DB Backend"],
                 vsphere_datastores=["nfs-prod-fast"],
-                target_namespace="finance-prod",
-                target_storage_class="ocs-storagecluster-cephfs",
-                target_network_attachment="db-backend-nad",
+                source_vcenter_id=vc.id,
+                target_cluster_id_override=target.id,
             ),
             _vm(
                 "db-prod-02",
                 vsphere_networks=["DB Backend"],
                 vsphere_datastores=["nfs-prod-fast"],
-                target_namespace="finance-prod",
-                target_storage_class="ocs-storagecluster-cephfs",
-                target_network_attachment="db-backend-nad",
+                source_vcenter_id=vc.id,
+                target_cluster_id_override=target.id,
             ),
         ]
     )
@@ -229,12 +256,13 @@ def test_wave_mtv_yaml_endpoint_renders_three_documents(client, db_session):
         ],
         summary="DB tier",
         model="test-model",
+        mapping_ids=[mapping.id],
     )
     db_session.add(plan)
     db_session.commit()
 
     r = client.get(f"/api/plans/{plan.id}/waves/1/mtv-yaml")
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("application/yaml")
     body = r.text
     assert body.count("apiVersion: forklift.konveyor.io/v1beta1") == 3

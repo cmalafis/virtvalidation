@@ -15,15 +15,68 @@ Exercises the API contract that the wizard + inventory pages rely on:
 from __future__ import annotations
 
 
+def _seed_default_mapping(client) -> int:
+    """Register one vCenter + one OCP target + the canonical mapping
+    that covers ``vlan-100``/``tier1``/namespace=prod. Returns the
+    vcenter source id. Idempotent across tests sharing the same client.
+    """
+    vcs = client.get("/api/sources/vcenters").json()
+    if isinstance(vcs, dict):
+        vcs = vcs.get("items", [])
+    vc = next((v for v in vcs if v["name"] == "vc-default"), None)
+    if vc is None:
+        r = client.post(
+            "/api/sources/vcenters",
+            json={"name": "vc-default", "hostname": "vc-default.example"},
+        )
+        assert r.status_code == 201, r.text
+        vc = r.json()
+    targets = client.get("/api/sources/targets").json()
+    tgt = next((t for t in targets if t["name"] == "ocp-default"), None)
+    if tgt is None:
+        r = client.post(
+            "/api/sources/targets",
+            json={"name": "ocp-default", "api_endpoint": "https://ocp-default.example"},
+        )
+        assert r.status_code == 201, r.text
+        tgt = r.json()
+    existing = [
+        m
+        for m in client.get("/api/mappings").json()
+        if m["vcenter_source_id"] == vc["id"] and m["ocp_target_id"] == tgt["id"]
+    ]
+    if not existing:
+        r = client.post(
+            "/api/mappings",
+            json={
+                "name": "default-mapping",
+                "vcenter_source_id": vc["id"],
+                "ocp_target_id": tgt["id"],
+                "network_mappings": [
+                    {
+                        "source_network": "vlan-100",
+                        "target_network_name": "vlan-100-nad",
+                        "target_network_type": "nad",
+                    }
+                ],
+                "storage_mappings": [
+                    {"source_datastore": "tier1", "target_storage_class": "ocs-rbd"}
+                ],
+                "namespace_mappings": [{"criteria": "default", "target_namespace": "prod"}],
+            },
+        )
+        assert r.status_code == 201, r.text
+    return vc["id"]
+
+
 def _enroll(client, name: str, **overrides):
+    vc_id = _seed_default_mapping(client)
     payload = {
         "name": name,
         "source_hostname": f"{name}.local",
         "vsphere_networks": ["vlan-100"],
         "vsphere_datastores": ["tier1"],
-        "target_namespace": "prod",
-        "target_network_attachment": "vlan-100-nad",
-        "target_storage_class": "ocs-rbd",
+        "source_vcenter_id": vc_id,
         "application_hint": "test-app",
         **overrides,
     }
@@ -78,7 +131,6 @@ class TestMappingCoverage:
         vm = _enroll(
             client,
             "vm-bad",
-            target_storage_class=None,
             vsphere_datastores=["unmapped-ds"],
         )
         r = client.post("/api/plans", json={"vm_ids": [vm["id"]]})
@@ -200,7 +252,6 @@ class TestMappingAutoResolve:
             json={
                 "name": "target-auto",
                 "api_endpoint": "https://target-auto.example",
-                "auth_type": "token",
             },
         )
         assert r.status_code == 201, r.text
@@ -225,12 +276,11 @@ class TestMappingAutoResolve:
                     }
                 ],
                 "namespace_mappings": [{"criteria": "default", "target_namespace": "prod"}],
-                "is_active": True,
             },
         ).raise_for_status()
         return vc
 
-    def test_auto_resolves_when_mapping_id_omitted(self, client, monkeypatch):
+    def test_auto_resolves_when_mapping_ids_omitted(self, client, monkeypatch):
         _setup_backend(monkeypatch)
         vc = self._seed_vcenter_and_mapping(client)
         # VM has NO per-VM target_* fallbacks; mapping has to be found
@@ -239,17 +289,15 @@ class TestMappingAutoResolve:
             client,
             "vm-auto",
             source_vcenter_id=vc["id"],
-            target_namespace=None,
-            target_network_attachment=None,
-            target_storage_class=None,
+            target_namespace_override=None,
         )
-        # POST without mapping_id — auto-resolution must find the active
-        # mapping and let Stage 0 pass.
+        # POST without mapping_ids — auto-resolution must find the
+        # sole-per-pair mapping and let Stage 0 pass.
         r = client.post("/api/plans", json={"vm_ids": [vm["id"]]})
         assert r.status_code == 202, r.text
-        # mapping_id_used should be persisted on the plan row.
+        # mapping_ids should be populated on the plan row.
         plan = client.get(f"/api/plans/{r.json()['id']}").json()
-        assert plan["mapping_id"] is not None
+        assert plan["mapping_ids"], plan
 
     def test_multi_vcenter_no_auto_resolve(self, client, monkeypatch):
         # When VMs span vCenters, auto-resolution declines (ambiguous)
@@ -268,17 +316,13 @@ class TestMappingAutoResolve:
             client,
             "vm-a",
             source_vcenter_id=vc_a["id"],
-            target_namespace=None,
-            target_network_attachment=None,
-            target_storage_class=None,
+            target_namespace_override=None,
         )
         vm_b = _enroll(
             client,
             "vm-b",
             source_vcenter_id=vc_b["id"],
-            target_namespace=None,
-            target_network_attachment=None,
-            target_storage_class=None,
+            target_namespace_override=None,
         )
         r = client.post("/api/plans", json={"vm_ids": [vm_a["id"], vm_b["id"]]})
         # Auto-resolution returned None (spans two vcenters), so the

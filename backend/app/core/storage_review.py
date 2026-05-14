@@ -174,10 +174,13 @@ def build_storage_source_summary(db: Session) -> dict:
             samples = datastore_samples.setdefault(d, [])
             if len(samples) < 5:
                 samples.append(vm.name)
-        if vm.target_storage_class:
-            target_storage_classes[vm.target_storage_class] += 1
-        if vm.target_namespace:
-            target_namespaces[vm.target_namespace] += 1
+        # Per-VM target_storage_class was dropped in the multi-cluster
+        # target architecture migration; storage routing now comes
+        # exclusively from the ResourceMapping for the VM's
+        # (vcenter, cluster) pair. Aggregating per-VM here is no longer
+        # meaningful.
+        if vm.target_namespace_override:
+            target_namespaces[vm.target_namespace_override] += 1
 
     return {
         "total_vms": len(vms),
@@ -258,16 +261,13 @@ class StorageReviewer:
         return content
 
     @staticmethod
-    def _render_prompt(
-        source_summary: dict, customer_notes: str, proposed_yaml: str
-    ) -> str:
+    def _render_prompt(source_summary: dict, customer_notes: str, proposed_yaml: str) -> str:
         notes_block = customer_notes.strip() or (
             "(no notes provided — analysis will be limited; storage tier, "
             "replication, and snapshot requirements need explicit input)"
         )
         yaml_block = (
-            proposed_yaml.strip()
-            or "(no proposed YAML provided — analysis will be limited)"
+            proposed_yaml.strip() or "(no proposed YAML provided — analysis will be limited)"
         )
         return (
             "## Source environment summary (from RVTools / baseline collection)\n\n"

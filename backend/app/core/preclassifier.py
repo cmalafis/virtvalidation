@@ -40,7 +40,6 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
-from app.core.config import settings as _module_settings
 from app.models.vm import VM
 
 logger = logging.getLogger(__name__)
@@ -185,13 +184,9 @@ class VMGroup:
             "state": self.estimated_state,
             "risk": self.migration_risk,
             "depends_on": list(self.dependency_hints),
-            "shared_attributes": {
-                k: list(v) for k, v in self.shared_attributes.items()
-            },
+            "shared_attributes": {k: list(v) for k, v in self.shared_attributes.items()},
             "notes": self.notes,
-            "risk_assessment": (
-                self.risk_assessment.to_dict() if self.risk_assessment else None
-            ),
+            "risk_assessment": (self.risk_assessment.to_dict() if self.risk_assessment else None),
             "ha_members": [
                 {
                     "vm_id": m.vm_id,
@@ -209,14 +204,26 @@ class VMGroup:
 _ROLE_PATTERNS: list[tuple[str, re.Pattern]] = [
     # Order matters — first match wins, so "edge" beats "app" when a
     # name like "edge-app-01" appears.
-    ("edge",           re.compile(r"\b(lb|haproxy|proxy|edge|gateway|router|ingress|envoy)\b", re.I)),
-    ("data",           re.compile(r"\b(db|sql|postgres|oracle|mongo|mysql|mariadb|redis|cache|kafka|rabbit|memcache|imaging|process)\b", re.I)),
+    ("edge", re.compile(r"\b(lb|haproxy|proxy|edge|gateway|router|ingress|envoy)\b", re.I)),
+    (
+        "data",
+        re.compile(
+            r"\b(db|sql|postgres|oracle|mongo|mysql|mariadb|redis|cache|kafka|rabbit|memcache|imaging|process)\b",
+            re.I,
+        ),
+    ),
     # ``infrastructure`` covers identity (AD/LDAP/RHIDM), DNS, NTP,
     # PKI/HSM/KMS, and backup/snapshot servers — all federal-customer
     # "shared services" that migrate ahead of application tiers.
-    ("infrastructure", re.compile(r"\b(ad|dc|rhidm|domain|ldap|dns|ntp|kdc|vault|consul|pki|cert|hsm|kms|backup|snapshot)\b", re.I)),
-    ("web",            re.compile(r"\b(web|www|nginx|apache|httpd|caddy|iis)\b", re.I)),
-    ("app",            re.compile(r"\b(app|api|service|svc|backend|worker|tomcat|jboss|wildfly)\b", re.I)),
+    (
+        "infrastructure",
+        re.compile(
+            r"\b(ad|dc|rhidm|domain|ldap|dns|ntp|kdc|vault|consul|pki|cert|hsm|kms|backup|snapshot)\b",
+            re.I,
+        ),
+    ),
+    ("web", re.compile(r"\b(web|www|nginx|apache|httpd|caddy|iis)\b", re.I)),
+    ("app", re.compile(r"\b(app|api|service|svc|backend|worker|tomcat|jboss|wildfly)\b", re.I)),
 ]
 
 
@@ -228,7 +235,8 @@ def detect_role(vm: VM) -> str:
         return role_hint
 
     haystack = " ".join(
-        s for s in [
+        s
+        for s in [
             vm.name or "",
             getattr(vm, "role", "") or "",
             getattr(vm, "application_hint", "") or "",
@@ -296,34 +304,22 @@ def assess_risk(
 
     if state == "stateful":
         factors.append("Stateful service with persistent data")
-        mitigations.append(
-            "Verify backup completed within 4 hours of migration"
-        )
+        mitigations.append("Verify backup completed within 4 hours of migration")
 
     if role == "data":
-        factors.append(
-            "Database / data tier — connection loss affects "
-            "dependent applications"
-        )
+        factors.append("Database / data tier — connection loss affects " "dependent applications")
         mitigations.append(
-            "Coordinate with application team for connection "
-            "draining before migration"
+            "Coordinate with application team for connection " "draining before migration"
         )
     elif role == "infrastructure":
-        factors.append(
-            "Infrastructure service — failure affects entire cluster"
-        )
-        mitigations.append(
-            "Ensure secondary AD / DNS / PKI available during migration"
-        )
+        factors.append("Infrastructure service — failure affects entire cluster")
+        mitigations.append("Ensure secondary AD / DNS / PKI available during migration")
 
     # No HA peers? Stateful groups without redundancy carry a
     # single-point-of-failure risk that operators need to plan around.
     ha_peers = [m for m in ha_members if m.ha_role != "standalone"]
     if state == "stateful" and len(ha_peers) < 2:
-        factors.append(
-            "No HA replication detected — single point of failure"
-        )
+        factors.append("No HA replication detected — single point of failure")
         mitigations.append(
             "Consider establishing HA replica before migration or "
             "schedule a documented maintenance window"
@@ -407,9 +403,9 @@ def _name_prefix(name: str) -> str:
 # replica relationships. Order matters — the first matching pattern
 # wins, so primary checks come before generic-member checks.
 _HA_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("primary",  re.compile(r"\b(primary|leader|master|active|writer|main)\b", re.I)),
-    ("replica",  re.compile(r"\b(replica|secondary|follower|reader|slave)\b", re.I)),
-    ("standby",  re.compile(r"\b(standby|passive|backup)\b", re.I)),
+    ("primary", re.compile(r"\b(primary|leader|master|active|writer|main)\b", re.I)),
+    ("replica", re.compile(r"\b(replica|secondary|follower|reader|slave)\b", re.I)),
+    ("standby", re.compile(r"\b(standby|passive|backup)\b", re.I)),
 ]
 
 
@@ -570,22 +566,24 @@ class PreClassifier:
                 discriminator=f"{group.key.discriminator}/ha:{m.ha_role}:{m.vm_name}",
                 environment=group.key.environment,
             )
-            micro.append(VMGroup(
-                key=micro_key,
-                vm_ids=[m.vm_id],
-                shared_attributes=dict(group.shared_attributes),
-                estimated_role=group.estimated_role,
-                estimated_state=group.estimated_state,
-                migration_risk=group.migration_risk,
-                dependency_hints=list(group.dependency_hints),
-                notes=(
-                    f"HA {m.ha_role} of {group.id} — spread across waves "
-                    "so the original cluster keeps a quorum during the "
-                    "migration window"
-                ),
-                risk_assessment=group.risk_assessment,
-                ha_members=[m],
-            ))
+            micro.append(
+                VMGroup(
+                    key=micro_key,
+                    vm_ids=[m.vm_id],
+                    shared_attributes=dict(group.shared_attributes),
+                    estimated_role=group.estimated_role,
+                    estimated_state=group.estimated_state,
+                    migration_risk=group.migration_risk,
+                    dependency_hints=list(group.dependency_hints),
+                    notes=(
+                        f"HA {m.ha_role} of {group.id} — spread across waves "
+                        "so the original cluster keeps a quorum during the "
+                        "migration window"
+                    ),
+                    risk_assessment=group.risk_assessment,
+                    ha_members=[m],
+                )
+            )
         return micro
 
     def classify(
@@ -610,7 +608,7 @@ class PreClassifier:
         # ``app.core.environment.normalize`` so free-text variants
         # ("Prod", "production", "live") collapse to the same enum
         # value before partitioning.
-        from app.core.environment import Environment, normalize as _norm_env
+        from app.core.environment import normalize as _norm_env
 
         primary_buckets: dict[tuple, list[VM]] = defaultdict(list)
         for vm in vms_list:
@@ -621,7 +619,7 @@ class PreClassifier:
             # dev — that would obscure the missing-label signal.
             primary_key = (
                 vm.source_vcenter_id,
-                (vm.target_namespace or "").strip(),
+                (vm.target_namespace_override or "").strip(),
                 env.value,
             )
             primary_buckets[primary_key].append(vm)
@@ -635,10 +633,7 @@ class PreClassifier:
             # single group so the LLM doesn't see noise from a tiny
             # DR or staging environment. Production-sized partitions
             # keep their per-role sub-splits intact.
-            if (
-                sum(len(g.vm_ids) for g in primary_groups) < 5
-                and len(primary_groups) > 1
-            ):
+            if sum(len(g.vm_ids) for g in primary_groups) < 5 and len(primary_groups) > 1:
                 collapsed = primary_groups[0]
                 for g in primary_groups[1:]:
                     collapsed = self._merge_groups(collapsed, g)
@@ -680,9 +675,7 @@ class PreClassifier:
     # ------------------------------------------------------------------
     # Internal — partition / sub-group / tag
     # ------------------------------------------------------------------
-    def _classify_within_primary(
-        self, primary_key: tuple, bucket: list[VM]
-    ) -> list[VMGroup]:
+    def _classify_within_primary(self, primary_key: tuple, bucket: list[VM]) -> list[VMGroup]:
         # Primary key is now (vcenter_id, target_namespace, env_value)
         # — env was added so production / development / DR never
         # merge into the same partition even when sharing a target
@@ -719,11 +712,15 @@ class PreClassifier:
             for vm in vms:
                 by_role[detect_role(vm)].append(vm)
             for role, role_vms in by_role.items():
-                groups.append(self._build_group(
-                    vcenter_id, target_namespace, role_vms,
-                    discriminator=f"hint:{hint}:{role}",
-                    environment=env,
-                ))
+                groups.append(
+                    self._build_group(
+                        vcenter_id,
+                        target_namespace,
+                        role_vms,
+                        discriminator=f"hint:{hint}:{role}",
+                        environment=env,
+                    )
+                )
         remaining = leftovers
 
         # Pass 2: network + datastore overlap. We greedy-cluster by
@@ -747,10 +744,10 @@ class PreClassifier:
                 other_ds = set(other.vsphere_datastores or [])
                 net_overlap = bool(seed_nets & other_nets)
                 ds_overlap = bool(seed_ds & other_ds)
-                if (net_overlap and ds_overlap) or (
-                    not seed_nets and not other_nets and ds_overlap
-                ) or (
-                    not seed_ds and not other_ds and net_overlap
+                if (
+                    (net_overlap and ds_overlap)
+                    or (not seed_nets and not other_nets and ds_overlap)
+                    or (not seed_ds and not other_ds and net_overlap)
                 ):
                     cluster.append(other)
                     grouped_ids.add(other.id)
@@ -762,10 +759,15 @@ class PreClassifier:
                 grouped_ids.discard(seed.id)
                 continue
             disc = self._network_datastore_discriminator(cluster)
-            groups.append(self._build_group(
-                vcenter_id, target_namespace, cluster, discriminator=disc,
-                environment=env,
-            ))
+            groups.append(
+                self._build_group(
+                    vcenter_id,
+                    target_namespace,
+                    cluster,
+                    discriminator=disc,
+                    environment=env,
+                )
+            )
 
         # Pass 3: name-prefix bucketing for everything still ungrouped.
         leftover_vms = [vm for vm in remaining if vm.id not in grouped_ids]
@@ -774,11 +776,15 @@ class PreClassifier:
             prefix = _name_prefix(vm.name) or "misc"
             by_prefix[prefix].append(vm)
         for prefix, vms in by_prefix.items():
-            groups.append(self._build_group(
-                vcenter_id, target_namespace, vms,
-                discriminator=f"prefix:{prefix}",
-                environment=env,
-            ))
+            groups.append(
+                self._build_group(
+                    vcenter_id,
+                    target_namespace,
+                    vms,
+                    discriminator=f"prefix:{prefix}",
+                    environment=env,
+                )
+            )
 
         return groups
 
@@ -797,10 +803,15 @@ class PreClassifier:
         role_counts: dict[str, int] = defaultdict(int)
         for vm in vms:
             role_counts[detect_role(vm)] += 1
-        role = max(role_counts.items(), key=lambda kv: (
-            kv[1],
-            {"data": 5, "infrastructure": 4, "edge": 3, "app": 2, "web": 1, "other": 0}.get(kv[0], 0),
-        ))[0]
+        role = max(
+            role_counts.items(),
+            key=lambda kv: (
+                kv[1],
+                {"data": 5, "infrastructure": 4, "edge": 3, "app": 2, "web": 1, "other": 0}.get(
+                    kv[0], 0
+                ),
+            ),
+        )[0]
 
         # State: derived from role; "other" + powered_state cues fall
         # back to "unknown".
@@ -816,7 +827,11 @@ class PreClassifier:
         risk = detect_risk(role, state, len(vms), sequential)
         ha_members = detect_ha_members(vms)
         risk_assessment = assess_risk(
-            role, state, len(vms), ha_members, sequential,
+            role,
+            state,
+            len(vms),
+            ha_members,
+            sequential,
         )
 
         # Shared attribute report — what made the group cohere.
@@ -904,8 +919,7 @@ class PreClassifier:
             # How many groups can this primary key contribute?
             # Roughly proportional to its share of total VMs.
             total_remaining_vms = sum(
-                len(g.vm_ids) for primary_list in by_primary.values()
-                for g in primary_list
+                len(g.vm_ids) for primary_list in by_primary.values() for g in primary_list
             )
             primary_vm_count = sum(len(g.vm_ids) for g in primary_groups)
             allowed_here = max(
@@ -944,12 +958,22 @@ class PreClassifier:
         # Merged role = highest-risk role between the two so the merged
         # group inherits the more conservative cutover stance.
         priority = {"data": 5, "infrastructure": 4, "edge": 3, "app": 2, "web": 1, "other": 0}
-        role = a.estimated_role if priority.get(a.estimated_role, 0) >= priority.get(b.estimated_role, 0) else b.estimated_role
-        state = "stateful" if "stateful" in (a.estimated_state, b.estimated_state) else (
-            "unknown" if "unknown" in (a.estimated_state, b.estimated_state) else "stateless"
+        role = (
+            a.estimated_role
+            if priority.get(a.estimated_role, 0) >= priority.get(b.estimated_role, 0)
+            else b.estimated_role
+        )
+        state = (
+            "stateful"
+            if "stateful" in (a.estimated_state, b.estimated_state)
+            else ("unknown" if "unknown" in (a.estimated_state, b.estimated_state) else "stateless")
         )
         risk_priority = {"high": 3, "medium": 2, "low": 1}
-        risk = a.migration_risk if risk_priority.get(a.migration_risk, 0) >= risk_priority.get(b.migration_risk, 0) else b.migration_risk
+        risk = (
+            a.migration_risk
+            if risk_priority.get(a.migration_risk, 0) >= risk_priority.get(b.migration_risk, 0)
+            else b.migration_risk
+        )
         key = GroupKey(
             vcenter_id=a.key.vcenter_id,
             target_namespace=a.key.target_namespace,
@@ -961,7 +985,9 @@ class PreClassifier:
         merged_ids = sorted(set(a.vm_ids) | set(b.vm_ids))
         shared: dict[str, list[str]] = {}
         for dim in ("networks", "datastores", "application_hints", "environments", "os_families"):
-            shared[dim] = sorted(set(a.shared_attributes.get(dim, [])) | set(b.shared_attributes.get(dim, [])))
+            shared[dim] = sorted(
+                set(a.shared_attributes.get(dim, [])) | set(b.shared_attributes.get(dim, []))
+            )
         notes = (
             f"Consolidated from {len(a.vm_ids)} + {len(b.vm_ids)} VMs to "
             f"keep LLM input <= {self.max_groups} groups."

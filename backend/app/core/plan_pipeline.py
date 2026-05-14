@@ -120,16 +120,20 @@ def _vm_name_lookup(vms: list[VM]) -> dict[int, str]:
 
 
 def _vm_payload(vm: VM) -> dict[str, Any]:
-    """Shape the MTV emitter expects per VM (a flat dict, not the ORM row)."""
+    """Shape the MTV emitter expects per VM (a flat dict, not the ORM row).
+
+    ``target_namespace`` carries the per-VM ``target_namespace_override``
+    so the MTV resolver's namespace-strategy fallback lands on the
+    operator's declared namespace. Storage and network targets are
+    resolved from the mapping; there's no per-VM fallback anymore.
+    """
     return {
         "name": vm.name,
         "vsphere_networks": list(vm.vsphere_networks or []),
         "vsphere_datastores": list(vm.vsphere_datastores or []),
         "environment": vm.environment or "",
         "application_hint": vm.application_hint or "",
-        "target_namespace": vm.target_namespace or "",
-        "target_storage_class": vm.target_storage_class or "",
-        "target_network_attachment": vm.target_network_attachment or "",
+        "target_namespace": vm.target_namespace_override or "",
         "vcenter_folder": vm.vsphere_folder or "",
     }
 

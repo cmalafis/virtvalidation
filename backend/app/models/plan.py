@@ -21,7 +21,6 @@ from datetime import datetime
 from sqlalchemy import (
     DateTime,
     Enum,
-    ForeignKey,
     Integer,
     String,
     Text,
@@ -161,20 +160,17 @@ class MigrationPlan(Base):
     summary: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    # Resource mappings referenced at generation time. Captured on the
-    # plan row so MTV YAML export resolves source→target resource names
-    # against the same mapping(s) the operator chose during planning,
-    # even if a mapping is later edited or deactivated.
+    # Resource mappings referenced at generation time. Snapshotted
+    # onto the plan row so MTV YAML export resolves source→target
+    # resource names against the same mapping(s) the operator chose
+    # during planning, even if a mapping is later edited.
     #
-    # ``mapping_ids`` is the canonical list (one per source vCenter the
-    # plan touches; per-VM routing picks the matching mapping by
-    # ``vcenter_source_id``). ``mapping_id`` is the legacy singular
-    # column kept for one release of back-compat with pre-multi-mapping
-    # rows — new writes populate ``mapping_id = mapping_ids[0] if
-    # mapping_ids else None`` and readers prefer ``mapping_ids``.
-    mapping_id: Mapped[int | None] = mapped_column(
-        ForeignKey("resource_mappings.id", ondelete="SET NULL"), nullable=True
-    )
+    # One mapping per (source vCenter, target cluster, target
+    # namespace) partition the plan covers — see
+    # ``app.core.target_resolution`` and ``app.core.preclassifier``.
+    # Per-VM routing picks the matching mapping by
+    # ``(vcenter_source_id, target_cluster_id)``.
+    #
     # Nullable in the DB to keep the migration portable (Postgres
     # JSONB rejects a string server_default; other JSON columns in
     # this schema follow the same nullable-but-Python-default
