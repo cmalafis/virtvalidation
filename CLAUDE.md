@@ -159,17 +159,37 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
 - Use Podman — NOT Docker. Containerfiles NOT Dockerfiles.
 - Volume mounts use :Z SELinux label for RHEL/Fedora compatibility
 - Images always reference docker.io/ or registry.access.redhat.com/ explicitly
-- **Container base images MUST be Red Hat UBI 9.** Federal customer
-  security reviews reject Docker Hub bases, and FIPS validation
-  requires the in-container OpenSSL to come from the same supply
-  chain as the FIPS-enabled host kernel. Don't swap to community
-  images even temporarily — the FIPS posture quietly breaks. The
-  three blessed bases are:
-  - `registry.access.redhat.com/ubi9/python-312:latest` (backend)
-  - `registry.access.redhat.com/ubi9/nodejs-20:latest` (frontend builder)
-  - `registry.access.redhat.com/ubi9/nginx-124:latest` (frontend runtime)
+- **Container base images: dual variant — UBI 9 (default) or Red Hat
+  Hardened Images (opt-in).** Federal customer security reviews
+  reject Docker Hub bases, and FIPS validation requires the
+  in-container OpenSSL to come from the same supply chain as the
+  FIPS-enabled host kernel. Both variants satisfy that requirement.
+  - **Standard variant (default).** Red Hat UBI 9, pinned to patched
+    digests rather than `:latest`:
+    - `registry.access.redhat.com/ubi9/python-312@sha256:...` (backend)
+    - `registry.access.redhat.com/ubi9/nodejs-20@sha256:...` (frontend builder)
+    - `registry.access.redhat.com/ubi9/nginx-124@sha256:...` (frontend runtime)
+  - **Hardened variant (opt-in).** Red Hat Hardened Images via
+    `registry.redhat.io`. Minimal, signed, SBOM-embedded, ~0 CVE.
+    Hardened images get a `-hardened` suffix on their Quay tag.
+  - Build the full matrix with `scripts/build-all-images.sh <tag>`.
+    Standard is built on every push + PR; hardened is built on
+    pushes to main only.
+  - Deploy selection is via the Helm `image.variant` value
+    (`standard` | `hardened`). Default is `standard`. See the chart
+    README + `docs/SECURITY_POSTURE.md`.
+  - Don't swap to community bases even temporarily — the FIPS
+    posture quietly breaks.
+  - **Distroless caveat.** Hardened images have no shell.
+    `oc exec <pod> -- bash` does not work. Use
+    `oc exec <pod> -- python -c "..."` for the backend, or
+    `kubectl debug` with an ephemeral container for troubleshooting.
+    Local dev (podman-compose) uses standard images for easy
+    iteration.
   See `docs/CONTAINER_IMAGES.md` for the full rationale, image
-  layout, scanning procedure, and air-gapped mirroring guidance.
+  layout, scanning procedure, registry.redhat.io auth, and air-gapped
+  mirroring guidance for both variants. See `docs/SECURITY_POSTURE.md`
+  for the procurement-facing security posture.
 
 ## Architecture documentation
 - `docs/ARCHITECTURE.md` and `docs/architecture-diagram.html` are

@@ -189,20 +189,17 @@ def _e(s: object) -> str:
 
 
 _PDF_CSS = """
+/* xhtml2pdf does NOT support @page margin-boxes (@bottom-left etc.) nor
+   CSS string-set + string(). Page-number footer lives in an @frame
+   footer rendered from #footer_content in the body instead. Flex layout
+   isn't supported either, so .header and .vm-header use table-cell
+   layout. clip-path isn't supported, so .logo is a plain square. */
 @page {
   size: Letter;
-  margin: 1.6cm 1.8cm 2.0cm 1.8cm;
-  @bottom-left {
-    content: "Generated " string(generated-at) " · cluster " string(cluster-name);
-    font-size: 8pt;
-    color: #6b7280;
-    font-family: "Helvetica", "Arial", sans-serif;
-  }
-  @bottom-right {
-    content: "Page " counter(page) " of " counter(pages);
-    font-size: 8pt;
-    color: #6b7280;
-    font-family: "Helvetica", "Arial", sans-serif;
+  margin: 1.6cm 1.8cm 2.4cm 1.8cm;
+  @frame footer_frame {
+    -pdf-frame-content: footer_content;
+    left: 1.8cm; bottom: 1.2cm; height: 0.6cm; width: 17.4cm;
   }
 }
 body {
@@ -211,22 +208,30 @@ body {
   font-size: 10pt;
   line-height: 1.5;
 }
-.meta { string-set: generated-at content(); display: none; }
-.cluster { string-set: cluster-name content(); display: none; }
+#footer_content {
+  font-size: 8pt;
+  color: #6b7280;
+  font-family: "Helvetica", "Arial", sans-serif;
+}
+#footer_content .right { text-align: right; }
 
 .header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
+  width: 100%;
   border-bottom: 3px solid #1d4ed8;
   padding-bottom: 12px;
   margin-bottom: 18px;
 }
+.header-table { width: 100%; border-collapse: collapse; }
+.header-table td { vertical-align: middle; }
+.logo-cell { width: 50px; padding-right: 14px; }
 .logo {
   width: 36px; height: 36px;
   background: #1d4ed8;
-  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
-  flex: 0 0 36px;
+  color: white;
+  font-weight: 700;
+  font-size: 18pt;
+  text-align: center;
+  line-height: 36px;
 }
 .brand-block .brand {
   font-size: 17pt; font-weight: 700; color: #1d4ed8;
@@ -304,7 +309,9 @@ h3 {
   border-radius: 3px;
   padding: 12px 14px;
 }
-.vm-header { display: flex; align-items: center; justify-content: space-between; }
+.vm-header { width: 100%; border-collapse: collapse; }
+.vm-header td { vertical-align: middle; }
+.vm-header td.status-cell { text-align: right; width: 80px; }
 .vm-name { font-size: 11pt; font-weight: 700; color: #111827; }
 .vm-status {
   display: inline-block;
@@ -423,10 +430,10 @@ def _build_vm_block(vm: dict) -> str:
 
     summary_html = f'<div class="vm-summary">{_e(summary)}</div>' if summary else ""
     return f"""<div class="vm">
-  <div class="vm-header">
-    <span class="vm-name">{_e(name)}</span>
-    <span class="vm-status {status}">{_e(status_label)}</span>
-  </div>
+  <table class="vm-header"><tr>
+    <td><span class="vm-name">{_e(name)}</span></td>
+    <td class="status-cell"><span class="vm-status {status}">{_e(status_label)}</span></td>
+  </tr></table>
   {summary_html}
   <table class="findings">
     <colgroup><col class="sev"/><col class="find"/><col class="rem"/></colgroup>
@@ -462,15 +469,17 @@ def _build_pdf_html(
 <style>{_PDF_CSS}</style>
 </head>
 <body>
-<div class="meta">{_e(timestamp)}</div>
-<div class="cluster">{_e(cluster_name)}</div>
 
 <div class="header">
-  <div class="logo" aria-hidden="true"></div>
-  <div class="brand-block">
-    <div class="brand">VIRTVALIDATE</div>
-    <div class="subtitle">VM Migration Validation Platform</div>
-  </div>
+  <table class="header-table"><tr>
+    <td class="logo-cell"><div class="logo">V</div></td>
+    <td>
+      <div class="brand-block">
+        <div class="brand">VIRTVALIDATE</div>
+        <div class="subtitle">VM Migration Validation Platform</div>
+      </div>
+    </td>
+  </tr></table>
 </div>
 
 <h1>Wave {_e(report.get('wave_number'))} — Migration Report</h1>
@@ -491,20 +500,35 @@ def _build_pdf_html(
 
 <h2>Per-VM Findings</h2>
 {vm_blocks}
+
+<div id="footer_content">
+  <table style="width:100%;"><tr>
+    <td>Generated {_e(timestamp)} · cluster {_e(cluster_name)}</td>
+    <td class="right">Page <pdf:pagenumber/> of <pdf:pagecount/></td>
+  </tr></table>
+</div>
 </body>
 </html>"""
 
 
-def render_pdf(  # pragma: no cover - exercised in production; weasyprint runtime not in CI
+def render_pdf(
     report: dict,
     *,
     generated_at: datetime | None = None,
     cluster_name: str | None = None,
 ) -> bytes:
-    """Render a WaveReport dict as a CISO-ready PDF using weasyprint."""
-    # Lazy import: weasyprint loads Pango/Cairo via ctypes at import time, and
-    # those system libs aren't present in the CI test environment.
-    from weasyprint import HTML  # noqa: PLC0415
+    """Render a WaveReport dict as a CISO-ready PDF.
+
+    Uses xhtml2pdf (pure Python, ReportLab under the hood) instead of
+    weasyprint so the same code runs identically on both the standard
+    UBI image and the hardened Project Hummingbird image — the latter
+    doesn't ship libcairo / libpango / libgdk-pixbuf. See PR #12 +
+    docs/SECURITY_POSTURE.md for the dual-variant rationale.
+    """
+    # Lazy import so the rest of the reporter module can be exercised in
+    # tests without the renderer dep installed.
+    from io import BytesIO  # noqa: PLC0415
+    from xhtml2pdf import pisa  # noqa: PLC0415
 
     if generated_at is None:
         generated_at = datetime.now(timezone.utc)
@@ -512,4 +536,11 @@ def render_pdf(  # pragma: no cover - exercised in production; weasyprint runtim
         cluster_name = settings.cluster_name
 
     html = _build_pdf_html(report, generated_at=generated_at, cluster_name=cluster_name)
-    return HTML(string=html).write_pdf()
+    buf = BytesIO()
+    result = pisa.CreatePDF(html, dest=buf, encoding="utf-8")
+    if result.err:
+        # xhtml2pdf's "err" counts logged errors but doesn't always raise.
+        # Treat any reported error as a hard failure so callers see a 5xx
+        # rather than a silently-malformed PDF.
+        raise RuntimeError(f"PDF rendering failed: {result.err} error(s)")
+    return buf.getvalue()

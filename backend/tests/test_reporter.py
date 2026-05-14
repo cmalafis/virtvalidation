@@ -305,11 +305,14 @@ def test_pdf_html_includes_footer_metadata():
         generated_at=datetime(2026, 4, 28, 14, 30, 5, tzinfo=timezone.utc),
         cluster_name="ocp-virt-prod-01",
     )
-    # footer is rendered via @page strings driven by .meta and .cluster divs
+    # Footer is rendered into an xhtml2pdf @frame from a body-level
+    # #footer_content div, with page numbers via <pdf:pagenumber/>.
+    # See PR #12 — the prior CSS string-set mechanism was weasyprint-only.
     assert "2026-04-28 14:30:05 UTC" in html
     assert "ocp-virt-prod-01" in html
-    assert 'class="meta"' in html
-    assert 'class="cluster"' in html
+    assert 'id="footer_content"' in html
+    assert "<pdf:pagenumber" in html
+    assert "<pdf:pagecount" in html
 
 
 def test_pdf_html_escapes_user_content():
@@ -369,10 +372,12 @@ def test_build_vm_block_pads_extra_remediation_steps_into_rows():
     assert "restart nginx" in block
     assert "verify upstream" in block
     assert "curl -fsS http://app/health" in block
-    # 1 thead row + 2 body rows = 3 total <tr> tags. The 2nd body row pads
-    # the severity/finding side with an em-dash so the extra remediation
-    # step still renders.
-    assert block.count("<tr>") == 3
+    # 1 vm-header row + 1 thead row + 2 body rows = 4 total <tr> tags.
+    # (vm-header was a flex div pre-xhtml2pdf swap and contributed no <tr>;
+    # the table-based replacement adds one row. See PR #12.) The 2nd body
+    # row pads the severity/finding side with an em-dash so the extra
+    # remediation step still renders.
+    assert block.count("<tr>") == 4
 
 
 def test_build_vm_block_unknown_recommendation_falls_back_to_hold():
@@ -401,9 +406,28 @@ def test_build_vm_block_unrecognized_severity_uses_neutral_class():
     assert 'class="severity none"' in block
 
 
-# Smoke-import the public renderer to be sure the symbol is exported even
-# though we don't actually invoke weasyprint here.
+# Smoke-import the public renderer to be sure the symbol is exported.
 def test_render_pdf_is_importable():
     from app.core.reporter import render_pdf  # noqa: F401
 
     assert callable(render_pdf)
+
+
+def test_render_pdf_emits_valid_pdf_bytes():
+    """End-to-end render: confirm we produce valid PDF bytes.
+
+    Pre-xhtml2pdf migration this test couldn't exist because weasyprint
+    needed Pango/Cairo system libs in CI. xhtml2pdf is pure Python, so
+    the actual render path is now testable.
+    """
+    from app.core.reporter import render_pdf
+
+    pdf = render_pdf(
+        _sample_report(),
+        generated_at=datetime(2026, 4, 28, 14, 30, 5, tzinfo=timezone.utc),
+        cluster_name="ocp-virt-prod-01",
+    )
+    assert isinstance(pdf, bytes)
+    assert pdf.startswith(b"%PDF-"), "missing PDF magic bytes"
+    # 1000 is a safe floor — even the smallest valid PDF is well above this.
+    assert len(pdf) > 1000, f"suspiciously small PDF ({len(pdf)} bytes)"

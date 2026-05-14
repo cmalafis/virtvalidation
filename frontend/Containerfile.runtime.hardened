@@ -1,0 +1,67 @@
+# Frontend hardened variant — Red Hat Hardened Images nginx base.
+#
+# The hardened image base path is supplied via --build-arg BASE_IMAGE
+# (scripts/build-all-images.sh injects HARDENED_NGINX). Like the
+# standard runtime Containerfile, this expects `dist/` to already
+# exist in the build context — the build script runs
+# `npm ci && npm run build` natively before invoking podman to avoid
+# the QEMU esbuild segfault on Apple Silicon.
+#
+# Static nginx.conf.hardened replaces the entrypoint.sh + envsubst
+# flow used by the standard variant, since hardened images don't
+# ship a shell. See nginx.conf.hardened for the upstream wiring
+# constraint (Helm release must be named "virtvalidate" or
+# fullnameOverride must be set).
+#
+# See docs/SECURITY_POSTURE.md and docs/CONTAINER_IMAGES.md.
+
+# Global build arg — must be declared before FROM so it can substitute
+# into the FROM line. Re-declared inside the stage below so labels can
+# reference it too.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# IMAGE_VERSION not VERSION: hardened nginx may inherit ENV VERSION
+# from the upstream UBI / RHHI layer. See frontend/Containerfile.
+ARG IMAGE_VERSION=0.1.0-dev
+ARG VCS_REF=unknown
+ARG BASE_IMAGE
+
+LABEL org.opencontainers.image.title="virtvalidate-frontend" \
+      org.opencontainers.image.description="VirtValidate React dashboard (hardened variant)" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="https://github.com/virtvalidate/virtvalidate" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="${BASE_IMAGE}" \
+      io.virtvalidate.variant="hardened"
+
+USER 0
+COPY dist/ /opt/app-root/src/
+COPY nginx.conf.hardened /etc/nginx/nginx.conf
+
+# nginx.conf.hardened uses flat paths under /tmp (e.g.
+# /tmp/nginx-client-body, not /tmp/nginx/client_body) so nginx's own
+# auto-create-on-startup logic handles directory creation. nginx only
+# creates the leaf directory — relying on the pre-existing /tmp
+# (always writable, whether emptyDir or container-layer) means we
+# don't need a shell-based mkdir step at runtime.
+RUN chgrp -R 0 /opt/app-root/src /etc/nginx \
+    && chmod -R g=u /opt/app-root/src /etc/nginx
+
+# UID 65532 — Project Hummingbird nonroot convention. See note in
+# backend/Containerfile.hardened.
+USER 65532
+
+EXPOSE 8080
+
+# No HEALTHCHECK — hardened images don't ship curl. Kubernetes
+# readiness/liveness probes use httpGet on / via the chart.
+
+# No CMD — Project Hummingbird's hi/nginx image already ships
+# ENTRYPOINT ["/usr/sbin/nginx"] and
+# CMD ["-c","/etc/nginx/nginx.conf","-e","/dev/stderr","-g","daemon off;"]
+# baked in. Setting CMD here would override the args half and produce
+# a broken `/usr/sbin/nginx nginx ...` invocation. Inheriting the
+# image defaults is correct — nginx still reads our injected
+# /etc/nginx/nginx.conf, which we replaced above.

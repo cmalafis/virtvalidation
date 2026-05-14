@@ -26,6 +26,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ include "virtvalidate.serviceAccountName" . }}
+      {{- include "virtvalidate.imagePullSecrets" . | nindent 6 }}
       securityContext:
         {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
       containers:

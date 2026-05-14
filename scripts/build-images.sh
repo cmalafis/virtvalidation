@@ -212,7 +212,7 @@ build_one() {
         # manifest` first if the operator wants a single multi-arch tag.
         "$ENGINE" build \
             --platform "$PLATFORMS" \
-            --build-arg "VERSION=${VERSION}" \
+            --build-arg "IMAGE_VERSION=${VERSION}" \
             --build-arg "VCS_REF=${VCS_REF}" \
             -f "$containerfile" \
             "${tag_args[@]}" \
@@ -225,7 +225,7 @@ build_one() {
         # the array is empty (bash 4.x quirk).
         "$ENGINE" build \
             ${PLATFORM_ARG[@]+"${PLATFORM_ARG[@]}"} \
-            --build-arg "VERSION=${VERSION}" \
+            --build-arg "IMAGE_VERSION=${VERSION}" \
             --build-arg "VCS_REF=${VCS_REF}" \
             -f "$containerfile" \
             "${tag_args[@]}" \

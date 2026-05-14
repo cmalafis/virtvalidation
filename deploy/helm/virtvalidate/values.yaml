@@ -6,10 +6,25 @@
 # at your registry. The build-images.sh script produces these tags.
 # -----------------------------------------------------------------------------
 image:
-  registry: ghcr.io/virtvalidate
+  # Default Quay registry where the project publishes its images.
+  # Override at install time when mirroring into an internal registry
+  # for a disconnected/air-gapped install:
+  #   helm install ... --set image.registry=internal.example.com/virtvalidate
+  registry: quay.io/cmalafis10
   pullPolicy: Always
   # Overrides applied to all four components when set non-empty.
   tag: ""
+  # "standard" uses the digest-pinned UBI 9 image tags. "hardened"
+  # appends a "-hardened" suffix to the resolved tag and pulls from
+  # registry.redhat.io — requires image.pullSecrets to reference a
+  # service-account pull secret. See docs/SECURITY_POSTURE.md for the
+  # tradeoffs and docs/CONTAINER_IMAGES.md for the pull-secret recipe.
+  variant: standard
+  # Optional list of pull-secret names to inject into every internal
+  # workload (backend + frontend Deployments, migrations Job). Leave
+  # empty for the standard variant on quay.io.
+  pullSecrets: []
+  # e.g. pullSecrets: ["redhat-registry-pull"]
 
 backend:
   replicaCount: 1

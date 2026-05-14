@@ -41,6 +41,7 @@ spec:
         {{- include "virtvalidate.componentLabels" (dict "root" . "component" "migrations") | nindent 8 }}
     spec:
       serviceAccountName: {{ include "virtvalidate.serviceAccountName" . }}
+      {{- include "virtvalidate.imagePullSecrets" . | nindent 6 }}
       restartPolicy: Never
       securityContext:
         {{- toYaml .Values.security.podSecurityContext | nindent 8 }}

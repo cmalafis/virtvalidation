@@ -1,0 +1,96 @@
+# Backend hardened variant — Red Hat Hardened Images base for the runtime.
+#
+# Stage 1 builds Python wheels on standard UBI 9 (which has dnf, the system
+# compilers, and pkg-config). Stage 2 is the hardened Python runtime, which
+# ships microdnf only — we use it to install the weasyprint media libs +
+# openssh-clients without pulling in a full dnf stack.
+#
+# The runtime base image is supplied via --build-arg BASE_IMAGE so the
+# Containerfile doesn't need editing when Red Hat publishes a new hardened
+# Python tag. scripts/build-all-images.sh injects the value from the
+# HARDENED_PYTHON env var.
+#
+# See docs/SECURITY_POSTURE.md and docs/CONTAINER_IMAGES.md for the
+# dual-variant rationale.
+
+# Global build arg — must be declared before any FROM so it can substitute
+# into Stage 2's FROM line. Each stage that wants to *use* the value also
+# re-declares ARG BASE_IMAGE inside its scope (see Stage 2 below).
+ARG BASE_IMAGE
+
+# --- Stage 1: wheelbuilder on standard UBI 9 ---------------------------------
+FROM registry.access.redhat.com/ubi9/python-312@sha256:69047002cca0357b0ebf4fd95c29eff7d357e7b906807af0d9b5c62783074ce0 AS wheelbuilder
+
+USER 0
+WORKDIR /wheels
+# weasyprint + cryptography wheels exist on PyPI for cp312 manylinux, so
+# nothing here actually compiles from source — the wheelbuilder stage is
+# kept so a future requirement (or platform without a wheel) still
+# succeeds.
+COPY backend/requirements.txt ./
+RUN pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt
+
+# --- Stage 2: hardened runtime -----------------------------------------------
+FROM ${BASE_IMAGE} AS runtime
+
+# IMAGE_VERSION (not VERSION): some UBI bases set ENV VERSION=N which
+# wins over ARG during LABEL substitution. See backend/Containerfile.
+ARG IMAGE_VERSION=0.1.0-dev
+ARG VCS_REF=unknown
+ARG BASE_IMAGE
+
+LABEL org.opencontainers.image.title="virtvalidate-backend" \
+      org.opencontainers.image.description="VirtValidate FastAPI backend (hardened variant)" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="https://github.com/virtvalidate/virtvalidate" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="${BASE_IMAGE}" \
+      io.virtvalidate.variant="hardened"
+
+# openssh-clients for the SSH collector. PDF rendering is pure Python
+# (xhtml2pdf + ReportLab) so the cairo/pango/gdk-pixbuf stack is no
+# longer needed — which is exactly what makes the Hummingbird hardened
+# Python image viable: its public repo doesn't ship those libs at all.
+USER 0
+RUN microdnf install -y openssh-clients \
+    && microdnf clean all \
+    && rm -rf /var/cache/yum /var/cache/dnf
+
+WORKDIR /opt/app-root/src
+
+# Consume the prebuilt wheels from stage 1. --no-index forces offline
+# resolution so we'd notice if a wheel went missing.
+COPY --from=wheelbuilder /wheels /wheels
+COPY backend/requirements.txt ./
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
+    && rm -rf /wheels
+
+COPY --chown=1001:0 backend/app/ ./app/
+COPY --chown=1001:0 backend/migrations/ ./migrations/
+COPY --chown=1001:0 backend/alembic.ini ./alembic.ini
+COPY --chown=1001:0 docs/vm-inventory-template.csv ./templates/vm-inventory-template.csv
+
+# SSH key directory + back-compat /app symlink (mirrors the standard
+# Containerfile so SSH_KEY_PATH / CSV_TEMPLATE_PATH defaults keep working).
+RUN mkdir -p /opt/app-root/src/keys \
+    && ln -s /opt/app-root/src /app \
+    && chgrp -R 0 /opt/app-root/src \
+    && chmod -R g=u /opt/app-root/src \
+    && chmod 700 /opt/app-root/src/keys
+
+# UID 65532 — Project Hummingbird nonroot convention. OpenShift's
+# restricted-v2 SCC reassigns to an arbitrary UID at runtime, so the
+# chgrp 0 + chmod g=u pattern above keeps arbitrary-UID compatibility.
+# The literal USER directive just sets the image default for non-OCP
+# runtimes (podman-compose / plain k8s).
+USER 65532
+
+EXPOSE 8000
+
+# No HEALTHCHECK: hardened images don't ship curl, and Kubernetes liveness
+# probes already cover /api/health/full via httpGet from the chart's
+# deployment spec. podman-compose dev uses the standard variant, so the
+# in-image HEALTHCHECK on the standard Containerfile is what dev needs.
+
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

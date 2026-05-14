@@ -1,18 +1,21 @@
 name: CI
 
 # Lint + tests + secret scanning. Workflow scope is deliberately small:
-# fast signal on the things developers actually act on. Security
-# scanners (bandit / pip-audit / safety / trivy / SBOM) were removed in
-# the CI simplification — they fired warnings nobody triaged. Re-add
-# per-tool only when there's a concrete consumer for the output
-# (customer audit, compliance review, etc).
+# fast signal on the things developers actually act on.
 #
 # Job layout:
 #   test        — ruff + pytest on the backend
 #   frontend    — eslint + vite build on the frontend
 #   gitleaks    — secret scanning, blocks on any finding
 #
-# CodeQL runs in its own workflow file (.github/workflows/codeql.yml).
+# Security scanning lives in adjacent workflows so each has its own
+# trigger / cadence / severity policy:
+#   snyk.yml    — Snyk Open Source (SCA) + Snyk Code (SAST), SARIF
+#                 to the Security tab. Phase 1: surface-only.
+#   images.yml  — image builds + Trivy scan matrix for both
+#                 standard and hardened image variants.
+# CodeQL is intentionally not wired up — Snyk Code covers SAST. If
+# the operator wants CodeQL too it's a small addition.
 
 on:
   push:

@@ -69,12 +69,33 @@ Image reference resolver. Falls back through:
   - per-component .image.tag
   - global .Values.image.tag
   - .Chart.AppVersion
+When .Values.image.variant is "hardened" the resolved tag is suffixed
+with "-hardened" so the same chart can target either the standard
+UBI image or its hardened counterpart by flipping a single value.
 */}}
 {{- define "virtvalidate.image" -}}
 {{- $registry := default .root.Values.image.registry .imageRegistry -}}
 {{- $repo := .imageRepo -}}
 {{- $tag := default (default .root.Chart.AppVersion .root.Values.image.tag) .imageTag -}}
-{{- printf "%s/%s:%s" $registry $repo $tag -}}
+{{- $suffix := "" -}}
+{{- if eq (default "standard" .root.Values.image.variant) "hardened" -}}
+{{- $suffix = "-hardened" -}}
+{{- end -}}
+{{- printf "%s/%s:%s%s" $registry $repo $tag $suffix -}}
+{{- end -}}
+
+{{/*
+Image pull-secrets block, rendered inline at the pod-spec level. Empty
+output when .Values.image.pullSecrets is unset / [] so standard
+deployments don't carry a no-op imagePullSecrets: [] line.
+*/}}
+{{- define "virtvalidate.imagePullSecrets" -}}
+{{- with .Values.image.pullSecrets }}
+imagePullSecrets:
+{{- range . }}
+  - name: {{ . }}
+{{- end }}
+{{- end }}
 {{- end -}}
 
 {{/*

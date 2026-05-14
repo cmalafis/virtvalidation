@@ -387,9 +387,14 @@ def _collect_plan_referenced_mapping_ids(bind: sa.engine.Connection, dialect: st
             referenced.add(int(row[0]))
 
     if dialect == "postgresql":
+        # mapping_ids was added as sa.JSON() (Postgres ``json``, not ``jsonb``)
+        # by migration c3f1d92a7b04. jsonb_array_elements_text requires
+        # jsonb input, so cast at the call site — minimal, idempotent on
+        # both types, and matches the jsonb_build_array() write pattern
+        # the parent migration already uses against this same column.
         rows = bind.execute(
             sa.text(
-                "SELECT DISTINCT (jsonb_array_elements_text(mapping_ids))::int "
+                "SELECT DISTINCT (jsonb_array_elements_text(mapping_ids::jsonb))::int "
                 "FROM migration_plans WHERE mapping_ids IS NOT NULL"
             )
         ).fetchall()

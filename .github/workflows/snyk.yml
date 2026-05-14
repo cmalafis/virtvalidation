@@ -1,0 +1,95 @@
+name: Snyk security scan
+
+# Phase 1 posture: surface-only. Every Snyk step is non-blocking
+# (continue-on-error / `|| true`) and uploads SARIF to the Security tab
+# rather than failing the build. Once findings are triaged and the
+# fixable backlog is empty, flip the relevant step to gating in a
+# follow-up PR.
+#
+# Requires repository secret SNYK_TOKEN — operator signs up at
+# https://app.snyk.io with GitHub OAuth (free for public repos) and
+# installs the Snyk GitHub App on the repo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly re-scan against the live vulnerability DB so newly-published
+    # CVEs against pinned dependencies surface without waiting for the
+    # next PR.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  snyk-open-source:
+    name: Snyk Open Source (SCA)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Snyk — Python deps
+        uses: snyk/actions/python@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: >-
+            --severity-threshold=high
+            --file=backend/requirements.txt
+            --sarif-file-output=snyk-python.sarif
+
+      - name: Upload Python SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk-python.sarif
+          category: snyk-python
+
+      - name: Snyk — Node deps
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: >-
+            --severity-threshold=high
+            --file=frontend/package.json
+            --sarif-file-output=snyk-node.sarif
+
+      - name: Upload Node SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk-node.sarif
+          category: snyk-node
+
+  snyk-code:
+    name: Snyk Code (SAST)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: snyk/actions/setup@master
+      - name: Snyk Code test
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        # || true so the job never fails — Snyk Code requires the
+        # Team-tier plan on private repos; on the free public-repo
+        # tier this is a no-op.
+        run: |
+          snyk code test \
+            --severity-threshold=high \
+            --sarif-file-output=snyk-code.sarif || true
+
+      - name: Upload Code SARIF
+        if: always() && hashFiles('snyk-code.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk-code.sarif
+          category: snyk-code

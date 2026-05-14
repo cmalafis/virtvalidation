@@ -3,39 +3,35 @@
 # is the only path that can pair with a FIPS-enabled host kernel to
 # produce a FIPS-validated runtime. See docs/CONTAINER_IMAGES.md and
 # docs/FIPS_DEPLOYMENT.md for the full requirements.
-FROM registry.access.redhat.com/ubi9/python-312:latest AS runtime
+FROM registry.access.redhat.com/ubi9/python-312@sha256:69047002cca0357b0ebf4fd95c29eff7d357e7b906807af0d9b5c62783074ce0 AS runtime
 
 # Build args allow CI to inject version and SHA without rebuilding the
 # whole image on every commit (BuildKit layer caching keeps the
-# microdnf and pip layers warm).
-ARG VERSION=0.1.0-dev
+# microdnf and pip layers warm). We use IMAGE_VERSION instead of the
+# more natural VERSION because several UBI bases (notably ubi9/nginx-124
+# which sets ENV VERSION=0) export a colliding env var that wins over
+# ARG during LABEL substitution. Standardizing on IMAGE_VERSION across
+# all Containerfiles keeps both variants honest.
+ARG IMAGE_VERSION=0.1.0-dev
 ARG VCS_REF=unknown
 
 LABEL org.opencontainers.image.title="virtvalidate-backend" \
       org.opencontainers.image.description="VirtValidate FastAPI backend" \
-      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.source="https://github.com/virtvalidate/virtvalidate" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/python-312:latest"
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/python-312@sha256:69047002cca0357b0ebf4fd95c29eff7d357e7b906807af0d9b5c62783074ce0"
 
 # UBI Python ships a default user (UID 1001, GID 0) that owns
 # /opt/app-root. Convention is to run as that user with the working
-# directory at /opt/app-root/src. weasyprint runtime needs Pango /
-# Cairo / GDK-Pixbuf to render PDF; openssh-clients drives the SSH
-# collector; dejavu-sans-fonts gives weasyprint a default font face.
+# directory at /opt/app-root/src. openssh-clients drives the SSH
+# collector. PDF rendering is pure Python (xhtml2pdf + ReportLab) so
+# we no longer install pango/cairo/gdk-pixbuf/fonts — see PR #12,
+# which dropped weasyprint to unblock the hardened Hummingbird image
+# and also shrink the standard image's attack surface.
 USER 0
-# UBI Python is built on the full UBI 9 base, so dnf is available
-# (microdnf is only on ubi-minimal). No epel-release needed —
-# pango / cairo / gdk-pixbuf2 are all in the UBI 9 BaseOS + AppStream
-# repos that the image already has enabled.
-RUN dnf install -y \
-        openssh-clients \
-        pango \
-        cairo \
-        gdk-pixbuf2 \
-        shared-mime-info \
-        dejavu-sans-fonts \
+RUN dnf install -y openssh-clients \
     && dnf clean all \
     && rm -rf /var/cache/yum /var/cache/dnf
 

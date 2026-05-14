@@ -9,11 +9,13 @@
 Capture pre-migration baselines, generate intelligent migration waves with MTV-ready YAML, and validate post-migration state — all running air-gapped with local AI inference.
 
 [![CI](https://github.com/cmalafis/virtvalidation/actions/workflows/ci.yml/badge.svg)](https://github.com/cmalafis/virtvalidation/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/cmalafis/virtvalidation/actions/workflows/codeql.yml/badge.svg)](https://github.com/cmalafis/virtvalidation/actions/workflows/codeql.yml)
+[![Snyk](https://github.com/cmalafis/virtvalidation/actions/workflows/snyk.yml/badge.svg)](https://github.com/cmalafis/virtvalidation/actions/workflows/snyk.yml)
+[![Images](https://github.com/cmalafis/virtvalidation/actions/workflows/images.yml/badge.svg)](https://github.com/cmalafis/virtvalidation/actions/workflows/images.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/cmalafis/virtvalidation?include_prereleases)](https://github.com/cmalafis/virtvalidation/releases)
 [![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![Podman](https://img.shields.io/badge/podman-rootless-892CA0?logo=podman&logoColor=white)](https://podman.io)
+[![UBI 9](https://img.shields.io/badge/base-Red%20Hat%20UBI%209-EE0000?logo=redhat&logoColor=white)](docs/CONTAINER_IMAGES.md)
 
 [Quick Start](#quick-start) · [Product Map](docs/product-map.html) · [Architecture](docs/architecture-diagram.html) · [Roadmap](https://github.com/cmalafis/virtvalidation/projects) · [Contributing](CONTRIBUTING.md)
 
@@ -135,6 +137,13 @@ Contributions are welcome. VirtValidate follows standard open source practices:
 All contributors must agree to the [Code of Conduct](CODE_OF_CONDUCT.md) and sign off commits per the DCO.
 
 ## Security
+
+VirtValidate is built for federal, defense, and regulated environments. Two image variants ship:
+
+- **Standard (UBI 9)** — Red Hat Universal Base Image 9, digest-pinned, FIPS-compatible. Default.
+- **Hardened (Red Hat Hardened Images)** — minimal, signed, SBOM-embedded, near-zero-CVE. Opt-in via `helm install --set image.variant=hardened`.
+
+CI runs gitleaks (blocking), Snyk Open Source (SCA), Snyk Code (SAST), and Trivy against both image variants — findings surface in the GitHub Security tab as SARIF. See [`docs/SECURITY_POSTURE.md`](docs/SECURITY_POSTURE.md) for the threat model, scanner inventory, dual-variant strategy, and compliance posture (NIST 800-53 / FedRAMP Moderate / DoD IL4-5).
 
 Found a security issue? Please **do not open a public issue.** See [SECURITY.md](SECURITY.md) for responsible disclosure.
 

@@ -4,7 +4,7 @@
 # in with the host UID, which doesn't match. --chown=1001:0 keeps the
 # UBI default user (1001 / GID 0) the owner so npm + vite can write
 # their temp files in /opt/app-root/src/node_modules during the build.
-FROM registry.access.redhat.com/ubi9/nodejs-20:latest AS builder
+FROM registry.access.redhat.com/ubi9/nodejs-20@sha256:e395d430f6534e9f8df4519cbbf11fe5a3ac8f2c1209c821bf7b05520dd7c7ce AS builder
 WORKDIR /opt/app-root/src
 COPY --chown=1001:0 package*.json ./
 RUN npm ci
@@ -16,18 +16,22 @@ RUN npm run build
 # and listens on 8080 by default. That maps cleanly onto OpenShift's
 # restricted-v2 SCC without the upstream nginx-unprivileged chmod
 # gymnastics we used to need.
-FROM registry.access.redhat.com/ubi9/nginx-124:latest
+FROM registry.access.redhat.com/ubi9/nginx-124@sha256:1f87af5815e0056db802c1323dbe5dc0643602268b46b891c2d4bc1fc369f9f3
 
-ARG VERSION=0.1.0-dev
+# IMAGE_VERSION not VERSION: ubi9/nginx-124 sets ENV VERSION=0 which
+# clobbers ARG VERSION during LABEL substitution. Renaming the build
+# arg into our own namespace prevents the inherited env var from
+# winning. Verified empirically — see commit history.
+ARG IMAGE_VERSION=0.1.0-dev
 ARG VCS_REF=unknown
 
 LABEL org.opencontainers.image.title="virtvalidate-frontend" \
       org.opencontainers.image.description="VirtValidate React dashboard" \
-      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.source="https://github.com/virtvalidate/virtvalidate" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/nginx-124:latest"
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/nginx-124@sha256:1f87af5815e0056db802c1323dbe5dc0643602268b46b891c2d4bc1fc369f9f3"
 
 # UBI nginx serves from /opt/app-root/src and reads its config from
 # /etc/nginx/nginx.conf. We replace the stock config with a template

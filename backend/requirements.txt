@@ -7,11 +7,19 @@ alembic==1.13.1
 psycopg2-binary==2.9.9
 pydantic==2.7.0
 pydantic-settings==2.3.0
-paramiko==3.4.0
+paramiko==5.0.0          # bumped from 3.4.0 — fixes CVE-2026-44405
 httpx==0.27.0
 python-dotenv==1.2.2      # bumped from 1.0.1 — fixes GHSA-mf9w-mj56-hr94
 apscheduler==3.10.4
-weasyprint==68.0          # bumped from 62.3 — fixes GHSA-983w-rhvv-gwmv
+xhtml2pdf==0.2.16         # replaces weasyprint — pure Python, drops the
+                          # cairo/pango/gdk-pixbuf system lib stack from
+                          # both image variants and unblocks the
+                          # Hummingbird hardened backend image. See PR #12.
+svglib<1.6.0              # xhtml2pdf hard-requires svglib; 1.6.0+ added
+                          # rlpycairo→pycairo→system-cairo which defeats
+                          # the "pure Python" win. Pinning <1.6 keeps
+                          # the dep tree cairo-free. Our reports don't
+                          # use SVG, so the older renderer suffices.
 pyyaml==6.0.1
 filelock==3.20.3          # explicit pin — fixes GHSA-w853-jp5j-5j7f, GHSA-qmgc-5h2g-mvrw
 

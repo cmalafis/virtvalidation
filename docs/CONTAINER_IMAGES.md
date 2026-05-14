@@ -1,13 +1,22 @@
 # Container Images
 
-VirtValidate ships two container images. Both are built on
-**Red Hat Universal Base Image 9 (UBI 9)**:
+VirtValidate ships **two variants** of each container image, both
+built on Red Hat supply chain:
 
-| Component | Base | Tag |
-|-----------|------|-----|
-| Backend (FastAPI) | `registry.access.redhat.com/ubi9/python-312:latest` | `latest` |
-| Frontend builder (Vite) | `registry.access.redhat.com/ubi9/nodejs-20:latest` | `latest` |
-| Frontend runtime (nginx) | `registry.access.redhat.com/ubi9/nginx-124:latest` | `latest` |
+| Variant | Backend base | Frontend runtime base | Tag suffix |
+|---------|---|---|---|
+| **Standard** (default) | `registry.access.redhat.com/ubi9/python-312@sha256:...` | `registry.access.redhat.com/ubi9/nginx-124@sha256:...` | none |
+| **Hardened** (opt-in) | `registry.redhat.io/<hardened-python>:...` | `registry.redhat.io/<hardened-nginx>:...` | `-hardened` |
+
+Both variants compile from the same source, target the same
+deployment surface, and run as UID 1001 / GID 0. The hardened
+variant adds Red Hat's image-hardening pipeline (minimal,
+SBOM-embedded, signed, near-zero CVE) at the cost of distroless
+ergonomics — no shell inside the pod.
+
+The standard variant pins FROM lines to digests rather than `:latest`
+so every build is reproducible and Dependabot can surface base-image
+updates as PRs.
 
 This document explains why UBI is the only supported base, how the
 images are laid out, how to scan them, and how to update versions.
@@ -112,36 +121,68 @@ images locally to dodge per-CI pull bandwidth.
 
 ## Building locally
 
+Two scripts coexist:
+
 ```bash
+# Single-component, multi-arch, scan-on-build flows (existing):
 ./scripts/build-images.sh                    # build both, no scan, no push
 ./scripts/build-images.sh -b backend         # build just the backend
 ./scripts/build-images.sh -s                 # build + trivy scan
-./scripts/build-images.sh -p                 # build + push to ghcr.io
+./scripts/build-images.sh -p                 # build + push
 ./scripts/build-images.sh -p -s -m           # full release pipeline
+
+# Full matrix (standard + hardened, backend + frontend) for a release:
+./scripts/build-all-images.sh v0.2.6                       # standard + hardened, no push
+./scripts/build-all-images.sh v0.2.6 --push                # standard + hardened, push
+./scripts/build-all-images.sh v0.2.6 --push --standard-only # standard only
+
+# Hardened builds via Hummingbird (public registry, no auth):
+HARDENED_PYTHON=registry.access.redhat.com/hi/python:3.12-builder \
+HARDENED_NGINX=registry.access.redhat.com/hi/nginx:latest-builder \
+    ./scripts/build-all-images.sh v0.2.6 --push
 ```
 
-The script preflights a `podman pull` of every UBI base before
-building so a connectivity issue surfaces immediately rather than
-five minutes into the layer cache.
+When `HARDENED_PYTHON` or `HARDENED_NGINX` is empty, the matrix runner
+skips that component's hardened build with a `WARN` log and the
+standard build still proceeds — so the script works even before the
+operator has registered the RHHI service-account paths.
+
+The single-component script preflights a `podman pull` of every UBI
+base before building so a connectivity issue surfaces immediately
+rather than five minutes into the layer cache.
 
 ---
 
 ## Updating base image versions
 
-UBI tags follow `ubi9/<package>-<version>:latest`. Pinning to
-`latest` matches Red Hat's published supply chain — they only update
-the tag for security errata, not for breaking changes within
-the same major version.
+Both variants pin their FROM lines to `@sha256:` digests rather than
+floating tags so every build is reproducible. Pinning to digests means
+Dependabot opens a PR when Red Hat publishes a new patched image (the
+`docker` ecosystem watches the FROM lines).
 
 When Red Hat ships a new minor (e.g., python-312 → python-313, nginx
-1.24 → nginx 1.26), update the `FROM` lines in:
+1.24 → nginx 1.26) OR a new patched digest of the current minor,
+update the `FROM` lines in:
 
 - `backend/Containerfile`
+- `backend/Containerfile.hardened` (Stage 1 only — the runtime BASE_IMAGE
+  comes from the build script)
 - `frontend/Containerfile` (both stages)
+- `frontend/Containerfile.runtime`
 - This document
 - The `UBI_BASE_IMAGES` array in `scripts/build-images.sh`
+- The `org.opencontainers.image.base.name` label in each Containerfile
 
-Then run:
+Resolve a new digest the same way:
+
+```bash
+podman pull registry.access.redhat.com/ubi9/python-312:latest
+podman inspect registry.access.redhat.com/ubi9/python-312:latest \
+    --format '{{.Digest}}'
+# → sha256:...
+```
+
+Then rebuild + scan:
 
 ```bash
 ./scripts/build-images.sh -s     # rebuild + scan
@@ -216,11 +257,14 @@ Full requirements + recovery procedures live in
 
 ---
 
-## Air-gapped deployments
+## Air-gapped / disconnected deployments
 
 Federal classified labs typically can't reach
-`registry.access.redhat.com`. Mirror the three UBI bases through a
-local registry once, then point the build script at the mirror:
+`registry.access.redhat.com` or `registry.redhat.io`. Mirror the bases
+through a local registry once, then point the build script and the
+Helm chart at the mirror.
+
+### Mirroring the UBI standard bases
 
 ```bash
 # On a connected host, save the bases
@@ -231,14 +275,112 @@ done
 
 # Move to the air-gapped lab, load + retag
 for f in *.tar; do podman load -i "$f"; done
+```
 
-# Override the FROM in the Containerfiles via build args, or edit
-# Containerfiles to point at your mirror directly.
+### Mirroring the hardened bases
+
+The hardened bases live on the authenticated `registry.redhat.io`
+endpoint, so the mirror flow runs through `oc image mirror` or
+`skopeo copy` with the service-account token:
+
+```bash
+# On a connected host (with podman login registry.redhat.io done first)
+for path in <hardened-python-path>:<tag> <hardened-nginx-path>:<tag>; do
+    skopeo copy \
+        docker://registry.redhat.io/${path} \
+        docker-archive:./$(basename "$path" | tr ':' '-').tar
+done
+```
+
+### Mirroring VirtValidate's own images (both variants)
+
+```bash
+# Mirror standard + hardened tags side-by-side
+for variant in "" "-hardened"; do
+    for component in backend frontend; do
+        skopeo copy \
+            docker://quay.io/cmalafis10/virtvalidate-${component}:v0.2.6${variant} \
+            docker://internal.example.com/virtvalidate/virtvalidate-${component}:v0.2.6${variant}
+    done
+done
+```
+
+### Pointing Helm at the mirror
+
+The Helm chart's `image.registry` value is the single override point
+for the entire chart — flipping it re-targets backend, frontend, and
+migrations job at once:
+
+```bash
+helm upgrade virtvalidate ./deploy/helm/virtvalidate \
+  -n virtvalidate \
+  --set image.registry=internal.example.com/virtvalidate
+```
+
+Or via a values override file (preferred for disconnected installs
+since the override may include cluster-specific pull secrets):
+
+```yaml
+# disconnected-values.yaml
+image:
+  registry: internal.example.com/virtvalidate
+  variant: hardened       # if running the hardened variant
+  pullSecrets:
+    - internal-mirror-pull
+```
+
+```bash
+helm install virtvalidate ./deploy/helm/virtvalidate \
+  -n virtvalidate \
+  -f disconnected-values.yaml
 ```
 
 Don't republish UBI images on a public registry — Red Hat's UBI EULA
 permits redistribution but the OpenContainers labels embed the
 `com.redhat.license_terms` URL operators are expected to honor.
+
+---
+
+## registry.redhat.io authentication (hardened variant)
+
+Hardened images pull from `registry.redhat.io`, which requires an
+authenticated session. The recommended flow uses a **registry service
+account** — operator-bound tokens that can be rotated without
+disturbing CI:
+
+1. Sign in at <https://access.redhat.com/terms-based-registry/>
+   and create a new service account. Note the username (`<NNN>|<name>`
+   form) and the token.
+2. **Local Mac** (for `scripts/build-all-images.sh`):
+   ```bash
+   podman login registry.redhat.io
+   # Username: <NNN>|<name>
+   # Password: <token>
+   ```
+3. **GitHub Actions** (for the `images.yml` workflow):
+   - Add repository secrets `REDHAT_REGISTRY_USER` and
+     `REDHAT_REGISTRY_TOKEN`.
+   - Add repository **variables** (not secrets) `HARDENED_PYTHON_IMAGE`
+     and `HARDENED_NGINX_IMAGE` with the catalog paths — these are
+     not sensitive but vary per environment.
+4. **OpenShift cluster** (for pulling the hardened images at deploy
+   time):
+   ```bash
+   oc -n virtvalidate create secret docker-registry redhat-registry-pull \
+       --docker-server=registry.redhat.io \
+       --docker-username='<NNN>|<name>' \
+       --docker-password='<token>'
+   ```
+   Reference it in the Helm chart:
+   ```yaml
+   image:
+     variant: hardened
+     pullSecrets:
+       - redhat-registry-pull
+   ```
+
+The Postgres "useRedHatImage" path documented further down uses the
+same pull-secret recipe — one secret can serve both.
 
 ---
 
