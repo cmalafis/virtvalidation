@@ -58,6 +58,10 @@ const LIFECYCLE_COLOR = {
 };
 
 // Sort dropdowns operate on the same column ids the backend accepts.
+// Non-sortable columns (target cluster / namespace / networks) are
+// rendered separately so the header isn't clickable for them — the
+// resolved-target fields are derived per row, not stored, so sorting
+// would require a server-side join that isn't worth the complexity.
 const SORTABLE_COLUMNS = [
   { id: "name", label: "VM Name" },
   { id: "status", label: "Status" },
@@ -66,6 +70,18 @@ const SORTABLE_COLUMNS = [
   { id: "os_family", label: "OS Family" },
   { id: "application_hint", label: "Application" },
   { id: "source_vcenter_id", label: "vCenter" },
+];
+
+// Non-sortable resolved-target columns rendered after the sortable
+// set + before the "Last Modified" column. The cells handle inline
+// edit themselves so the column body is a no-op render-time slot.
+const RESOLVED_COLUMNS = [
+  { id: "target_cluster", label: "Target Cluster" },
+  { id: "target_namespace", label: "Target Namespace" },
+  { id: "target_networks", label: "Target Networks" },
+];
+
+const TRAILING_COLUMNS = [
   { id: "updated_at", label: "Last Modified" },
 ];
 
@@ -152,6 +168,383 @@ function LifecyclePill({ state }) {
 function fmt(v) {
   if (v === null || v === undefined || v === "") return "—";
   return v;
+}
+
+// ---------------------------------------------------------------------------
+// Resolved-target cells. Each cell renders a display state + a small
+// inline editor opened by the parent table's editingTarget state.
+// Defensive coding: every vm.resolved_* field defaults to null/[] so
+// the cell handles legacy rows that pre-date the resolved view.
+// ---------------------------------------------------------------------------
+function TargetClusterCell({ vm, ocpTargets, isEditing, onOpen, onClose, onMutate }) {
+  const overrideId = vm?.target_cluster_id_override ?? null;
+  const resolvedId = vm?.resolved_target_cluster_id ?? null;
+  const resolvedName = vm?.resolved_target_cluster_name ?? null;
+
+  let label, color, weight;
+  if (overrideId != null) {
+    label = resolvedName || `cluster #${overrideId}`;
+    color = "#eeeeff";
+    weight = 600;
+  } else if (resolvedId != null) {
+    label = resolvedName || `cluster #${resolvedId}`;
+    color = "#aaaacc";  // muted — inferred
+    weight = 400;
+  } else {
+    const reasons = vm?.resolution_reasons || [];
+    const multi = reasons.some((r) => /multiple target clusters/i.test(r));
+    label = multi ? "Set cluster" : "No mapping";
+    color = multi ? "#ffcc88" : "#ff99aa";
+    weight = 600;
+  }
+
+  return (
+    <span style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={onOpen}
+        title="Set target cluster override"
+        style={{
+          background: "transparent", border: "none", padding: 0,
+          color, fontWeight: weight, fontFamily: "inherit",
+          fontSize: "inherit", cursor: "pointer", textAlign: "left",
+        }}>
+        {label}
+      </button>
+      {isEditing && (
+        <TargetClusterPopover
+          vm={vm}
+          ocpTargets={ocpTargets}
+          onClose={onClose}
+          onMutate={() => { onClose(); onMutate(); }}
+        />
+      )}
+    </span>
+  );
+}
+
+function TargetClusterPopover({ vm, ocpTargets, onClose, onMutate }) {
+  const apply = async (clusterId) => {
+    try {
+      await fetchJSON(`/api/vms/${vm.id}`, {
+        method: "PATCH",
+        body: { target_cluster_id_override: clusterId },
+      });
+      toast.success(clusterId == null
+        ? `Cleared cluster override on ${vm.name}`
+        : `Cluster set on ${vm.name}`);
+      onMutate();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        position: "absolute", top: "100%", left: 0, marginTop: 4,
+        background: "#0a0a18", border: "1px solid #2a2a44",
+        padding: "8px 0", zIndex: 20, minWidth: 220,
+        boxShadow: "0 6px 24px rgba(0,0,0,0.6)",
+      }}>
+      {(ocpTargets || []).map((t) => (
+        <button key={t.id} type="button" onClick={() => apply(t.id)}
+          style={{
+            display: "block", width: "100%", textAlign: "left",
+            background: "transparent", border: "none", color: "#eeeeff",
+            padding: "8px 14px", cursor: "pointer", fontFamily: "inherit",
+            fontSize: 12,
+          }}>{t.name}</button>
+      ))}
+      {(ocpTargets || []).length === 0 && (
+        <div style={{ color: "#aaaacc", fontSize: 11, padding: "8px 14px" }}>
+          No clusters registered. Add one under OCP Targets first.
+        </div>
+      )}
+      <div style={{ borderTop: "1px solid #1a1a2e", marginTop: 4, paddingTop: 4 }}>
+        <button type="button" onClick={() => apply(null)}
+          style={{
+            display: "block", width: "100%", textAlign: "left",
+            background: "transparent", border: "none", color: "#ff99aa",
+            padding: "8px 14px", cursor: "pointer", fontFamily: "inherit",
+            fontSize: 12,
+          }}>Clear override</button>
+      </div>
+      <div style={{ borderTop: "1px solid #1a1a2e", marginTop: 4, paddingTop: 4 }}>
+        <button type="button" onClick={onClose}
+          style={{
+            display: "block", width: "100%", textAlign: "right",
+            background: "transparent", border: "none", color: "#aaaacc",
+            padding: "6px 14px", cursor: "pointer", fontFamily: "inherit",
+            fontSize: 11,
+          }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function TargetNamespaceCell({
+  vm, ensureNamespacesLoaded, namespaces, isEditing, onOpen, onClose, onMutate,
+}) {
+  const override = vm?.target_namespace_override ?? null;
+  const resolved = vm?.resolved_target_namespace ?? null;
+
+  let label, color, weight;
+  if (override) {
+    label = override;
+    color = "#eeeeff";
+    weight = 600;
+  } else if (resolved) {
+    label = resolved;
+    color = "#aaaacc";
+    weight = 400;
+  } else {
+    label = "Set namespace";
+    color = "#ffcc88";
+    weight = 600;
+  }
+
+  const onOpenLoad = () => {
+    if (vm?.resolved_target_cluster_id != null) {
+      ensureNamespacesLoaded(vm.resolved_target_cluster_id);
+    }
+    onOpen();
+  };
+
+  return (
+    <span style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={onOpenLoad}
+        title="Set target namespace override"
+        style={{
+          background: "transparent", border: "none", padding: 0,
+          color, fontWeight: weight, fontFamily: "inherit",
+          fontSize: "inherit", cursor: "pointer", textAlign: "left",
+        }}>
+        {label}
+      </button>
+      {isEditing && (
+        <TargetNamespacePopover
+          vm={vm}
+          namespaces={namespaces?.[vm.resolved_target_cluster_id] || []}
+          onClose={onClose}
+          onMutate={() => { onClose(); onMutate(); }}
+        />
+      )}
+    </span>
+  );
+}
+
+function TargetNamespacePopover({ vm, namespaces, onClose, onMutate }) {
+  const [draft, setDraft] = useState(vm?.target_namespace_override || "");
+  const apply = async (value) => {
+    try {
+      await fetchJSON(`/api/vms/${vm.id}`, {
+        method: "PATCH",
+        body: { target_namespace_override: value },
+      });
+      toast.success(value == null
+        ? `Cleared namespace override on ${vm.name}`
+        : `Namespace set on ${vm.name}`);
+      onMutate();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        position: "absolute", top: "100%", left: 0, marginTop: 4,
+        background: "#0a0a18", border: "1px solid #2a2a44",
+        padding: 10, zIndex: 20, minWidth: 260,
+        boxShadow: "0 6px 24px rgba(0,0,0,0.6)",
+      }}>
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="namespace (RFC1123)"
+        style={{
+          ...INPUT_STYLE, width: "100%", fontSize: 12,
+        }}
+        autoFocus
+      />
+      <div style={{ maxHeight: 180, overflowY: "auto", marginTop: 6 }}>
+        {(namespaces || [])
+          .filter((n) => !draft || n.name.toLowerCase().includes(draft.toLowerCase()))
+          .slice(0, 12)
+          .map((n) => (
+            <button key={n.id} type="button" onClick={() => apply(n.name)}
+              style={{
+                display: "block", width: "100%", textAlign: "left",
+                background: "transparent", border: "none", color: "#eeeeff",
+                padding: "6px 8px", cursor: "pointer", fontFamily: "inherit",
+                fontSize: 12,
+              }}>{n.name}</button>
+          ))}
+      </div>
+      <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "space-between" }}>
+        <button type="button" onClick={() => apply(null)}
+          style={{ ...SECONDARY_BTN_STYLE, color: "#ff99aa", borderColor: "#ff557755", padding: "4px 10px", fontSize: 11 }}>
+          Clear
+        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button type="button" onClick={onClose}
+            style={{ ...SECONDARY_BTN_STYLE, padding: "4px 10px", fontSize: 11 }}>Cancel</button>
+          <button type="button" onClick={() => apply(draft.trim() || null)}
+            disabled={!draft.trim()}
+            style={{ ...PRIMARY_BTN_STYLE, padding: "4px 10px", fontSize: 11,
+                     opacity: draft.trim() ? 1 : 0.4 }}>Set</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TargetNetworksCell({ vm }) {
+  const networks = vm?.resolved_networks || [];
+  if (networks.length === 0) {
+    return <span style={{ color: "#777799", fontSize: 11 }}>—</span>;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 11 }}>
+      {networks.map((n) => {
+        const ok = !!(n.target_network_name || n.target_network_type === "pod");
+        if (!ok) {
+          return (
+            <span key={n.source} style={{ color: "#ff99aa", fontFamily: "'Share Tech Mono', monospace" }}>
+              {n.source} → unmapped
+            </span>
+          );
+        }
+        const target = n.target_network_type === "pod" ? "pod-network" : n.target_network_name;
+        const ns = n.target_network_namespace ? ` (${n.target_network_namespace})` : "";
+        return (
+          <span key={n.source} style={{ color: "#ccccee", fontFamily: "'Share Tech Mono', monospace" }}>
+            {n.source} → {target}<span style={{ color: "#777799" }}>{ns}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function BulkActionBar({
+  count, selectedIds, ocpTargets, onClear, onBulkDeleteClick, onMutate,
+}) {
+  const [menu, setMenu] = useState(null);  // 'cluster' | 'ns' | null
+  const [nsDraft, setNsDraft] = useState("");
+
+  const bulkSetCluster = async (clusterId) => {
+    try {
+      await fetchJSON("/api/vms/bulk-set-target-cluster", {
+        method: "POST",
+        body: { vm_ids: selectedIds, target_cluster_id_override: clusterId },
+      });
+      toast.success(clusterId == null
+        ? `Cleared cluster override on ${count} VMs`
+        : `Cluster set on ${count} VMs`);
+      setMenu(null);
+      onMutate();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const bulkSetNamespace = async (value) => {
+    try {
+      await fetchJSON("/api/vms/bulk-set-target-namespace", {
+        method: "POST",
+        body: { vm_ids: selectedIds, target_namespace_override: value },
+      });
+      toast.success(value == null
+        ? `Cleared namespace override on ${count} VMs`
+        : `Namespace set on ${count} VMs`);
+      setMenu(null);
+      setNsDraft("");
+      onMutate();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  return (
+    <div style={{
+      display: "flex", justifyContent: "space-between", alignItems: "center",
+      marginBottom: 12, padding: "10px 16px",
+      border: "1px solid #4488ff66", background: "rgba(68,136,255,0.06)",
+      position: "relative",
+    }}>
+      <span style={{
+        fontSize: 13, color: "#eeeeff",
+        fontFamily: "'Barlow', sans-serif", fontWeight: 600,
+      }}>
+        {count} selected
+      </span>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", position: "relative" }}>
+        <button type="button" onClick={() => setMenu(menu === "cluster" ? null : "cluster")}
+          style={PRIMARY_BTN_STYLE}>
+          Set Target Cluster ▾
+        </button>
+        {menu === "cluster" && (
+          <div style={{
+            position: "absolute", top: "100%", right: 200, marginTop: 4,
+            background: "#0a0a18", border: "1px solid #2a2a44", padding: "8px 0",
+            zIndex: 20, minWidth: 220,
+          }}>
+            {(ocpTargets || []).map((t) => (
+              <button key={t.id} type="button" onClick={() => bulkSetCluster(t.id)}
+                style={{
+                  display: "block", width: "100%", textAlign: "left",
+                  background: "transparent", border: "none", color: "#eeeeff",
+                  padding: "8px 14px", cursor: "pointer", fontFamily: "inherit",
+                  fontSize: 12,
+                }}>{t.name}</button>
+            ))}
+            <button type="button" onClick={() => bulkSetCluster(null)}
+              style={{
+                display: "block", width: "100%", textAlign: "left",
+                background: "transparent", border: "none", color: "#ff99aa",
+                padding: "8px 14px", cursor: "pointer", borderTop: "1px solid #1a1a2e",
+                marginTop: 4, fontSize: 12,
+              }}>Clear override</button>
+          </div>
+        )}
+        <button type="button" onClick={() => setMenu(menu === "ns" ? null : "ns")}
+          style={PRIMARY_BTN_STYLE}>
+          Set Target Namespace ▾
+        </button>
+        {menu === "ns" && (
+          <div style={{
+            position: "absolute", top: "100%", right: 40, marginTop: 4,
+            background: "#0a0a18", border: "1px solid #2a2a44", padding: 10,
+            zIndex: 20, minWidth: 260,
+          }}>
+            <input type="text" autoFocus value={nsDraft}
+              onChange={(e) => setNsDraft(e.target.value)}
+              placeholder="namespace (RFC1123)"
+              style={{ ...INPUT_STYLE, width: "100%", fontSize: 12 }} />
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+              <button type="button" onClick={() => bulkSetNamespace(null)}
+                style={{ ...SECONDARY_BTN_STYLE, color: "#ff99aa", borderColor: "#ff557755", padding: "4px 10px", fontSize: 11 }}>
+                Clear
+              </button>
+              <button type="button" onClick={() => bulkSetNamespace(nsDraft.trim() || null)}
+                disabled={!nsDraft.trim()}
+                style={{ ...PRIMARY_BTN_STYLE, padding: "4px 10px", fontSize: 11,
+                         opacity: nsDraft.trim() ? 1 : 0.4 }}>
+                Apply
+              </button>
+            </div>
+          </div>
+        )}
+        <button type="button" onClick={onClear} style={SECONDARY_BTN_STYLE}>
+          Clear
+        </button>
+        <button type="button" onClick={onBulkDeleteClick} style={DANGER_BTN_STYLE}>
+          Delete Selected
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function formatTimestamp(ts) {
@@ -404,9 +797,19 @@ export default function InventoryTable({
   const [error, setError] = useState(null);
   const [facets, setFacets] = useState(null);
 
+  // OCP target catalog drives the inline-edit dropdowns on the
+  // Target Cluster column + the namespace typeahead (keyed by
+  // cluster id). Loaded once per mount + after any bulk-target op.
+  const [ocpTargets, setOcpTargets] = useState([]);
+  const [namespacesByCluster, setNamespacesByCluster] = useState({});
+
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
+
+  // Inline-edit popover state. ``editingTarget`` is `{vmId, field}`
+  // when an inline editor is open; null otherwise.
+  const [editingTarget, setEditingTarget] = useState(null);
 
   // Debounce raw input → committed search.
   useEffect(() => {
@@ -487,6 +890,36 @@ export default function InventoryTable({
 
   useEffect(() => { loadItems(); }, [loadItems, refreshSignal]);
   useEffect(() => { loadFacets(); }, [loadFacets, refreshSignal]);
+
+  // Load the OCP target list once + after any bulk-target mutation so
+  // the cluster dropdown has fresh names. The cluster catalog is
+  // small (single-digit count typical); no pagination needed.
+  const loadOcpTargets = useCallback(async () => {
+    try {
+      const rows = await fetchJSON("/api/sources/targets");
+      setOcpTargets(Array.isArray(rows) ? rows : []);
+    } catch {
+      setOcpTargets([]);
+    }
+  }, []);
+  useEffect(() => { loadOcpTargets(); }, [loadOcpTargets, refreshSignal]);
+
+  // Lazy-load namespaces for a specific cluster the first time the
+  // operator opens the Target Namespace editor for a VM on that
+  // cluster. Cached in ``namespacesByCluster`` for the lifetime of
+  // the page so reopening the editor doesn't refetch.
+  const ensureNamespacesLoaded = useCallback(async (clusterId) => {
+    if (clusterId == null) return [];
+    if (namespacesByCluster[clusterId]) return namespacesByCluster[clusterId];
+    try {
+      const resp = await fetchJSON(`/api/ocp-targets/${clusterId}/namespaces?limit=500`);
+      const list = resp?.items ?? [];
+      setNamespacesByCluster((prev) => ({ ...prev, [clusterId]: list }));
+      return list;
+    } catch {
+      return [];
+    }
+  }, [namespacesByCluster]);
 
   // Clear stale selection when the page changes or items refresh —
   // the operator's selection should always refer to visible rows.
@@ -778,26 +1211,14 @@ export default function InventoryTable({
 
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
-        <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          marginBottom: 12, padding: "10px 16px",
-          border: "1px solid #4488ff66", background: "rgba(68,136,255,0.06)",
-        }}>
-          <span style={{
-            fontSize: 13, color: "#eeeeff",
-            fontFamily: "'Barlow', sans-serif", fontWeight: 600,
-          }}>
-            {selectedIds.size} selected
-          </span>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" onClick={() => setSelectedIds(new Set())} style={SECONDARY_BTN_STYLE}>
-              Clear
-            </button>
-            <button type="button" onClick={onBulkDeleteClick} style={DANGER_BTN_STYLE}>
-              Delete Selected
-            </button>
-          </div>
-        </div>
+        <BulkActionBar
+          count={selectedIds.size}
+          selectedIds={Array.from(selectedIds)}
+          ocpTargets={ocpTargets}
+          onClear={() => setSelectedIds(new Set())}
+          onBulkDeleteClick={onBulkDeleteClick}
+          onMutate={() => { loadItems(); loadFacets(); if (onMutate) onMutate(); }}
+        />
       )}
 
       {/* Table */}
@@ -841,13 +1262,43 @@ export default function InventoryTable({
                   )}
                 </th>
               ))}
+              {RESOLVED_COLUMNS.map((c) => (
+                <th key={c.id}
+                  style={{
+                    padding: "12px 14px", textAlign: "left",
+                    fontSize: 11, color: "#aaaacc",
+                    fontFamily: "'Barlow', sans-serif", letterSpacing: "0.08em",
+                    textTransform: "uppercase", fontWeight: 700,
+                    userSelect: "none",
+                  }}>
+                  {c.label}
+                </th>
+              ))}
+              {TRAILING_COLUMNS.map((c) => (
+                <th key={c.id}
+                  style={{
+                    padding: "12px 14px", textAlign: "left",
+                    fontSize: 11, color: "#aaaacc",
+                    fontFamily: "'Barlow', sans-serif", letterSpacing: "0.08em",
+                    textTransform: "uppercase", fontWeight: 700,
+                    cursor: "pointer", userSelect: "none",
+                  }}
+                  onClick={() => toggleSort(c.id)}>
+                  {c.label}
+                  {sortBy === c.id && (
+                    <span style={{ marginLeft: 6, color: "#4488ff" }}>
+                      {sortOrder === "asc" ? "▲" : "▼"}
+                    </span>
+                  )}
+                </th>
+              ))}
               <th style={{ padding: "12px 14px", textAlign: "right" }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {!loading && items.length === 0 && (
               <tr>
-                <td colSpan={SORTABLE_COLUMNS.length + 2} style={{
+                <td colSpan={SORTABLE_COLUMNS.length + RESOLVED_COLUMNS.length + TRAILING_COLUMNS.length + 2} style={{
                   padding: "32px 20px", textAlign: "center", color: "#777799",
                 }}>
                   {error
@@ -903,6 +1354,30 @@ export default function InventoryTable({
                   <td style={{ padding: "10px 14px" }}>{fmt(vm.os_family)}</td>
                   <td style={{ padding: "10px 14px" }}>{fmt(vm.application_hint)}</td>
                   <td style={{ padding: "10px 14px" }}>{fmt(vm.source_vcenter_id)}</td>
+                  <td style={{ padding: "10px 14px" }}>
+                    <TargetClusterCell
+                      vm={vm}
+                      ocpTargets={ocpTargets}
+                      isEditing={editingTarget?.vmId === vm.id && editingTarget?.field === "cluster"}
+                      onOpen={() => setEditingTarget({ vmId: vm.id, field: "cluster" })}
+                      onClose={() => setEditingTarget(null)}
+                      onMutate={() => { loadItems(); loadFacets(); if (onMutate) onMutate(); }}
+                    />
+                  </td>
+                  <td style={{ padding: "10px 14px" }}>
+                    <TargetNamespaceCell
+                      vm={vm}
+                      ensureNamespacesLoaded={ensureNamespacesLoaded}
+                      namespaces={namespacesByCluster}
+                      isEditing={editingTarget?.vmId === vm.id && editingTarget?.field === "namespace"}
+                      onOpen={() => setEditingTarget({ vmId: vm.id, field: "namespace" })}
+                      onClose={() => setEditingTarget(null)}
+                      onMutate={() => { loadItems(); loadFacets(); if (onMutate) onMutate(); }}
+                    />
+                  </td>
+                  <td style={{ padding: "10px 14px" }}>
+                    <TargetNetworksCell vm={vm} />
+                  </td>
                   <td style={{ padding: "10px 14px" }}>{formatTimestamp(vm.updated_at)}</td>
                   <td style={{ padding: "10px 14px", textAlign: "right" }}>
                     {onCapture && (
