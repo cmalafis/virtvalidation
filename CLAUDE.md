@@ -146,15 +146,67 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
 3. Migration planner — LLM groups VMs into dependency-ordered waves
 
 ## Hard rules
-- NEVER call external APIs or LLM services — air-gapped by design
-- All LLM calls go to Ollama at $OLLAMA_HOST (default: http://ollama:11434)
-  except in dev where `LLM_BACKEND_TYPE=mock` swaps in an in-process
-  canned-response backend (see `docs/MOCK_BACKEND.md`). When adding a
-  new LLM-consuming flow, also extend `MockBackend._INTENT_KEYWORDS`
-  + a `_<intent>_response()` method so dev/CI runs without a real LLM.
-  The mock MUST emit the same JSON shape the new flow's parser
-  accepts; pin it with a round-trip test in
-  `tests/test_mock_backend.py`.
+- **External-API rule.** Air-gapped deployments must never reach
+  the public Internet for inference. The `maas` backend (below) is
+  the explicit, operator-opted-in exception for sites that have a
+  governed Model-as-a-Service endpoint inside their network
+  perimeter (LiteLLM proxy, OpenRouter behind a corporate egress
+  gateway, hosted vLLM behind a reverse-proxy). For classified /
+  air-gapped sites the operator simply does not configure `maas`.
+- **LLM backends — five types, runtime-switchable selection.**
+  CONNECTION CONFIG is deploy-time (Helm values / env). The ACTIVE
+  backend is a DB-backed runtime setting on `app_settings.active_llm_backend`,
+  changeable from the Settings UI without a redeploy. The
+  `LLM_BACKEND_TYPE` env var is the BOOTSTRAP seed used by the
+  Alembic migration on first deploy; after that the DB row is
+  authoritative.
+  - **ollama** — local Ollama at `$OLLAMA_HOST` (default
+    `http://ollama:11434`). Default for standalone air-gapped
+    appliances.
+  - **kserve** — RHOAI / OpenShift in-cluster InferenceService,
+    OpenAI-compatible `/v1/chat/completions`, SA-token auth.
+  - **vllm** — direct vLLM. Placeholder today
+    (`raises NotImplementedError`); settings exposed so deployments
+    don't need a config migration when the implementation lands.
+  - **maas** — authenticated external Model-as-a-Service
+    (OpenAI-compatible, bearer auth). API key is sourced from a
+    Kubernetes Secret as the `LLM_MAAS_API_KEY` env var; NEVER in
+    `values.yaml`, NEVER logged, NEVER in an exception message or
+    API response. The base URL follows OpenAI client convention and
+    includes `/v1`. See `deploy/README.md` for the
+    `oc create secret … && helm install --set existingSecret=…`
+    recipe.
+  - **mock** — dev/test infrastructure. The default for pytest and
+    the local `podman-compose` stack. Visible in the Settings UI's
+    backend selector but visibly badged "DEV ONLY" — not a
+    production choice. When adding a new LLM-consuming flow, also
+    extend `MockBackend._INTENT_KEYWORDS` + a
+    `_<intent>_response()` method so dev/CI runs without a real
+    LLM. The mock MUST emit the same JSON shape the new flow's
+    parser accepts; pin it with a round-trip test in
+    `tests/test_mock_backend.py`. See `docs/MOCK_BACKEND.md`.
+- **LLM auth-failure surfacing (asymmetric with transient failures).**
+  Transient failures (timeout, 5xx, parse error after retries) fall
+  back to mechanical annotation per the existing validate-retry-
+  fallback discipline — the plan still completes, quietly. Auth
+  failures (401/403, raised as `LLMAuthError`) ALSO fall back so
+  plans complete, but ADDITIONALLY write a clear message to
+  `app_settings.last_llm_error` via `app.core.llm.status.record_last_llm_error`.
+  The Settings UI renders this as a persistent red banner — that's
+  how operators discover "your MaaS key was rejected" instead of
+  noticing annotation quality dropped. Any successful LLM call
+  clears the banner symmetrically. The wave annotation `method`
+  field is `"mechanical_fallback_auth"` (not `"mechanical_fallback"`)
+  so audit logs distinguish the two paths.
+- **Two backend resolvers, different jobs.**
+  `app.core.llm.factory.get_llm_backend(cfg)` reads the env var —
+  used by the migration seed step and by tests that pin a specific
+  backend via `Settings(llm_backend_type=...)`.
+  `app.core.llm.runtime.get_active_backend()` reads the DB-backed
+  setting with a 60s in-process TTL cache — the production
+  resolver, called from every orchestrator (planner, categorizer,
+  validation client, etc.). New orchestrators MUST call
+  `get_active_backend`, not the env-var resolver.
 - SSH uses Ed25519 keys only — stored in /app/keys/, never baked into images
 - Use Podman — NOT Docker. Containerfiles NOT Dockerfiles.
 - Volume mounts use :Z SELinux label for RHEL/Fedora compatibility

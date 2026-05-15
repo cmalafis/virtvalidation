@@ -1,10 +1,11 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, String, func
+from sqlalchemy import DateTime, Enum, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
+from app.core.llm.types import LLMBackendType
 
 
 class SchedulePreset(str, enum.Enum):
@@ -47,6 +48,34 @@ class AppSettings(Base):
         default=SSHHostKeyPolicy.auto_accept,
         server_default=SSHHostKeyPolicy.auto_accept.value,
         nullable=False,
+    )
+    # Active LLM backend — runtime-switchable from the Settings UI.
+    # Replaces the env-var-driven selection ``LLM_BACKEND_TYPE``, which
+    # is now used only as the migration's bootstrap seed value.
+    # ``values_callable`` because LLMBackendType has names == values
+    # (so default behavior would also work) but we keep the kwarg
+    # explicit per CLAUDE.md's enum I/O rule for any enum that crosses
+    # the SQLAlchemy boundary.
+    active_llm_backend: Mapped[LLMBackendType] = mapped_column(
+        Enum(
+            LLMBackendType,
+            name="llm_backend_type",
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        default=LLMBackendType.mock,
+        server_default=LLMBackendType.mock.value,
+        nullable=False,
+    )
+    # Last-observed LLM error surfaced in the Settings UI as a
+    # persistent banner. Populated specifically by the auth-failure
+    # path (and any other "fall back BUT make sure the operator sees
+    # it" path) — cleared on the next successful LLM call or
+    # successful test_connection. The mechanical fallback for transient
+    # failures does NOT write here; it stays quiet per the existing
+    # validate-retry-fallback discipline.
+    last_llm_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_llm_error_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

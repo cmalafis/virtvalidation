@@ -673,6 +673,7 @@ const BACKEND_LABELS = {
   ollama: "Ollama (local)",
   kserve: "KServe (RHOAI / OpenShift)",
   vllm: "vLLM (direct)",
+  maas: "Model-as-a-Service",
   mock:  "Mock (dev / CI — see docs/MOCK_BACKEND.md)",
 };
 
@@ -934,23 +935,30 @@ function FIPSCompliancePanel() {
 }
 
 
-// Read-only backend identification panel. Surfaces the configured
-// backend type, model, endpoint, and live status so operators can see
-// what their deployment is wired up against. Switching backends is a
-// deployment decision (env var) — there is no edit affordance here.
+// Editable backend selector. Operators flip the active backend
+// without a redeploy; switching is a runtime DB-backed setting
+// (PUT /api/settings/llm). Per-backend "Test connection" probes
+// reachability + auth + model availability without mutating the
+// active selection. The persistent banner at the top surfaces
+// last_llm_error from the auth-failure-surfacing path so a wrong key
+// can't silently degrade plan annotations.
 function LLMBackendPanel() {
-  const [info, setInfo] = useState(undefined);
+  const [data, setData] = useState(undefined);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  // Per-backend test-connection state, keyed by backend type.
+  // { [backendType]: { running: bool, result: ConnectionTestResult|null } }
+  const [tests, setTests] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const body = await fetchJSON("/api/system/llm-info");
-      setInfo(body);
+      const body = await fetchJSON("/api/settings/llm");
+      setData(body);
     } catch (e) {
-      setError(e.message || "Failed to load LLM backend info");
+      setError(e.message || "Failed to load LLM backend settings");
     } finally {
       setLoading(false);
     }
@@ -958,19 +966,59 @@ function LLMBackendPanel() {
 
   useEffect(() => { load(); }, [load]);
 
+  const switchBackend = useCallback(async (backendType) => {
+    if (!backendType || saving) return;
+    setSaving(true);
+    try {
+      const body = await fetchJSON("/api/settings/llm", {
+        method: "PUT",
+        body: { active_llm_backend: backendType },
+      });
+      setData(body);
+      toast.success(`Active backend → ${BACKEND_LABELS[backendType] || backendType}`, TOAST_OPTS);
+    } catch (e) {
+      // The 422 body contains the missing-config detail string.
+      toast.error(e.message || "Failed to switch backend", TOAST_OPTS);
+    } finally {
+      setSaving(false);
+    }
+  }, [saving]);
+
+  const runTest = useCallback(async (backendType) => {
+    if (!backendType) return;
+    setTests((t) => ({ ...t, [backendType]: { running: true, result: null } }));
+    try {
+      const result = await fetchJSON("/api/settings/llm/test-connection", {
+        method: "POST",
+        body: { backend_type: backendType },
+      });
+      setTests((t) => ({ ...t, [backendType]: { running: false, result } }));
+      // Successful auth probably cleared last_llm_error server-side —
+      // re-fetch settings so the banner disappears.
+      if (result?.authenticated) {
+        load();
+      }
+    } catch (e) {
+      setTests((t) => ({
+        ...t,
+        [backendType]: { running: false, result: { error: e.message || "Test failed" } },
+      }));
+    }
+  }, [load]);
+
   if (loading) {
     return (
-      <Section title="LLM Backend" subtitle="Read-only — configured at deployment time via environment variables.">
-        <Shimmer width="100%" height={64}/>
+      <Section title="LLM Backend" subtitle="Switchable at runtime — connection config is set at deploy time.">
+        <Shimmer width="100%" height={120}/>
       </Section>
     );
   }
-  if (error || !info) {
+  if (error || !data) {
     return (
-      <Section title="LLM Backend" subtitle="Read-only — configured at deployment time via environment variables.">
+      <Section title="LLM Backend" subtitle="Switchable at runtime — connection config is set at deploy time.">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
           <div style={{ fontSize: 14, color: "#ccaaaa", fontFamily: "'Barlow', sans-serif", lineHeight: 1.5 }}>
-            {error || "No backend info available."}
+            {error || "No backend settings available."}
           </div>
           <SecondaryButton onClick={load}>↻ Retry</SecondaryButton>
         </div>
@@ -978,69 +1026,146 @@ function LLMBackendPanel() {
     );
   }
 
-  const cfg = info.config || {};
-  const health = info.health || {};
-  const backendLabel = BACKEND_LABELS[cfg.backend] || cfg.backend || "—";
-  const detailsErr = health.details?.error;
-
-  const KV = ({ label, value, mono = true }) => (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{
-        fontSize: 11, color: "#aaaacc", letterSpacing: "0.08em",
-        fontFamily: "'Barlow', sans-serif", textTransform: "uppercase", fontWeight: 700,
-        marginBottom: 4,
-      }}>{label}</div>
-      <div style={{
-        fontSize: 14, color: "#ccccee",
-        fontFamily: mono ? "'Share Tech Mono', monospace" : "'Barlow', sans-serif",
-        wordBreak: "break-all",
-      }}>{value || "—"}</div>
-    </div>
-  );
+  const active = data.active_llm_backend;
+  const options = Array.isArray(data.available_backends) ? data.available_backends : [];
+  const lastError = data.last_llm_error;
+  const lastErrorAt = data.last_llm_error_at;
 
   return (
     <Section
       title="LLM Backend"
-      subtitle="Read-only — configured at deployment time via environment variables."
+      subtitle="Switchable at runtime — connection config is set at deploy time."
       action={<SecondaryButton onClick={load}>↻ Refresh</SecondaryButton>}
     >
-      <div style={{
-        padding: "16px 18px", border: "1px solid #1a1a2e", background: "#07070f", marginBottom: 12,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 14 }}>
-          <div style={{
-            fontSize: 15, color: "#eeeeff", fontWeight: 700,
-            fontFamily: "'Barlow', sans-serif", letterSpacing: "0.04em",
-          }}>{backendLabel}</div>
-          <StatusDot status={health.status} latencyMs={health.latency_ms >= 0 ? health.latency_ms : undefined}/>
+      {/* Persistent auth-failure banner — primary signal that the
+          active backend's credentials were rejected. Operators
+          discover "your MaaS key was rejected" here rather than by
+          noticing annotations got worse. */}
+      {lastError ? (
+        <div style={{
+          padding: "12px 14px", marginBottom: 14,
+          background: "#1a0a14", border: "1px solid #ff3355",
+          color: "#ffccdd", fontFamily: "'Barlow', sans-serif",
+          fontSize: 13, lineHeight: 1.5,
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>LLM error</div>
+          <div>{lastError}</div>
+          {lastErrorAt && (
+            <div style={{
+              marginTop: 6, fontSize: 11, color: "#bb99aa",
+              fontFamily: "'Share Tech Mono', monospace",
+            }}>
+              Last seen: {new Date(lastErrorAt).toLocaleString()}
+            </div>
+          )}
         </div>
-        <KV label="Model" value={cfg.model}/>
-        <KV label="Endpoint" value={cfg.endpoint}/>
-        {Array.isArray(health.details?.available_models) && health.details.available_models.length > 0 && (
-          <KV
-            label="Available Models"
-            value={health.details.available_models.join(", ")}
-          />
-        )}
-        {health.status === "offline" && detailsErr && (
-          <div style={{
-            marginTop: 4, padding: "10px 12px", background: "#0a0a18",
-            border: "1px solid #ff557755", color: "#ccaaaa",
-            fontSize: 13, lineHeight: 1.5, fontFamily: "'Barlow', sans-serif",
-          }}>
-            {detailsErr}
-          </div>
-        )}
+      ) : null}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {options.map((opt) => {
+          const isActive = opt.type === active;
+          const disabled = !opt.configured || saving;
+          const test = tests[opt.type] || {};
+          const result = test.result;
+
+          return (
+            <div key={opt.type} style={{
+              display: "flex", flexDirection: "column", gap: 8,
+              padding: "12px 14px",
+              background: isActive ? "#0a1622" : "#07070f",
+              border: `1px solid ${isActive ? "#4488ff66" : "#1a1a2e"}`,
+              opacity: opt.configured ? 1 : 0.55,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{
+                    fontSize: 14, color: "#eeeeff", fontWeight: 700,
+                    fontFamily: "'Barlow', sans-serif",
+                  }}>
+                    {opt.label || BACKEND_LABELS[opt.type] || opt.type}
+                  </span>
+                  {opt.dev_only && (
+                    <span style={{
+                      padding: "2px 6px", fontSize: 10, fontWeight: 700,
+                      letterSpacing: "0.08em",
+                      background: "#332200", color: "#ffcc66",
+                      border: "1px solid #886611",
+                      fontFamily: "'Barlow', sans-serif",
+                    }}>DEV ONLY</span>
+                  )}
+                  {isActive && (
+                    <span style={{
+                      padding: "2px 6px", fontSize: 10, fontWeight: 700,
+                      letterSpacing: "0.08em",
+                      background: "#0a2222", color: "#88ffcc",
+                      border: "1px solid #226666",
+                      fontFamily: "'Barlow', sans-serif",
+                    }}>ACTIVE</span>
+                  )}
+                  {!opt.configured && (
+                    <span style={{
+                      fontSize: 11, color: "#bb99aa",
+                      fontFamily: "'Share Tech Mono', monospace",
+                    }}>
+                      missing: {(opt.missing_config || []).join(", ") || "config"}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <SecondaryButton
+                    onClick={() => runTest(opt.type)}
+                    disabled={disabled || test.running}
+                  >
+                    {test.running ? <Spinner size={12}/> : "🔌"} Test connection
+                  </SecondaryButton>
+                  {!isActive && (
+                    <PrimaryButton
+                      onClick={() => switchBackend(opt.type)}
+                      disabled={disabled}
+                    >
+                      Make active
+                    </PrimaryButton>
+                  )}
+                </div>
+              </div>
+              {result && (
+                <div style={{
+                  display: "flex", flexWrap: "wrap", gap: 12,
+                  fontSize: 12, fontFamily: "'Share Tech Mono', monospace",
+                  color: result.error ? "#ffaabb" : "#ccccee",
+                }}>
+                  {result.error ? (
+                    <span>✗ {result.error}</span>
+                  ) : (
+                    <>
+                      <span style={{ color: result.reachable ? "#88ffcc" : "#ff6677" }}>
+                        {result.reachable ? "✓" : "✗"} reachable
+                      </span>
+                      <span style={{ color: result.authenticated ? "#88ffcc" : "#ff6677" }}>
+                        {result.authenticated ? "✓" : "✗"} authenticated
+                      </span>
+                      <span style={{ color: result.model_available ? "#88ffcc" : "#ffcc66" }}>
+                        {result.model_available ? "✓" : "·"} model available
+                      </span>
+                      {typeof result.latency_ms === "number" && (
+                        <span>· {result.latency_ms}ms</span>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
+
       <div style={{
         fontSize: 13, color: "#aaaacc", fontFamily: "'Barlow', sans-serif",
-        lineHeight: 1.6, marginTop: 4,
+        lineHeight: 1.6, marginTop: 12,
       }}>
-        Backend selection is set by <code style={{
-          fontFamily: "'Share Tech Mono', monospace", color: "#ccccee",
-        }}>LLM_BACKEND_TYPE</code> in the deployment&apos;s environment.
-        See <code style={{ fontFamily: "'Share Tech Mono', monospace", color: "#ccccee" }}>docs/CONFIGURATION.md</code> for
-        the full list of supported backends and their required variables.
+        Connection details (URLs, model names, the MaaS API Secret) are set at
+        deploy time via Helm values + Kubernetes Secrets. The selector above
+        only controls which configured backend is currently active.
       </div>
     </Section>
   );

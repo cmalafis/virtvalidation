@@ -28,7 +28,7 @@ import json
 from typing import Any
 
 from app.core.llm.base import LLMBackend, LLMBackendError
-from app.core.llm.factory import get_llm_backend
+from app.core.llm.runtime import get_active_backend
 from app.core.preclassifier import PreClassifier, VMGroup
 from app.models.vm import VM
 
@@ -299,7 +299,7 @@ class MigrationPlanner:
         *,
         preclassifier: PreClassifier | None = None,
     ):
-        self.backend = backend or get_llm_backend()
+        self.backend = backend or get_active_backend()
         self.preclassifier = preclassifier or PreClassifier()
 
     # ------------------------------------------------------------------

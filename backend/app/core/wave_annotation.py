@@ -31,7 +31,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from app.core.llm.base import LLMBackend, LLMBackendError
+from app.core.llm.base import LLMAuthError, LLMBackend, LLMBackendError
+from app.core.llm.status import clear_last_llm_error, record_last_llm_error
 
 logger = logging.getLogger(__name__)
 
@@ -449,6 +450,33 @@ async def annotate_one_wave(
                     ],
                     temperature=0.1,
                 )
+        except LLMAuthError:
+            # Auth failures are operator-config errors (wrong/expired
+            # key), not "the model had a bad day". Surface them via
+            # AppSettings.last_llm_error so the Settings UI shows a
+            # banner; transient failures (timeouts, 5xx) stay quiet.
+            # The plan still completes via the mechanical fallback —
+            # we don't block the operator on a busted key.
+            logger.warning(
+                "wave_annotation.auth_failed wave=%d attempt=%d backend=%s",
+                wave.wave_number,
+                attempt,
+                getattr(backend, "backend_type", "unknown"),
+            )
+            record_last_llm_error(
+                f"{getattr(backend, 'backend_type', 'LLM')} authentication "
+                f"failed (HTTP 401/403). Wave annotations are using the "
+                f"mechanical fallback. Check the configured credentials."
+            )
+            ann = _mechanical_annotation(wave)
+            return AnnotatedWave(
+                wave=wave,
+                description=ann.description,
+                risk_score=ann.risk_score,
+                risk_rationale=ann.risk_rationale,
+                notable_concerns=list(ann.notable_concerns),
+                method="mechanical_fallback_auth",
+            )
         except LLMBackendError as exc:
             # Transport errors short-circuit retries — the model
             # likely isn't reachable; trying again will hit the same
@@ -476,6 +504,10 @@ async def annotate_one_wave(
             continue
 
         method = "llm" if attempt == 1 else f"llm_retry_{attempt - 1}"
+        # Successful LLM call — clear any stale auth-failure banner.
+        # Symmetric with record_last_llm_error so a fix-and-retry
+        # makes the warning disappear without operator action.
+        clear_last_llm_error()
         return AnnotatedWave(
             wave=wave,
             description=ann.description,

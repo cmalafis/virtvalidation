@@ -261,10 +261,10 @@ def test_categorize_404_for_unknown_vcenter(db_session):
 def stub_categorizer_backend(monkeypatch):
     """Make the run_categorization_task BackgroundTask use a stub backend."""
     backend = _StubBackend()
-    # The BackgroundTask resolves the backend via get_llm_backend; patch
-    # at the categorizer module so both the in-test direct calls and
-    # the BackgroundTask invocation see the stub.
-    monkeypatch.setattr(cat, "get_llm_backend", lambda: backend)
+    # The BackgroundTask resolves the backend via get_active_backend;
+    # patch at the categorizer module so both the in-test direct calls
+    # and the BackgroundTask invocation see the stub.
+    monkeypatch.setattr(cat, "get_active_backend", lambda: backend)
 
     # Reset task store between runs.
     cat.task_store._tasks.clear()

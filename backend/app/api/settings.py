@@ -14,7 +14,18 @@ from app.core.audit import record_audit
 from app.core.config import settings as app_config
 from app.core.db import get_db
 from app.core.fips import FIPSViolation, fips_status
-from app.core.llm.factory import get_llm_backend
+from app.core.llm.runtime import (
+    get_active_backend,
+    is_backend_configured,
+    missing_config_for,
+)
+from app.core.llm.runtime import (
+    invalidate as invalidate_active_backend_cache,
+)
+from app.core.llm.runtime import (
+    test_connection as runtime_test_connection,
+)
+from app.core.llm.types import LLMBackendType
 from app.core.scheduler import next_run_time, reschedule_baseline_job
 from app.core.ssh_key import (
     KeyExistsError,
@@ -40,8 +51,13 @@ from app.models.settings import AppSettings
 from app.schemas.settings import (
     AppSettingsRead,
     AppSettingsUpdate,
+    BackendOption,
+    ConnectionTestRequest,
+    ConnectionTestResponse,
     FIPSStatus,
     LLMBackendInfo,
+    LLMSettingsRead,
+    LLMSettingsUpdate,
     OllamaModelsResponse,
     SSHKeyGenerateRequest,
     SSHKeyGenerateResponse,
@@ -93,6 +109,131 @@ def update_settings(payload: AppSettingsUpdate, db: Session = Depends(get_db)) -
     if "schedule_preset" in fields:
         reschedule_baseline_job(row.schedule_preset)
     return _settings_payload(row)
+
+
+# ---------------------------------------------------------------------------
+# Runtime LLM backend selection
+# ---------------------------------------------------------------------------
+
+# Operator-facing labels for each backend type. Kept in the API layer
+# (not the enum) so updating wording doesn't ripple into every consumer.
+_BACKEND_LABELS: dict[str, str] = {
+    "ollama": "Ollama (local)",
+    "kserve": "KServe (RHOAI / OpenShift)",
+    "vllm": "vLLM (direct)",
+    "maas": "Model-as-a-Service",
+    "mock": "Mock (development only)",
+}
+
+
+def _backend_options() -> list[BackendOption]:
+    """Build the per-backend availability list shown in the Settings UI.
+
+    Order matters — the UI renders rows in this order. Real backends
+    first, ``mock`` last so it's visually separated from the production
+    choices."""
+    ordered = ["ollama", "kserve", "maas", "vllm", "mock"]
+    options: list[BackendOption] = []
+    for bt in ordered:
+        options.append(
+            BackendOption(
+                type=LLMBackendType(bt),
+                label=_BACKEND_LABELS.get(bt, bt),
+                configured=is_backend_configured(bt),
+                dev_only=(bt == "mock"),
+                missing_config=missing_config_for(bt),
+            )
+        )
+    return options
+
+
+@settings_router.get("/llm", response_model=LLMSettingsRead)
+def get_llm_settings(db: Session = Depends(get_db)) -> dict:
+    """Snapshot of the active backend + the operator-pickable options.
+
+    Includes ``last_llm_error`` so the Settings UI can render a banner
+    when an auth failure was recently observed — operators discover
+    "your MaaS key was rejected" here rather than by noticing
+    annotations got worse."""
+    row = _get_or_create_settings(db)
+    active = row.active_llm_backend
+    return {
+        "active_llm_backend": (active.value if hasattr(active, "value") else str(active)),
+        "available_backends": [opt.model_dump() for opt in _backend_options()],
+        "last_llm_error": row.last_llm_error,
+        "last_llm_error_at": row.last_llm_error_at,
+    }
+
+
+@settings_router.put("/llm", response_model=LLMSettingsRead)
+def update_llm_settings(payload: LLMSettingsUpdate, db: Session = Depends(get_db)) -> dict:
+    """Flip the active backend.
+
+    Refuses (422) when the requested backend's connection config is
+    incomplete — the UI gates the option but a direct API call would
+    otherwise produce a 500 on the next LLM call.
+    """
+    requested = payload.active_llm_backend
+    bt = requested.value if hasattr(requested, "value") else str(requested)
+
+    if not is_backend_configured(bt):
+        missing = missing_config_for(bt)
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Backend '{bt}' is not configured: missing "
+                f"{', '.join(missing) or 'connection config'}. "
+                "See deployment docs."
+            ),
+        )
+
+    row = _get_or_create_settings(db)
+    row.active_llm_backend = requested
+    db.commit()
+    db.refresh(row)
+
+    # Drop the in-process resolver cache so subsequent calls see the
+    # change immediately on this replica. Other replicas pick it up on
+    # their TTL expiry (default 60s).
+    invalidate_active_backend_cache()
+
+    return {
+        "active_llm_backend": (
+            row.active_llm_backend.value
+            if hasattr(row.active_llm_backend, "value")
+            else str(row.active_llm_backend)
+        ),
+        "available_backends": [opt.model_dump() for opt in _backend_options()],
+        "last_llm_error": row.last_llm_error,
+        "last_llm_error_at": row.last_llm_error_at,
+    }
+
+
+@settings_router.post(
+    "/llm/test-connection",
+    response_model=ConnectionTestResponse,
+)
+async def test_llm_connection(
+    payload: ConnectionTestRequest, db: Session = Depends(get_db)
+) -> dict:
+    """Probe a backend's reachability + auth + model availability.
+
+    Doesn't change the active selection — operators verify a backend
+    works before flipping the switch. On a successful probe, clears
+    ``last_llm_error`` so a stale auth-failure banner doesn't linger
+    after the operator fixed the key.
+    """
+    requested = payload.backend_type
+    bt = requested.value if hasattr(requested, "value") else str(requested)
+
+    result = await runtime_test_connection(bt)
+    if result.authenticated:
+        row = _get_or_create_settings(db)
+        if row.last_llm_error is not None:
+            row.last_llm_error = None
+            row.last_llm_error_at = None
+            db.commit()
+    return result.to_dict()
 
 
 def _find_existing_ssh_key():
@@ -347,7 +488,7 @@ def ollama_models() -> dict:
     Each entry carries just the ``name`` so the UI's existing dropdown
     works without changes.
     """
-    backend = get_llm_backend()
+    backend = get_active_backend()
     names = backend.list_models() or []
     return {"models": [{"name": n} for n in names]}
 
@@ -368,12 +509,13 @@ def fips_status_endpoint() -> dict:
 def llm_info() -> dict:
     """Active LLM backend snapshot — what's wired up + live status.
 
-    The Settings UI uses this to render a read-only backend panel.
-    Switching backends is a deployment decision (env var); the UI must
-    not allow editing it. ``health.status`` reflects a live probe so
-    operators see whether the configured endpoint is actually reachable.
+    Reads through the runtime resolver so this snapshot reflects the
+    DB-backed active selection (changeable from /settings/llm), not
+    the env-var bootstrap value. ``health.status`` reflects a live
+    probe so operators see whether the configured endpoint is
+    actually reachable.
     """
-    backend = get_llm_backend()
+    backend = get_active_backend()
     return {
         "config": backend.info(),
         "health": backend.health_check_sync(),

@@ -257,7 +257,7 @@ def test_full_health_includes_fips_block(client, monkeypatch):
             return ["x"]
 
     stub = _Stub()
-    monkeypatch.setattr("app.api.health.get_llm_backend", lambda: stub)
+    monkeypatch.setattr("app.api.health.get_active_backend", lambda: stub)
 
     r = client.get("/api/health/full")
     assert r.status_code == 200

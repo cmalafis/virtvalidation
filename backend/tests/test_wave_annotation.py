@@ -19,7 +19,7 @@ from typing import AsyncIterator
 import pytest
 from pydantic import ValidationError
 
-from app.core.llm.base import LLMBackend, LLMBackendError
+from app.core.llm.base import LLMAuthError, LLMBackend, LLMBackendError
 from app.core.llm.mock_backend import MockBackend
 from app.core.preclassifier import GroupKey, VMGroup
 from app.core.wave_annotation import (
@@ -217,6 +217,71 @@ class TestAnnotateOneWave:
             annotate_one_wave(_wave(), backend=None, max_attempts=3, semaphore=None)
         )
         assert result.method == "mechanical_fallback"
+
+    def test_auth_failure_records_status_and_uses_distinct_method(self, monkeypatch):
+        """Auth failures must NOT silently fall back to a generic
+        mechanical fallback — they record to ``last_llm_error`` so the
+        Settings UI can show a banner. Plan still completes."""
+        recorded: list[str] = []
+
+        def _fake_record(message: str) -> None:
+            recorded.append(message)
+
+        monkeypatch.setattr("app.core.wave_annotation.record_last_llm_error", _fake_record)
+
+        class _AuthFailingBackend(LLMBackend):
+            backend_type = "maas"
+            default_model = "granite"
+            max_concurrent_calls = 1
+
+            async def chat(self, messages, model=None, temperature=0.1, max_tokens=None):
+                raise LLMAuthError("MaaS refused auth (HTTP 401) at https://litellm.example.com/v1")
+
+            async def chat_stream(
+                self, messages, model=None, temperature=0.1
+            ) -> AsyncIterator[str]:
+                raise LLMAuthError("auth")
+                yield ""  # pragma: no cover
+
+            async def health_check(self):
+                return {"status": "offline"}
+
+            def list_models(self):
+                return []
+
+        result = asyncio.run(
+            annotate_one_wave(
+                _wave(), backend=_AuthFailingBackend(), max_attempts=3, semaphore=None
+            )
+        )
+
+        # Distinct method so audit logs distinguish auth failure from
+        # transient/parse failure mechanical fallbacks.
+        assert result.method == "mechanical_fallback_auth"
+        # Status banner was written. Message includes backend name and
+        # operator-actionable guidance.
+        assert len(recorded) == 1
+        assert "maas" in recorded[0].lower()
+        assert "auth" in recorded[0].lower()
+        # Bearer-token-shaped strings would have been scrubbed by the
+        # status helper; check no obvious credential pattern leaks.
+        assert "Bearer " not in recorded[0]
+
+    def test_successful_call_clears_stale_status(self, monkeypatch):
+        cleared: list[bool] = []
+
+        def _fake_clear() -> None:
+            cleared.append(True)
+
+        monkeypatch.setattr("app.core.wave_annotation.clear_last_llm_error", _fake_clear)
+
+        backend = _ScriptedBackend([_VALID_LLM_RESPONSE])
+        result = asyncio.run(
+            annotate_one_wave(_wave(), backend=backend, max_attempts=3, semaphore=None)
+        )
+        assert result.method == "llm"
+        # Symmetric clear — fix-and-retry makes the banner go away.
+        assert cleared == [True]
 
     def test_asserts_group_ceiling(self):
         # 11 groups would violate the per-LLM-call ceiling. The

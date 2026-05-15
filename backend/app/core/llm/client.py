@@ -12,8 +12,9 @@ import json
 import logging
 from typing import Any, Optional
 
-from app.core.llm.base import LLMBackend, LLMBackendError
-from app.core.llm.factory import get_llm_backend
+from app.core.llm.base import LLMAuthError, LLMBackend, LLMBackendError
+from app.core.llm.runtime import get_active_backend
+from app.core.llm.status import clear_last_llm_error, record_last_llm_error
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,7 @@ class LLMClient:
     """
 
     def __init__(self, backend: LLMBackend | None = None) -> None:
-        self.backend = backend or get_llm_backend()
+        self.backend = backend or get_active_backend()
 
     def validate(
         self,
@@ -271,6 +272,19 @@ class LLMClient:
                 ]
             try:
                 response = self.backend.chat_sync(messages=messages, temperature=0.1)
+            except LLMAuthError as e:
+                # Auth failure during validation — surface to the
+                # Settings UI banner. Re-raised as LLMError so the
+                # validation orchestrator's existing error envelope
+                # path takes over. The banner is the SECONDARY signal
+                # operators rely on; the validation flow's error
+                # message is the primary.
+                record_last_llm_error(
+                    f"{getattr(self.backend, 'backend_type', 'LLM')} "
+                    f"authentication failed (HTTP 401/403) during "
+                    f"validation. Check the configured credentials."
+                )
+                raise LLMError(str(e)) from e
             except LLMBackendError as e:
                 raise LLMError(str(e)) from e
             last_raw = response.get("content", "")
@@ -279,6 +293,8 @@ class LLMClient:
                 verdict["diff"] = diff
                 verdict["model"] = response.get("model") or ""
                 verdict["needs_manual_review"] = False
+                # Successful LLM call — clear any stale auth banner.
+                clear_last_llm_error()
                 return verdict
             except LLMError as e:
                 last_validation_error = str(e)

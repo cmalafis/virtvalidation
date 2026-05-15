@@ -42,11 +42,18 @@ class Settings(BaseSettings):
     ssh_key_algorithm: str = "ed25519"
 
     # ----- LLM backend selection -----
-    # Pluggable inference backend chosen at deployment time. Supported
-    # values: "ollama" (default standalone appliance), "kserve" (RHOAI
-    # / OpenShift inference), "vllm" (placeholder, v1.0.0 target).
-    # This is a deployment decision, not a runtime one — it is *not*
-    # editable from the Settings UI.
+    # Pluggable inference backend. Supported values:
+    #   "ollama" — local Ollama (default standalone appliance)
+    #   "kserve" — RHOAI / OpenShift in-cluster inference
+    #   "vllm"   — direct vLLM (placeholder, v1.0.0 target)
+    #   "maas"   — authenticated Model-as-a-Service (OpenAI-compatible)
+    #   "mock"   — dev/test only
+    #
+    # NOTE: as of the runtime-backend-switching change, this env var
+    # is the BOOTSTRAP value only — it seeds ``app_settings.active_llm_backend``
+    # on the first migration run. Thereafter the DB is authoritative;
+    # operators flip the active backend from the Settings UI without
+    # a redeploy. See ``app.core.llm.runtime.get_active_backend``.
     llm_backend_type: str = "ollama"
 
     # ----- Ollama backend -----
@@ -143,6 +150,26 @@ class Settings(BaseSettings):
     # don't need a config migration when v1.0.0 lands.
     vllm_endpoint: str | None = None
     vllm_model_name: str | None = None
+
+    # ----- MaaS backend (Model-as-a-Service, OpenAI-compatible, bearer auth) -----
+    # External authenticated inference endpoint — LiteLLM proxy,
+    # OpenRouter, hosted vLLM behind a reverse-proxy, etc. The base URL
+    # follows OpenAI client convention and INCLUDES the ``/v1`` prefix
+    # (e.g. ``https://litellm-prod.apps.maas.redhatworkshops.io/v1``);
+    # the backend appends ``/chat/completions`` and ``/models`` to it.
+    #
+    # The API key is mounted from a Kubernetes Secret as the
+    # ``LLM_MAAS_API_KEY`` env var — never set this in values.yaml,
+    # never log it, and never embed it in error messages or API
+    # responses. The MaaS backend's __repr__ redacts the key; tests
+    # in test_llm_backends.py pin the no-leak invariant.
+    llm_maas_base_url: str | None = None
+    llm_maas_model: str | None = None
+    llm_maas_api_key: str | None = None
+    # Default 60s — remote inference is slower-floor than local Ollama
+    # but the network leg is the dominant cost, not the model.
+    llm_maas_timeout_seconds: int = 60
+    llm_maas_verify_ssl: bool = True
 
     # MTV / Forklift defaults used when generating migration plan YAML.
     # The source/destination Provider resources are expected to already exist

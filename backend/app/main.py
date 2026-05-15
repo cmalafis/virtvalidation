@@ -15,11 +15,6 @@ from app.api.settings import settings_router, system_router
 from app.api.snapshots import router as snapshots_router
 from app.api.ssh_keys import router as ssh_keys_router
 from app.api.storage_reviews import router as storage_reviews_router
-from app.api.waves import (
-    baseline_runs_router,
-    validation_runs_router,
-    waves_router,
-)
 from app.api.target_entities import router as target_entities_router
 from app.api.targets import mappings_router as resource_mappings_router
 from app.api.targets import targets_router as ocp_targets_router
@@ -28,25 +23,27 @@ from app.api.validation_schedules import router as validation_schedules_router
 from app.api.validations import router as validations_router
 from app.api.vcenters import router as vcenters_router
 from app.api.vms import router as vms_router
+from app.api.waves import (
+    baseline_runs_router,
+    validation_runs_router,
+    waves_router,
+)
 from app.core.db import engine
 from app.core.fips import log_startup_warning as _fips_startup_log
-from app.core.llm.factory import get_llm_backend
+from app.core.llm.runtime import get_active_backend
 from app.core.migrations import MigrationError, apply_migrations
 from app.core.scheduler import shutdown_scheduler, start_scheduler
 from app.core.startup import fail_orphan_plans
 from app.middleware.audit import AuditMiddleware
 from app.models import audit as _audit_models  # noqa: F401  (register models on Base)
+from app.models import (
+    baseline_run as _baseline_run_models,  # noqa: F401  (register models on Base)
+)
 from app.models import grouping as _grouping_models  # noqa: F401  (register models on Base)
 from app.models import llm_usage as _llm_usage_models  # noqa: F401  (register models on Base)
 from app.models import plan as _plan_models  # noqa: F401  (register models on Base)
 from app.models import settings as _settings_models  # noqa: F401  (register models on Base)
 from app.models import ssh_key as _ssh_key_models  # noqa: F401  (register models on Base)
-from app.models import (
-    baseline_run as _baseline_run_models,  # noqa: F401  (register models on Base)
-)
-from app.models import (
-    validation_run as _validation_run_models,  # noqa: F401  (register models on Base)
-)
 from app.models import (
     storage_review as _storage_review_models,  # noqa: F401  (register models on Base)
 )
@@ -60,6 +57,9 @@ from app.models import (
 from app.models import validation as _validation_models  # noqa: F401  (register models on Base)
 from app.models import (
     validation_cache as _validation_cache_models,  # noqa: F401  (register models on Base)
+)
+from app.models import (
+    validation_run as _validation_run_models,  # noqa: F401  (register models on Base)
 )
 from app.models import (
     validation_schedule as _validation_schedule_models,  # noqa: F401  (register models on Base)
@@ -79,7 +79,7 @@ async def _report_llm_status() -> None:
     is broken (endpoint, auth, model not loaded).
     """
     try:
-        backend = get_llm_backend()
+        backend = get_active_backend()
         result = await backend.health_check()
     except Exception as e:  # noqa: BLE001 — see docstring
         logger.error("llm.startup.FAILED error=%s", e)

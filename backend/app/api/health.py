@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import engine, get_db
 from app.core.fips import fips_status
-from app.core.llm.factory import get_llm_backend
+from app.core.llm.runtime import get_active_backend
 from app.core.migrations import schema_status
 
 router = APIRouter(tags=["health"])
@@ -30,7 +30,7 @@ def llm_health() -> dict:
     Routes through :meth:`LLMBackend.health_check_sync` so Ollama,
     KServe, and vLLM all report through the same shape.
     """
-    backend = get_llm_backend()
+    backend = get_active_backend()
     return backend.health_check_sync()
 
 

@@ -1464,7 +1464,7 @@ const DATA = {
         "functions": [],
         "depends_on": [
           "app.core.llm.base",
-          "app.core.llm.factory",
+          "app.core.llm.runtime",
           "app.core.preclassifier",
           "app.models.vm"
         ]
@@ -2188,7 +2188,7 @@ const DATA = {
         "depends_on": [
           "app.core.db",
           "app.core.fips",
-          "app.core.llm.factory",
+          "app.core.llm.runtime",
           "app.core.migrations"
         ]
       },
@@ -2399,6 +2399,24 @@ const DATA = {
           },
           {
             "method": "GET",
+            "path": "/api/settings/llm",
+            "handler": "get_llm_settings",
+            "summary": "Snapshot of the active backend + the operator-pickable options."
+          },
+          {
+            "method": "PUT",
+            "path": "/api/settings/llm",
+            "handler": "update_llm_settings",
+            "summary": "Flip the active backend."
+          },
+          {
+            "method": "POST",
+            "path": "/api/settings/llm/test-connection",
+            "handler": "test_llm_connection",
+            "summary": "Probe a backend's reachability + auth + model availability."
+          },
+          {
+            "method": "GET",
             "path": "/api/system/ssh-key",
             "handler": "ssh_key_status",
             "summary": "Return the appliance SSH key in a wrapped ``{status, ...}`` shape."
@@ -2454,6 +2472,8 @@ const DATA = {
           "app.core.db",
           "app.core.fips",
           "app.core.llm.factory",
+          "app.core.llm.runtime",
+          "app.core.llm.types",
           "app.core.scheduler",
           "app.core.ssh_key",
           "app.models.settings",
@@ -3437,7 +3457,7 @@ const DATA = {
           "app.core.audit",
           "app.core.config",
           "app.core.llm.base",
-          "app.core.llm.factory",
+          "app.core.llm.runtime",
           "app.models.grouping",
           "app.models.vcenter",
           "app.models.vm"
@@ -3758,6 +3778,11 @@ const DATA = {
               "kserve_timeout_seconds",
               "vllm_endpoint",
               "vllm_model_name",
+              "llm_maas_base_url",
+              "llm_maas_model",
+              "llm_maas_api_key",
+              "llm_maas_timeout_seconds",
+              "llm_maas_verify_ssl",
               "mtv_namespace",
               "mtv_source_provider",
               "mtv_destination_provider",
@@ -3949,7 +3974,10 @@ const DATA = {
           "app.core.llm.client",
           "app.core.llm.factory",
           "app.core.llm.kserve_backend",
+          "app.core.llm.maas_backend",
           "app.core.llm.ollama_backend",
+          "app.core.llm.runtime",
+          "app.core.llm.types",
           "app.core.llm.vllm_backend"
         ]
       },
@@ -4088,7 +4116,8 @@ const DATA = {
         ],
         "depends_on": [
           "app.core.llm.base",
-          "app.core.llm.factory"
+          "app.core.llm.runtime",
+          "app.core.llm.status"
         ]
       },
       {
@@ -4103,19 +4132,25 @@ const DATA = {
         "functions": [
           {
             "name": "get_llm_backend",
-            "summary": "Return the configured backend, instantiating it on first call."
+            "summary": "Return the backend identified by ``cfg.llm_backend_type``."
+          },
+          {
+            "name": "get_llm_backend_for_type",
+            "summary": "Return the backend instance for an explicit type, instantiating"
           },
           {
             "name": "reset_backend_cache",
-            "summary": "Drop the cached backend so the next ``get_llm_backend`` re-reads"
+            "summary": "Drop cached backend(s) so the next call re-instantiates from"
           }
         ],
         "depends_on": [
           "app.core.config",
           "app.core.llm.base",
           "app.core.llm.kserve_backend",
+          "app.core.llm.maas_backend",
           "app.core.llm.mock_backend",
           "app.core.llm.ollama_backend",
+          "app.core.llm.types",
           "app.core.llm.vllm_backend"
         ]
       },
@@ -4130,6 +4165,46 @@ const DATA = {
         "classes": [
           {
             "name": "KServeBackend",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "chat",
+                "summary": ""
+              },
+              {
+                "name": "chat_stream",
+                "summary": ""
+              },
+              {
+                "name": "health_check",
+                "summary": ""
+              },
+              {
+                "name": "list_models",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.llm.base"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.maas_backend",
+        "title": "app.core.llm.maas_backend",
+        "subtitle": "backend/app/core/llm/maas_backend.py",
+        "summary": "MaaS backend \u2014 authenticated Model-as-a-Service inference endpoints.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "MaaSBackend",
             "kind": "class",
             "table": "",
             "fields": [],
@@ -4254,6 +4329,114 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.llm.runtime",
+        "title": "app.core.llm.runtime",
+        "subtitle": "backend/app/core/llm/runtime.py",
+        "summary": "Runtime LLM backend resolution + connection testing.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ConnectionTestResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "backend_type",
+              "reachable",
+              "authenticated",
+              "model_available",
+              "latency_ms",
+              "error"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "invalidate",
+            "summary": "Drop the cached active-backend type \u2014 call after writing"
+          },
+          {
+            "name": "get_active_backend_type",
+            "summary": "Return the currently-active backend type string, with a short"
+          },
+          {
+            "name": "get_active_backend",
+            "summary": "Return the LLMBackend instance for the currently-active type."
+          },
+          {
+            "name": "is_backend_configured",
+            "summary": "Return True iff the named backend's *connection config* is"
+          },
+          {
+            "name": "missing_config_for",
+            "summary": "Return the list of missing env-var names for a backend type \u2014"
+          },
+          {
+            "name": "test_connection",
+            "summary": "Probe a backend's reachability + auth + model availability"
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.config",
+          "app.core.llm.base",
+          "app.core.llm.factory",
+          "app.core.llm.types"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.status",
+        "title": "app.core.llm.status",
+        "subtitle": "backend/app/core/llm/status.py",
+        "summary": "Last-observed LLM error \u2014 written to ``app_settings.last_llm_error``",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "record_last_llm_error",
+            "summary": "Write ``message`` to ``app_settings.last_llm_error`` and stamp"
+          },
+          {
+            "name": "clear_last_llm_error",
+            "summary": "Clear the banner \u2014 called on any successful LLM call so a stale"
+          }
+        ],
+        "depends_on": [
+          "app.core"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.types",
+        "title": "app.core.llm.types",
+        "subtitle": "backend/app/core/llm/types.py",
+        "summary": "Canonical names for the LLM backend types VirtValidate supports.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "LLMBackendType",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
         "id": "app.core.llm.vllm_backend",
         "title": "app.core.llm.vllm_backend",
         "subtitle": "backend/app/core/llm/vllm_backend.py",
@@ -4322,7 +4505,7 @@ const DATA = {
         ],
         "depends_on": [
           "app.core.llm.base",
-          "app.core.llm.factory"
+          "app.core.llm.runtime"
         ]
       },
       {
@@ -4456,7 +4639,7 @@ const DATA = {
         ],
         "depends_on": [
           "app.core.llm.base",
-          "app.core.llm.factory",
+          "app.core.llm.runtime",
           "app.models.vm"
         ]
       },
@@ -4981,7 +5164,7 @@ const DATA = {
         ],
         "depends_on": [
           "app.core.llm.base",
-          "app.core.llm.factory",
+          "app.core.llm.runtime",
           "app.models.vm"
         ]
       },
@@ -5355,7 +5538,8 @@ const DATA = {
           }
         ],
         "depends_on": [
-          "app.core.llm.base"
+          "app.core.llm.base",
+          "app.core.llm.status"
         ]
       },
       {
@@ -5446,7 +5630,7 @@ const DATA = {
           "app.api.waves",
           "app.core.db",
           "app.core.fips",
-          "app.core.llm.factory",
+          "app.core.llm.runtime",
           "app.core.migrations",
           "app.core.scheduler",
           "app.core.startup",
@@ -5819,6 +6003,9 @@ const DATA = {
               "ollama_model",
               "schedule_preset",
               "ssh_host_key_policy",
+              "active_llm_backend",
+              "last_llm_error",
+              "last_llm_error_at",
               "updated_at"
             ],
             "methods": [],
@@ -5827,7 +6014,8 @@ const DATA = {
         ],
         "functions": [],
         "depends_on": [
-          "app.core.db"
+          "app.core.db",
+          "app.core.llm.types"
         ]
       },
       {
@@ -6761,6 +6949,68 @@ const DATA = {
             "summary": ""
           },
           {
+            "name": "BackendOption",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "type",
+              "label",
+              "configured",
+              "dev_only",
+              "missing_config"
+            ],
+            "methods": [],
+            "summary": "One row in the Settings UI's backend selector."
+          },
+          {
+            "name": "LLMSettingsRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "active_llm_backend",
+              "available_backends",
+              "last_llm_error",
+              "last_llm_error_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "LLMSettingsUpdate",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "active_llm_backend"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ConnectionTestRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "backend_type"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ConnectionTestResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "backend_type",
+              "reachable",
+              "authenticated",
+              "model_available",
+              "latency_ms",
+              "error"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
             "name": "FIPSOperationStatus",
             "kind": "schema",
             "table": "",
@@ -6790,6 +7040,7 @@ const DATA = {
         ],
         "functions": [],
         "depends_on": [
+          "app.core.llm.types",
           "app.models.settings"
         ]
       },
@@ -8396,8 +8647,9 @@ const DATA = {
           "/api/health/llm",
           "/api/health/postgres",
           "/api/settings",
+          "/api/settings/llm",
+          "/api/settings/llm/test-connection",
           "/api/system/fips-status",
-          "/api/system/llm-info",
           "/api/system/ollama-models",
           "/api/system/ssh-key",
           "/api/system/ssh-key/generate",
@@ -8478,10 +8730,6 @@ const DATA = {
           },
           {
             "name": "Pill",
-            "kind": "component"
-          },
-          {
-            "name": "KV",
             "kind": "component"
           }
         ]

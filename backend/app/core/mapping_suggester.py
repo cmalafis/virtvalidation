@@ -17,7 +17,7 @@ import logging
 from typing import Any
 
 from app.core.llm.base import LLMBackend, LLMBackendError
-from app.core.llm.factory import get_llm_backend
+from app.core.llm.runtime import get_active_backend
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ def suggest_network_mappings(
                 "No target networks discovered on the cluster — run discovery first."
             ),
         }
-    backend = backend or get_llm_backend()
+    backend = backend or get_active_backend()
     user_msg = (
         "## Source vSphere networks\n\n"
         f"```json\n{json.dumps(sources, indent=2)}\n```\n\n"
@@ -175,7 +175,7 @@ def suggest_storage_mappings(
                 "No target StorageClasses discovered on the cluster — run discovery first."
             ),
         }
-    backend = backend or get_llm_backend()
+    backend = backend or get_active_backend()
     user_msg = (
         "## Source vSphere datastores\n\n"
         f"```json\n{json.dumps(sources, indent=2)}\n```\n\n"

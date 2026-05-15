@@ -117,7 +117,7 @@ def run_simple_plan_generation(
     consulted — the new pipeline runs the deterministic stages
     unconditionally and the LLM never decides wave structure.
     """
-    from app.core.llm.factory import get_llm_backend
+    from app.core.llm.runtime import get_active_backend
     from app.core.mtv import MTVGenerationError
     from app.core.plan_pipeline import PlanValidationError, run_pipeline
 
@@ -166,7 +166,7 @@ def run_simple_plan_generation(
                 progress_percent=pct,
             )
 
-        backend = get_llm_backend()
+        backend = get_active_backend()
         try:
             pipeline_result = asyncio.run(
                 run_pipeline(

@@ -640,7 +640,7 @@ def test_suggest_storage_drops_hallucinated_target_names(client):
             }
         ],
     }
-    with patch("app.core.mapping_suggester.get_llm_backend") as factory:
+    with patch("app.core.mapping_suggester.get_active_backend") as factory:
         backend = factory.return_value
         backend.chat_sync.return_value = {"content": __import__("json").dumps(fake_response)}
         r = client.post(f"/api/mappings/{mapping['id']}/suggest-storage")

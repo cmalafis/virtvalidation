@@ -128,7 +128,22 @@ postgres:
 # only rendered when backend == "ollama" so other choices don't waste pods.
 # -----------------------------------------------------------------------------
 llm:
-  # ollama | kserve | vllm
+  # The backend that's ACTIVE on first deploy. Used as the seed value
+  # for ``app_settings.active_llm_backend`` — after that, the active
+  # backend is a DB-backed runtime setting changeable from the
+  # Settings UI without a redeploy.
+  #
+  # Existing deployments: leave this set to whatever you were running
+  # so the migration's seed step doesn't surprise-switch you. New
+  # deployments default to "ollama" since the chart provisions the
+  # Ollama infrastructure by default.
+  #
+  # Allowed values: ollama | kserve | vllm | maas | mock
+  #
+  # The infrastructure that gets PROVISIONED is still deploy-time —
+  # an operator can't conjure an Ollama Deployment by clicking in
+  # the UI. They CAN, however, flip the active backend between any
+  # backends whose CONNECTION CONFIG is present (URL, key, model).
   backend: ollama
   ollama:
     # Render the Ollama Deployment alongside the rest of the chart.
@@ -172,6 +187,25 @@ llm:
     # so deployments don't need a config migration when v1.0.0 lands.
     endpoint: ""
     modelName: ""
+  maas:
+    # Model-as-a-Service: external authenticated OpenAI-compatible
+    # endpoint (LiteLLM proxy, OpenRouter, hosted vLLM behind a
+    # reverse-proxy, etc.). The base URL follows OpenAI client
+    # convention and INCLUDES the /v1 prefix.
+    enabled: false
+    baseUrl: ""           # e.g. https://litellm-prod.apps.maas.redhatworkshops.io/v1
+    model: ""             # e.g. granite-32-8b-instruct
+    timeoutSeconds: 60
+    verifySsl: true
+    # The API key is ALWAYS a Kubernetes Secret. Two paths:
+    #   (a) Operator pre-creates a Secret and points existingSecret
+    #       at it. RECOMMENDED for production.
+    #   (b) --set llm.maas.apiKey=<KEY> templates a chart-managed
+    #       Secret named "<release>-maas". DO NOT commit a real key
+    #       to values.yaml — the field stays empty here intentionally.
+    existingSecret: ""
+    existingSecretKey: "api-key"
+    apiKey: ""
 
 # -----------------------------------------------------------------------------
 # Persistence for SSH keys (the appliance Ed25519 / RSA-3072 / ECDSA P-384

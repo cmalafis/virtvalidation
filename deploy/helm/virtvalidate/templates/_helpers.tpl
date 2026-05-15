@@ -142,18 +142,31 @@ specific blocks (KServe token mount, Ollama endpoint) live in the
 backend Deployment template directly.
 */}}
 {{- define "virtvalidate.llmEnv" -}}
+{{/*
+LLM_BACKEND_TYPE is the BOOTSTRAP value used by the migration to
+seed app_settings.active_llm_backend on first deploy. After that
+the DB row is authoritative; operators flip the active backend from
+the Settings UI without a redeploy.
+*/}}
 - name: LLM_BACKEND_TYPE
   value: {{ .Values.llm.backend | quote }}
-{{- if eq .Values.llm.backend "ollama" }}
+{{/*
+Per-backend connection env vars. Rendered whenever the backend's
+config is present, NOT gated on .Values.llm.backend — this is what
+lets an operator with both Ollama deployed AND MaaS configured flip
+between them at runtime.
+*/}}
+{{- if .Values.llm.ollama.deploy }}
 - name: OLLAMA_HOST
   value: "http://{{ include "virtvalidate.fullname" . }}-ollama:{{ .Values.llm.ollama.service.port }}"
 - name: OLLAMA_MODEL
   value: {{ .Values.llm.ollama.model | quote }}
-{{- else if eq .Values.llm.backend "kserve" }}
+{{- end }}
+{{- if .Values.llm.kserve.endpoint }}
 - name: KSERVE_ENDPOINT
-  value: {{ required "llm.kserve.endpoint is required when backend=kserve" .Values.llm.kserve.endpoint | quote }}
+  value: {{ .Values.llm.kserve.endpoint | quote }}
 - name: KSERVE_MODEL_NAME
-  value: {{ required "llm.kserve.modelName is required when backend=kserve" .Values.llm.kserve.modelName | quote }}
+  value: {{ required "llm.kserve.modelName is required when llm.kserve.endpoint is set" .Values.llm.kserve.modelName | quote }}
 - name: KSERVE_VERIFY_SSL
   value: {{ .Values.llm.kserve.verifySsl | quote }}
 - name: KSERVE_TIMEOUT_SECONDS
@@ -165,10 +178,33 @@ backend Deployment template directly.
       name: {{ .Values.llm.kserve.tokenSecret }}
       key: {{ .Values.llm.kserve.tokenSecretKey }}
 {{- end }}
-{{- else if eq .Values.llm.backend "vllm" }}
+{{- end }}
+{{- if .Values.llm.vllm.endpoint }}
 - name: VLLM_ENDPOINT
   value: {{ .Values.llm.vllm.endpoint | quote }}
 - name: VLLM_MODEL_NAME
   value: {{ .Values.llm.vllm.modelName | quote }}
+{{- end }}
+{{- if .Values.llm.maas.enabled }}
+- name: LLM_MAAS_BASE_URL
+  value: {{ required "llm.maas.baseUrl is required when llm.maas.enabled" .Values.llm.maas.baseUrl | quote }}
+- name: LLM_MAAS_MODEL
+  value: {{ required "llm.maas.model is required when llm.maas.enabled" .Values.llm.maas.model | quote }}
+- name: LLM_MAAS_TIMEOUT_SECONDS
+  value: {{ .Values.llm.maas.timeoutSeconds | quote }}
+- name: LLM_MAAS_VERIFY_SSL
+  value: {{ .Values.llm.maas.verifySsl | quote }}
+{{/*
+The API key is ALWAYS sourced from a Secret. Either the operator
+created one and pointed existingSecret at it, or --set
+llm.maas.apiKey=... templated the chart-managed Secret.
+secret-maas.yaml refuses to render unless one of the two paths is
+present, so the secretKeyRef below always resolves.
+*/}}
+- name: LLM_MAAS_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ default (printf "%s-maas" (include "virtvalidate.fullname" .)) .Values.llm.maas.existingSecret | quote }}
+      key: {{ .Values.llm.maas.existingSecretKey | quote }}
 {{- end }}
 {{- end -}}

@@ -34,7 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.llm.base import LLMBackend, LLMBackendError
-from app.core.llm.factory import get_llm_backend
+from app.core.llm.runtime import get_active_backend
 from app.models.vm import VM
 
 logger = logging.getLogger(__name__)
@@ -231,7 +231,7 @@ class StorageReviewer:
         self,
         backend: LLMBackend | None = None,
     ) -> None:
-        self.backend = backend or get_llm_backend()
+        self.backend = backend or get_active_backend()
 
     def analyze(
         self,

@@ -44,7 +44,7 @@ from app.core import db as _db_module
 from app.core.audit import record_audit
 from app.core.config import settings as _module_settings
 from app.core.llm.base import LLMBackend, LLMBackendError
-from app.core.llm.factory import get_llm_backend
+from app.core.llm.runtime import get_active_backend
 from app.models.grouping import GroupKind, VMGroup, VMGroupMember
 from app.models.vcenter import VCenterSource
 from app.models.vm import VM
@@ -248,7 +248,7 @@ def categorize(
     Returns a summary dict suitable for surfacing to the UI:
       ``{"groups_created": int, "batches_processed": int}``
     """
-    backend = backend or get_llm_backend()
+    backend = backend or get_active_backend()
     batch_size = max(1, min(batch_size, MAX_BATCH_SIZE))
 
     # Validate the vCenter exists before doing any work — saves a

@@ -60,12 +60,11 @@ class _StubBackend(LLMBackend):
 
 @pytest.fixture
 def stub_backend(monkeypatch):
-    """Inject a stub backend by replacing ``get_llm_backend`` directly.
-
-    The factory's cache check keys on the configured backend_type, so
-    just shoving a stub into the cache isn't enough — the next call
-    sees the mismatch and rebuilds an Ollama backend. Patching the
-    factory function itself is the simplest hammer that works.
+    """Inject a stub backend by replacing the resolver functions
+    consumers import. Both ``get_active_backend`` (DB-backed runtime
+    resolver, used by /health/llm, /llm-info, planner, etc.) and the
+    legacy env-var ``get_llm_backend`` (used by the migration seed
+    path) are stubbed for completeness.
     """
     state: dict = {"backend": None}
 
@@ -74,15 +73,18 @@ def stub_backend(monkeypatch):
         state["backend"] = b
         return b
 
-    def _fake_get(cfg=None):
+    def _fake_get(cfg=None, **kwargs):
         if state["backend"] is None:
             state["backend"] = _StubBackend()
         return state["backend"]
 
-    # Patch every import path that resolves the factory.
+    # Patch the runtime resolver where consumers re-bound it via
+    # ``from app.core.llm.runtime import get_active_backend``.
+    monkeypatch.setattr("app.core.llm.runtime.get_active_backend", _fake_get)
+    monkeypatch.setattr("app.api.health.get_active_backend", _fake_get)
+    monkeypatch.setattr("app.api.settings.get_active_backend", _fake_get)
+    # Belt-and-suspenders: any code path still on the env-var resolver.
     monkeypatch.setattr("app.core.llm.factory.get_llm_backend", _fake_get)
-    monkeypatch.setattr("app.api.health.get_llm_backend", _fake_get)
-    monkeypatch.setattr("app.api.settings.get_llm_backend", _fake_get)
     yield _install
     llm_factory.reset_backend_cache()
 

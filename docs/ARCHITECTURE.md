@@ -336,7 +336,7 @@ Depends on: `app.core.config`
 <details><summary><strong><code>app.core.planner</code></strong> — <em>Business logic</em> · Migration wave planner.</summary>
 
 Path: `backend/app/core/planner.py`  
-Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.core.preclassifier`, `app.models.vm`
+Depends on: `app.core.llm.base`, `app.core.llm.runtime`, `app.core.preclassifier`, `app.models.vm`
 
 **Classes**
 
@@ -589,7 +589,7 @@ Settings, scheduler config, health probes, app bootstrap.
 <details><summary><strong><code>app.api.health</code></strong> — <em>API endpoints</em> · Health-check endpoints for the system tab on the settings page.</summary>
 
 Path: `backend/app/api/health.py`  
-Depends on: `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.migrations`
+Depends on: `app.core.db`, `app.core.fips`, `app.core.llm.runtime`, `app.core.migrations`
 
 **Routes**
 
@@ -666,7 +666,7 @@ Depends on: `app.core.audit`, `app.core.db`, `app.core.limits`, `app.core.rvtool
 <details><summary><strong><code>app.api.settings</code></strong> — <em>API endpoints</em> · Settings + system-info endpoints powering the /settings page.</summary>
 
 Path: `backend/app/api/settings.py`  
-Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.scheduler`, `app.core.ssh_key`, `app.models.settings`, `app.schemas.settings`
+Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.llm.runtime`, `app.core.llm.types`, `app.core.scheduler`, `app.core.ssh_key`, `app.models.settings`, `app.schemas.settings`
 
 **Routes**
 
@@ -674,6 +674,9 @@ Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.fips`,
 |---|---|---|---|
 | `GET` | `/api/settings` | `get_settings(db)` | — |
 | `PUT` | `/api/settings` | `update_settings(payload, db)` | — |
+| `GET` | `/api/settings/llm` | `get_llm_settings(db)` | Snapshot of the active backend + the operator-pickable options. |
+| `PUT` | `/api/settings/llm` | `update_llm_settings(payload, db)` | Flip the active backend. |
+| `POST` | `/api/settings/llm/test-connection` | `test_llm_connection(payload, db)` | Probe a backend&#x27;s reachability + auth + model availability. |
 | `GET` | `/api/system/ssh-key` | `ssh_key_status(request, db)` | Return the appliance SSH key in a wrapped ``{status, ...}`` shape. |
 | `POST` | `/api/system/ssh-key/generate` | `ssh_key_generate(request, payload, db)` | Materialize a new keypair on the appliance. |
 | `POST` | `/api/system/ssh-key/rotate` | `ssh_key_rotate(request, payload, db)` | Replace the existing appliance keypair with a freshly generated one. |
@@ -930,7 +933,7 @@ Depends on: `app.core`, `app.core.audit`, `app.core.validation`, `app.models.vm`
 <details><summary><strong><code>app.core.categorizer</code></strong> — <em>Business logic</em> · Level 1 categorization — batched LLM classification at scale.</summary>
 
 Path: `backend/app/core/categorizer.py`  
-Depends on: `app.core`, `app.core.audit`, `app.core.config`, `app.core.llm.base`, `app.core.llm.factory`, `app.models.grouping`, `app.models.vcenter`, `app.models.vm`
+Depends on: `app.core`, `app.core.audit`, `app.core.config`, `app.core.llm.base`, `app.core.llm.runtime`, `app.models.grouping`, `app.models.vcenter`, `app.models.vm`
 
 **Classes**
 
@@ -1071,7 +1074,7 @@ Path: `backend/app/core/config.py`
 **Classes**
 
 - **`Settings`** (Class)
-  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `ssh_max_concurrency`, `ssh_command_timeout_seconds`, `ssh_connect_timeout_seconds`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `llm_max_items_per_call`, `max_vms_per_plan`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
+  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `ssh_max_concurrency`, `ssh_command_timeout_seconds`, `ssh_connect_timeout_seconds`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `llm_max_items_per_call`, `max_vms_per_plan`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `llm_maas_base_url`, `llm_maas_model`, `llm_maas_api_key`, `llm_maas_timeout_seconds`, `llm_maas_verify_ssl`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
 
 </details>
 
@@ -1153,7 +1156,7 @@ Path: `backend/app/core/limits.py`
 <details><summary><strong><code>app.core.llm.__init__</code></strong> — <em>Business logic</em> · Pluggable LLM inference layer.</summary>
 
 Path: `backend/app/core/llm/__init__.py`  
-Depends on: `app.core.llm.base`, `app.core.llm.client`, `app.core.llm.factory`, `app.core.llm.kserve_backend`, `app.core.llm.ollama_backend`, `app.core.llm.vllm_backend`
+Depends on: `app.core.llm.base`, `app.core.llm.client`, `app.core.llm.factory`, `app.core.llm.kserve_backend`, `app.core.llm.maas_backend`, `app.core.llm.ollama_backend`, `app.core.llm.runtime`, `app.core.llm.types`, `app.core.llm.vllm_backend`
 
 </details>
 
@@ -1190,7 +1193,7 @@ Path: `backend/app/core/llm/base.py`
 <details><summary><strong><code>app.core.llm.client</code></strong> — <em>Business logic</em> · Validation orchestrator — owns the prompt + verdict schema + diff engine.</summary>
 
 Path: `backend/app/core/llm/client.py`  
-Depends on: `app.core.llm.base`, `app.core.llm.factory`
+Depends on: `app.core.llm.base`, `app.core.llm.runtime`, `app.core.llm.status`
 
 **Classes**
 
@@ -1210,12 +1213,13 @@ Depends on: `app.core.llm.base`, `app.core.llm.factory`
 <details><summary><strong><code>app.core.llm.factory</code></strong> — <em>Business logic</em> · Factory — picks the configured backend based on settings.</summary>
 
 Path: `backend/app/core/llm/factory.py`  
-Depends on: `app.core.config`, `app.core.llm.base`, `app.core.llm.kserve_backend`, `app.core.llm.mock_backend`, `app.core.llm.ollama_backend`, `app.core.llm.vllm_backend`
+Depends on: `app.core.config`, `app.core.llm.base`, `app.core.llm.kserve_backend`, `app.core.llm.maas_backend`, `app.core.llm.mock_backend`, `app.core.llm.ollama_backend`, `app.core.llm.types`, `app.core.llm.vllm_backend`
 
 **Functions**
 
-- `get_llm_backend(cfg)` — Return the configured backend, instantiating it on first call.
-- `reset_backend_cache()` — Drop the cached backend so the next ``get_llm_backend`` re-reads
+- `get_llm_backend(cfg)` — Return the backend identified by ``cfg.llm_backend_type``.
+- `get_llm_backend_for_type(backend_type, cfg)` — Return the backend instance for an explicit type, instantiating
+- `reset_backend_cache(backend_type)` — Drop cached backend(s) so the next call re-instantiates from
 
 </details>
 
@@ -1227,6 +1231,22 @@ Depends on: `app.core.llm.base`
 **Classes**
 
 - **`KServeBackend`** (Class)
+  - Methods:
+    - `chat(self, messages, model, temperature, max_tokens)`
+    - `chat_stream(self, messages, model, temperature)`
+    - `health_check(self)`
+    - `list_models(self)`
+
+</details>
+
+<details><summary><strong><code>app.core.llm.maas_backend</code></strong> — <em>Business logic</em> · MaaS backend — authenticated Model-as-a-Service inference endpoints.</summary>
+
+Path: `backend/app/core/llm/maas_backend.py`  
+Depends on: `app.core.llm.base`
+
+**Classes**
+
+- **`MaaSBackend`** (Class)
   - Methods:
     - `chat(self, messages, model, temperature, max_tokens)`
     - `chat_stream(self, messages, model, temperature)`
@@ -1271,6 +1291,51 @@ Depends on: `app.core.llm.base`
 
 </details>
 
+<details><summary><strong><code>app.core.llm.runtime</code></strong> — <em>Business logic</em> · Runtime LLM backend resolution + connection testing.</summary>
+
+Path: `backend/app/core/llm/runtime.py`  
+Depends on: `app.core`, `app.core.config`, `app.core.llm.base`, `app.core.llm.factory`, `app.core.llm.types`
+
+**Classes**
+
+- **`ConnectionTestResult`** (Class)
+  - Fields: `backend_type`, `reachable`, `authenticated`, `model_available`, `latency_ms`, `error`
+  - Methods:
+    - `to_dict(self)`
+
+**Functions**
+
+- `invalidate()` — Drop the cached active-backend type — call after writing
+- `get_active_backend_type(db)` — Return the currently-active backend type string, with a short
+- `get_active_backend(db, cfg)` — Return the LLMBackend instance for the currently-active type.
+- `is_backend_configured(backend_type, cfg)` — Return True iff the named backend's *connection config* is
+- `missing_config_for(backend_type, cfg)` — Return the list of missing env-var names for a backend type —
+- `test_connection(backend_type, cfg)` — Probe a backend's reachability + auth + model availability
+
+</details>
+
+<details><summary><strong><code>app.core.llm.status</code></strong> — <em>Business logic</em> · Last-observed LLM error — written to ``app_settings.last_llm_error``</summary>
+
+Path: `backend/app/core/llm/status.py`  
+Depends on: `app.core`
+
+**Functions**
+
+- `record_last_llm_error(message)` — Write ``message`` to ``app_settings.last_llm_error`` and stamp
+- `clear_last_llm_error()` — Clear the banner — called on any successful LLM call so a stale
+
+</details>
+
+<details><summary><strong><code>app.core.llm.types</code></strong> — <em>Business logic</em> · Canonical names for the LLM backend types VirtValidate supports.</summary>
+
+Path: `backend/app/core/llm/types.py`  
+
+**Classes**
+
+- **`LLMBackendType`** (Class)
+
+</details>
+
 <details><summary><strong><code>app.core.llm.vllm_backend</code></strong> — <em>Business logic</em> · vLLM backend — placeholder for v1.0.0.</summary>
 
 Path: `backend/app/core/llm/vllm_backend.py`  
@@ -1290,7 +1355,7 @@ Depends on: `app.core.llm.base`
 <details><summary><strong><code>app.core.mapping_suggester</code></strong> — <em>Business logic</em> · LLM-driven suggestion engine for resource mappings.</summary>
 
 Path: `backend/app/core/mapping_suggester.py`  
-Depends on: `app.core.llm.base`, `app.core.llm.factory`
+Depends on: `app.core.llm.base`, `app.core.llm.runtime`
 
 **Classes**
 
@@ -1348,7 +1413,7 @@ Path: `backend/app/core/migrations.py`
 <details><summary><strong><code>app.core.network_review</code></strong> — <em>Business logic</em> · Network Design Review — gap analysis between source VMware networking and</summary>
 
 Path: `backend/app/core/network_review.py`  
-Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.models.vm`
+Depends on: `app.core.llm.base`, `app.core.llm.runtime`, `app.models.vm`
 
 **Classes**
 
@@ -1536,7 +1601,7 @@ Depends on: `app.core`, `app.core.vm_lifecycle`, `app.models.plan`
 <details><summary><strong><code>app.core.storage_review</code></strong> — <em>Business logic</em> · Storage Design Review — gap analysis between source VMware datastore</summary>
 
 Path: `backend/app/core/storage_review.py`  
-Depends on: `app.core.llm.base`, `app.core.llm.factory`, `app.models.vm`
+Depends on: `app.core.llm.base`, `app.core.llm.runtime`, `app.models.vm`
 
 **Classes**
 
@@ -1673,7 +1738,7 @@ Depends on: `app.core.audit`, `app.models.vm`
 <details><summary><strong><code>app.core.wave_annotation</code></strong> — <em>Business logic</em> · Stage 6 — per-wave LLM annotation with validate-retry-fallback.</summary>
 
 Path: `backend/app/core/wave_annotation.py`  
-Depends on: `app.core.llm.base`
+Depends on: `app.core.llm.base`, `app.core.llm.status`
 
 **Classes**
 
@@ -1712,7 +1777,7 @@ Depends on: `app.core.config`, `app.core.preclassifier`
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.llm.runtime`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -1812,7 +1877,7 @@ Depends on: `app.core.db`
 <details><summary><strong><code>app.models.settings</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/models/settings.py`  
-Depends on: `app.core.db`
+Depends on: `app.core.db`, `app.core.llm.types`
 
 **Classes**
 
@@ -1821,7 +1886,7 @@ Depends on: `app.core.db`
   - How the SSH collector handles unknown host keys.
 - **`AppSettings`** (SQLAlchemy model · table `app_settings`)
   - Singleton settings row — always id=1.
-  - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `updated_at`
+  - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `active_llm_backend`, `last_llm_error`, `last_llm_error_at`, `updated_at`
 
 </details>
 
@@ -2029,7 +2094,7 @@ Path: `backend/app/schemas/ocp_namespace.py`
 <details><summary><strong><code>app.schemas.settings</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/schemas/settings.py`  
-Depends on: `app.models.settings`
+Depends on: `app.core.llm.types`, `app.models.settings`
 
 **Classes**
 
@@ -2060,6 +2125,17 @@ Depends on: `app.models.settings`
   - Fields: `status`, `backend`, `model`, `endpoint`, `latency_ms`, `details`
 - **`LLMBackendInfo`** (Pydantic schema)
   - Fields: `config`, `health`
+- **`BackendOption`** (Pydantic schema)
+  - One row in the Settings UI's backend selector.
+  - Fields: `type`, `label`, `configured`, `dev_only`, `missing_config`
+- **`LLMSettingsRead`** (Pydantic schema)
+  - Fields: `active_llm_backend`, `available_backends`, `last_llm_error`, `last_llm_error_at`
+- **`LLMSettingsUpdate`** (Pydantic schema)
+  - Fields: `active_llm_backend`
+- **`ConnectionTestRequest`** (Pydantic schema)
+  - Fields: `backend_type`
+- **`ConnectionTestResponse`** (Pydantic schema)
+  - Fields: `backend_type`, `reachable`, `authenticated`, `model_available`, `latency_ms`, `error`
 - **`FIPSOperationStatus`** (Pydantic schema)
   - Fields: `name`, `configured`, `fips_approved`, `enforced`
 - **`FIPSStatus`** (Pydantic schema)
@@ -2548,8 +2624,9 @@ API calls:
 - `/api/health/llm`
 - `/api/health/postgres`
 - `/api/settings`
+- `/api/settings/llm`
+- `/api/settings/llm/test-connection`
 - `/api/system/fips-status`
-- `/api/system/llm-info`
 - `/api/system/ollama-models`
 - `/api/system/ssh-key`
 - `/api/system/ssh-key/generate`
@@ -2575,7 +2652,6 @@ Exports / inner components:
 - **`PrimaryButton`** (component)
 - **`Row`** (component)
 - **`Pill`** (component)
-- **`KV`** (component)
 
 </details>
 

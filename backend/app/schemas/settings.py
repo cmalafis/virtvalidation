@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.llm.types import LLMBackendType
 from app.models.settings import SchedulePreset, SSHHostKeyPolicy
 
 
@@ -116,6 +117,56 @@ class LLMBackendHealth(BaseModel):
 class LLMBackendInfo(BaseModel):
     config: LLMBackendConfig
     health: LLMBackendHealth
+
+
+# ---------------------------------------------------------------------------
+# Runtime LLM backend selection — DB-backed, switchable from Settings UI.
+# ---------------------------------------------------------------------------
+class BackendOption(BaseModel):
+    """One row in the Settings UI's backend selector."""
+
+    type: LLMBackendType
+    label: str
+    configured: bool
+    dev_only: bool = False
+    # Per-backend hint surfaced when ``configured == False`` so the UI
+    # can show "set LLM_MAAS_API_KEY" inline rather than a generic
+    # "not configured".
+    missing_config: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(use_enum_values=True)
+
+
+class LLMSettingsRead(BaseModel):
+    active_llm_backend: LLMBackendType
+    available_backends: list[BackendOption]
+    last_llm_error: str | None = None
+    last_llm_error_at: datetime | None = None
+
+    model_config = ConfigDict(use_enum_values=True)
+
+
+class LLMSettingsUpdate(BaseModel):
+    active_llm_backend: LLMBackendType
+
+
+class ConnectionTestRequest(BaseModel):
+    backend_type: LLMBackendType
+
+
+class ConnectionTestResponse(BaseModel):
+    backend_type: LLMBackendType
+    reachable: bool
+    authenticated: bool
+    model_available: bool
+    latency_ms: int | None = None
+    error: str | None = None
+
+    # ``model_available`` collides with Pydantic's reserved
+    # ``model_*`` namespace; opt out so the field name doesn't trip
+    # the warning. The field is part of the API contract, can't
+    # rename it.
+    model_config = ConfigDict(use_enum_values=True, protected_namespaces=())
 
 
 # ---------------------------------------------------------------------------

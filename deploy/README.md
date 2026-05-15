@@ -92,6 +92,46 @@ helm install virtvalidate deploy/helm/virtvalidate/ \
   --set llm.kserve.modelName=granite-3-8b-instruct
 ```
 
+### Quick start (MaaS backend — authenticated OpenAI-compatible)
+
+For deployments that consume an external Model-as-a-Service endpoint
+(LiteLLM proxy, OpenRouter, hosted vLLM behind a reverse-proxy, etc.):
+
+```bash
+# 1. Operator pre-creates the Secret holding the API key.
+oc create secret generic virtvalidate-maas \
+  --from-literal=api-key='<YOUR_KEY>' \
+  -n virtvalidate
+
+# 2. Install with MaaS connection config wired up.
+helm install virtvalidate deploy/helm/virtvalidate/ \
+  --namespace virtvalidate \
+  --create-namespace \
+  --set llm.maas.enabled=true \
+  --set llm.maas.baseUrl=https://litellm-prod.apps.maas.redhatworkshops.io/v1 \
+  --set llm.maas.model=granite-32-8b-instruct \
+  --set llm.maas.existingSecret=virtvalidate-maas
+```
+
+The base URL follows OpenAI client convention and INCLUDES the `/v1`
+prefix.
+
+After install, switch the active backend in the VirtValidate Settings
+UI: **Settings → LLM Backend → MaaS → Make active**. Use **Test
+connection** first to verify reachability + auth + that the configured
+model is in the endpoint's `/models` list.
+
+The active backend lives in `app_settings.active_llm_backend` and
+flips at runtime — no redeploy needed. CONNECTION CONFIG (URLs,
+Secret name) stays in Helm values; the Settings UI only controls
+which configured backend is currently active.
+
+> **Never set `llm.maas.apiKey` in a committed values.yaml.** The
+> `--set llm.maas.apiKey=<KEY>` path templates a chart-managed Secret
+> for one-shot installs but writing the key into a values file leaks
+> it to git history and CI logs. Production: always use
+> `existingSecret` with a Vault / ESO / sealed-secrets-managed Secret.
+
 ### Quick start (production, FIPS, NetworkPolicies)
 
 ```bash
