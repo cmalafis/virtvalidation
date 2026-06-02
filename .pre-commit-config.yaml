@@ -1,10 +1,11 @@
 # Solo-mode pre-commit: gitleaks only.
 #
-# CI is the source of truth for ruff / pytest / build correctness — see
-# .github/workflows/ci.yml. The local hook chain is deliberately minimal
-# so `git commit` is fast and never reformats files mid-commit (which
-# previously forced a re-stage cycle and trained the operator to reach
-# for --no-verify).
+# CI and security scanning were intentionally deferred during early
+# development (see CLAUDE.md). Ruff / pytest / build correctness are a
+# local discipline for now — run them yourself before pushing. This hook
+# chain stays deliberately minimal so `git commit` is fast and never
+# reformats files mid-commit (which previously forced a re-stage cycle
+# and trained the operator to reach for --no-verify).
 #
 # Why gitleaks stays blocking: a leaked private key or cloud credential
 # in git history is *unrecoverable* — rewriting history doesn't undo the
