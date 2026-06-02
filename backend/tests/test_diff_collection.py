@@ -62,9 +62,7 @@ def test_service_running_to_failed_is_fail():
 
 def test_service_running_to_absent_is_fail():
     base = _baseline()
-    curr = _baseline(
-        services=[{"unit": "sshd.service", "active": "active", "sub": "running"}]
-    )
+    curr = _baseline(services=[{"unit": "sshd.service", "active": "active", "sub": "running"}])
     diff = diff_collection(base, curr)
     assert diff["overall"] == "fail"
 

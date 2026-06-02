@@ -8,17 +8,13 @@ exercising the full route → background-task → DB-persistence path.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
 from app.core import config as cfg_mod
-from app.core.collection.engine import CollectionResult, VMTarget
-from app.models.baseline_run import BaselineRunStatus, VMCollectionStatus
+from app.core.collection.engine import CollectionResult
 from app.models.plan import MigrationPlan
-from app.models.validation_run import ValidationRunStatus, VMValidationVerdict
 from app.models.vm import VM
 from app.services import ssh_key_service
 
@@ -106,9 +102,7 @@ def test_baseline_kickoff_returns_202_and_creates_per_vm_rows(
             results.append(result)
         return results
 
-    monkeypatch.setattr(
-        "app.core.collection.wave_jobs.run_collection_batch", fake_batch
-    )
+    monkeypatch.setattr("app.core.collection.wave_jobs.run_collection_batch", fake_batch)
 
     r = client.post(
         f"/api/plans/{plan.id}/waves/1/baseline",
@@ -170,9 +164,7 @@ def test_baseline_partial_success_records_failures(
                 on_vm_complete(result)
         return []
 
-    monkeypatch.setattr(
-        "app.core.collection.wave_jobs.run_collection_batch", fake_batch
-    )
+    monkeypatch.setattr("app.core.collection.wave_jobs.run_collection_batch", fake_batch)
 
     r = client.post(
         f"/api/plans/{plan.id}/waves/1/baseline",
@@ -181,9 +173,7 @@ def test_baseline_partial_success_records_failures(
     assert r.status_code == 202
     run_id = r.json()["baseline_run_id"]
     detail = client.get(f"/api/baseline-runs/{run_id}").json()
-    assert detail["status"] == "completed", (
-        "Partial-success is still completed, not failed"
-    )
+    assert detail["status"] == "completed", "Partial-success is still completed, not failed"
     assert detail["captured_vms"] == 1
     assert detail["failed_vms"] == 2
     failed = [b for b in detail["baselines"] if b["status"] == "failed"]
@@ -191,9 +181,7 @@ def test_baseline_partial_success_records_failures(
     assert {b["failure_category"] for b in failed} == {"auth_failed", "unreachable"}
 
 
-def test_baseline_rejects_retired_key(
-    isolated_key_dir, client, plan_with_wave, db_session
-):
+def test_baseline_rejects_retired_key(isolated_key_dir, client, plan_with_wave, db_session):
     plan, _ = plan_with_wave
     key = ssh_key_service.generate_keypair(db_session, name="retired-key")
     ssh_key_service.retire_key(db_session, key.id)
@@ -246,9 +234,7 @@ def test_retry_failed_creates_new_run_with_only_failed_vms(
                 on_vm_complete(result)
         return []
 
-    monkeypatch.setattr(
-        "app.core.collection.wave_jobs.run_collection_batch", first_run
-    )
+    monkeypatch.setattr("app.core.collection.wave_jobs.run_collection_batch", first_run)
 
     r = client.post(
         f"/api/plans/{plan.id}/waves/1/baseline",
@@ -274,9 +260,7 @@ def test_retry_failed_creates_new_run_with_only_failed_vms(
                 on_vm_complete(result)
         return []
 
-    monkeypatch.setattr(
-        "app.core.collection.wave_jobs.run_collection_batch", second_run
-    )
+    monkeypatch.setattr("app.core.collection.wave_jobs.run_collection_batch", second_run)
     retry = client.post(f"/api/baseline-runs/{original_run_id}/retry-failed")
     assert retry.status_code == 202, retry.text
     new_run_id = retry.json()["baseline_run_id"]
@@ -303,12 +287,8 @@ def _seed_completed_baseline(client, plan_id, key_id, monkeypatch):
                 on_vm_complete(result)
         return []
 
-    monkeypatch.setattr(
-        "app.core.collection.wave_jobs.run_collection_batch", fake_batch
-    )
-    r = client.post(
-        f"/api/plans/{plan_id}/waves/1/baseline", json={"ssh_key_id": key_id}
-    )
+    monkeypatch.setattr("app.core.collection.wave_jobs.run_collection_batch", fake_batch)
+    r = client.post(f"/api/plans/{plan_id}/waves/1/baseline", json={"ssh_key_id": key_id})
     return r.json()["baseline_run_id"]
 
 
@@ -334,9 +314,7 @@ def test_validation_produces_pass_when_state_matches_baseline(
 
     _seed_completed_baseline(client, plan.id, key_id, monkeypatch)
     # Validation: same state as baseline → pass.
-    r = client.post(
-        f"/api/plans/{plan.id}/waves/1/validate", json={"ssh_key_id": key_id}
-    )
+    r = client.post(f"/api/plans/{plan.id}/waves/1/validate", json={"ssh_key_id": key_id})
     assert r.status_code == 202, r.text
     run_id = r.json()["validation_run_id"]
     detail = client.get(f"/api/validation-runs/{run_id}").json()
@@ -361,9 +339,7 @@ def test_validation_produces_fail_when_service_regression(
     async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete):
         for t in targets:
             state = _full_state(t.host)
-            state["services"] = [
-                {"unit": "sshd.service", "active": "failed", "sub": "failed"}
-            ]
+            state["services"] = [{"unit": "sshd.service", "active": "failed", "sub": "failed"}]
             result = CollectionResult(
                 vm_id=t.vm_id,
                 succeeded=True,
@@ -374,12 +350,8 @@ def test_validation_produces_fail_when_service_regression(
                 on_vm_complete(result)
         return []
 
-    monkeypatch.setattr(
-        "app.core.collection.wave_jobs.run_collection_batch", fake_batch
-    )
-    r = client.post(
-        f"/api/plans/{plan.id}/waves/1/validate", json={"ssh_key_id": key_id}
-    )
+    monkeypatch.setattr("app.core.collection.wave_jobs.run_collection_batch", fake_batch)
+    r = client.post(f"/api/plans/{plan.id}/waves/1/validate", json={"ssh_key_id": key_id})
     run_id = r.json()["validation_run_id"]
     detail = client.get(f"/api/validation-runs/{run_id}").json()
     assert detail["failed_vms"] == 3
@@ -409,12 +381,8 @@ def test_validation_unreachable_when_collection_fails(
                 on_vm_complete(result)
         return []
 
-    monkeypatch.setattr(
-        "app.core.collection.wave_jobs.run_collection_batch", fake_batch
-    )
-    r = client.post(
-        f"/api/plans/{plan.id}/waves/1/validate", json={"ssh_key_id": key_id}
-    )
+    monkeypatch.setattr("app.core.collection.wave_jobs.run_collection_batch", fake_batch)
+    r = client.post(f"/api/plans/{plan.id}/waves/1/validate", json={"ssh_key_id": key_id})
     run_id = r.json()["validation_run_id"]
     detail = client.get(f"/api/validation-runs/{run_id}").json()
     assert detail["unreachable_vms"] == 3

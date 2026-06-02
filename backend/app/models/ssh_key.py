@@ -69,6 +69,4 @@ class SSHKey(Base):
     )
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    __table_args__ = (
-        Index("ix_ssh_keys_status_plan", "status", "plan_id"),
-    )
+    __table_args__ = (Index("ix_ssh_keys_status_plan", "status", "plan_id"),)

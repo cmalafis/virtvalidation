@@ -21,9 +21,9 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.db import get_db
+from app.core.fips import FIPSViolation
 from app.core.limits import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.core.ssh_key import UnsupportedAlgorithmError
-from app.core.fips import FIPSViolation
 from app.models.ssh_key import SSHKey, SSHKeyStatus
 from app.models.vm import VM
 from app.schemas.ssh_key import (
@@ -44,10 +44,7 @@ router = APIRouter(tags=["ssh-keys"])
 # Location of the Ansible playbook delivered by GET /{id}/playbook. Lifted
 # to a module constant so tests can override it.
 _PLAYBOOK_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "deploy"
-    / "ansible"
-    / "setup-virtvalidate-user.yml"
+    Path(__file__).resolve().parents[3] / "deploy" / "ansible" / "setup-virtvalidate-user.yml"
 )
 
 
@@ -126,9 +123,7 @@ def list_ssh_keys(
         count_stmt = count_stmt.where(SSHKey.plan_id == plan_id)
 
     total = db.execute(count_stmt).scalar_one()
-    rows = (
-        db.execute(stmt.order_by(SSHKey.id.desc()).offset(skip).limit(limit)).scalars().all()
-    )
+    rows = db.execute(stmt.order_by(SSHKey.id.desc()).offset(skip).limit(limit)).scalars().all()
     return SSHKeyListResponse(
         items=[SSHKeyRead.model_validate(r, from_attributes=True) for r in rows],
         total=total,
@@ -179,9 +174,7 @@ def get_ssh_key_playbook(key_id: int, db: Session = Depends(get_db)) -> Response
         f'"{row.public_key.strip()}"',
     )
     headers = {
-        "Content-Disposition": (
-            f'attachment; filename="virtvalidate-key-{row.id}-setup.yml"'
-        )
+        "Content-Disposition": (f'attachment; filename="virtvalidate-key-{row.id}-setup.yml"')
     }
     return Response(content=rendered, media_type="text/yaml", headers=headers)
 
@@ -267,9 +260,7 @@ def revoke_ssh_key_from_vms(
         for t in targets
         if t.get("_unreachable")
     ]
-    real_outcomes = ssh_key_service.revoke_key_from_vms(
-        db, key_id=key_id, vm_targets=real
-    )
+    real_outcomes = ssh_key_service.revoke_key_from_vms(db, key_id=key_id, vm_targets=real)
     outcomes = synthetic_failures + [
         SSHKeyRevocationOutcome(vm_id=o.vm_id, succeeded=o.succeeded, detail=o.detail)
         for o in real_outcomes

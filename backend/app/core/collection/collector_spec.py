@@ -36,7 +36,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 PASS1_CATALOG_VERSION = "pass1-v1"
 
 
@@ -66,9 +65,7 @@ _PASS1_SPEC: tuple[ProbeSpec, ...] = (
     ProbeSpec(
         name="systemd_services",
         data_key="services",
-        description=(
-            "Enabled / running / failed systemd services with unit + sub state"
-        ),
+        description=("Enabled / running / failed systemd services with unit + sub state"),
         available=True,
     ),
     ProbeSpec(
@@ -193,9 +190,7 @@ def pass1_probe_names(*, available_only: bool = True) -> list[str]:
     :attr:`Baseline.probes_run` so the validation step knows exactly which
     probes to compare against.
     """
-    return [
-        p.name for p in _PASS1_SPEC if (not available_only or p.available)
-    ]
+    return [p.name for p in _PASS1_SPEC if (not available_only or p.available)]
 
 
 def pass1_data_keys() -> set[str]:

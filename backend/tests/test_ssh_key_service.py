@@ -9,13 +9,12 @@ bytes.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
 
 from app.core import config as cfg_mod
-from app.models.ssh_key import SSHKey, SSHKeyStatus
+from app.models.ssh_key import SSHKeyStatus
 from app.services import ssh_key_service
 
 
@@ -35,9 +34,7 @@ def isolated_key_dir(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Service-level
 # ---------------------------------------------------------------------------
-def test_generate_keypair_writes_private_to_pvc_and_persists_metadata(
-    isolated_key_dir, db_session
-):
+def test_generate_keypair_writes_private_to_pvc_and_persists_metadata(isolated_key_dir, db_session):
     row = ssh_key_service.generate_keypair(db_session, name="wave-1-key")
 
     assert row.id is not None
@@ -54,9 +51,7 @@ def test_generate_keypair_writes_private_to_pvc_and_persists_metadata(
     assert private_path.stat().st_mode & 0o077 == 0, "private key must be 0600"
 
 
-def test_generate_keypair_does_not_store_private_bytes_in_row(
-    isolated_key_dir, db_session
-):
+def test_generate_keypair_does_not_store_private_bytes_in_row(isolated_key_dir, db_session):
     row = ssh_key_service.generate_keypair(db_session, name="audit-test")
     body = json.dumps(
         {
@@ -114,9 +109,7 @@ def test_extract_blob_returns_middle_field():
 # ---------------------------------------------------------------------------
 # API-level — these run through the FastAPI TestClient with a clean DB
 # ---------------------------------------------------------------------------
-def test_create_ssh_key_endpoint_returns_201_with_public_material(
-    isolated_key_dir, client
-):
+def test_create_ssh_key_endpoint_returns_201_with_public_material(isolated_key_dir, client):
     r = client.post("/api/ssh-keys", json={"name": "via-api"})
     assert r.status_code == 201, r.text
     body = r.json()
@@ -199,9 +192,7 @@ def test_get_playbook_returns_503_when_file_missing(isolated_key_dir, client, mo
     """Playbook file ships in Part 6. Until then the endpoint returns 503."""
     from app.api import ssh_keys as ssh_keys_module
 
-    monkeypatch.setattr(
-        ssh_keys_module, "_PLAYBOOK_PATH", Path("/nonexistent/path.yml")
-    )
+    monkeypatch.setattr(ssh_keys_module, "_PLAYBOOK_PATH", Path("/nonexistent/path.yml"))
     r = client.post("/api/ssh-keys", json={"name": "pb"})
     key_id = r.json()["id"]
     pb = client.get(f"/api/ssh-keys/{key_id}/playbook")
@@ -217,10 +208,7 @@ def test_get_playbook_templates_public_key_when_file_present(
 
     playbook = tmp_path / "fake-playbook.yml"
     playbook.write_text(
-        "---\n"
-        "- hosts: all\n"
-        "  vars:\n"
-        '    virtvalidate_public_key: "REPLACE_ME"\n'
+        "---\n" "- hosts: all\n" "  vars:\n" '    virtvalidate_public_key: "REPLACE_ME"\n'
     )
     monkeypatch.setattr(ssh_keys_module, "_PLAYBOOK_PATH", playbook)
 
@@ -298,18 +286,14 @@ def test_revoke_from_vms_per_vm_failures_do_not_abort_batch(
         {"vm_id": 2, "host": "bad", "port": 22, "username": "virtvalidate"},
         {"vm_id": 3, "host": "ok-2", "port": 22, "username": "virtvalidate"},
     ]
-    outcomes = ssh_key_service.revoke_key_from_vms(
-        db_session, key_id=row.id, vm_targets=targets
-    )
+    outcomes = ssh_key_service.revoke_key_from_vms(db_session, key_id=row.id, vm_targets=targets)
     assert [o.vm_id for o in outcomes] == [1, 2, 3]
     assert [o.succeeded for o in outcomes] == [True, False, True]
     assert outcomes[1].detail == "connect_failed:simulated"
     assert calls == ["ok-1", "bad", "ok-2"]
 
 
-def test_revoke_from_vms_exception_does_not_abort_batch(
-    isolated_key_dir, db_session, monkeypatch
-):
+def test_revoke_from_vms_exception_does_not_abort_batch(isolated_key_dir, db_session, monkeypatch):
     row = ssh_key_service.generate_keypair(db_session, name="rev-exc")
 
     def boom(**kwargs):

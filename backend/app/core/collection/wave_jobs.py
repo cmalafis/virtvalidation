@@ -23,7 +23,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core import db as _db_module
-from app.core.collection.collector_spec import PASS1_CATALOG_VERSION
 from app.core.collection.diff import diff_collection
 from app.core.collection.engine import CollectionEngine, CollectionResult, VMTarget
 from app.core.collection.orchestrator import run_collection_batch
@@ -64,8 +63,7 @@ def resolve_wave_vm_ids(plan: MigrationPlan, wave_number: int) -> list[int]:
             vm_ids = w.get("vm_ids") or []
             return [int(v) for v in vm_ids]
     raise ValueError(
-        f"Plan {plan.id} has no wave numbered {wave_number} "
-        f"(plan has {len(waves)} wave(s))"
+        f"Plan {plan.id} has no wave numbered {wave_number} " f"(plan has {len(waves)} wave(s))"
     )
 
 
@@ -133,9 +131,11 @@ def run_baseline_task(baseline_run_id: int) -> None:
 
         try:
             paramiko_key = ssh_key_service.load_paramiko_key(db, run.ssh_key_id)
-        except (ssh_key_service.SSHKeyNotFoundError,
-                ssh_key_service.SSHKeyRetiredError,
-                ssh_key_service.PrivateKeyMissingError) as e:
+        except (
+            ssh_key_service.SSHKeyNotFoundError,
+            ssh_key_service.SSHKeyRetiredError,
+            ssh_key_service.PrivateKeyMissingError,
+        ) as e:
             run.status = BaselineRunStatus.failed
             run.progress_message = f"SSH key unusable: {e}"
             run.completed_at = _utcnow()
@@ -146,9 +146,7 @@ def run_baseline_task(baseline_run_id: int) -> None:
         # API handler so the operator sees them in the response. Build a
         # vm_id -> Baseline lookup so the callback can update each row.
         baselines = list(
-            db.scalars(
-                select(Baseline).where(Baseline.baseline_run_id == run.id)
-            ).all()
+            db.scalars(select(Baseline).where(Baseline.baseline_run_id == run.id)).all()
         )
         baselines_by_vm = {b.vm_id: b for b in baselines}
         vm_ids = [b.vm_id for b in baselines]
@@ -190,8 +188,7 @@ def run_baseline_task(baseline_run_id: int) -> None:
                 row.failure_detail = result.failure_detail
                 run.failed_vms = (run.failed_vms or 0) + 1
             run.progress_message = (
-                f"{run.captured_vms}/{run.total_vms} captured, "
-                f"{run.failed_vms} failed"
+                f"{run.captured_vms}/{run.total_vms} captured, " f"{run.failed_vms} failed"
             )
             db.commit()
 
@@ -214,9 +211,7 @@ def run_baseline_task(baseline_run_id: int) -> None:
 
         run.status = BaselineRunStatus.completed
         run.completed_at = _utcnow()
-        run.progress_message = (
-            f"Completed: {run.captured_vms} captured, {run.failed_vms} failed"
-        )
+        run.progress_message = f"Completed: {run.captured_vms} captured, {run.failed_vms} failed"
         db.commit()
         logger.info(
             "baseline_run.completed id=%s captured=%s failed=%s",
@@ -276,9 +271,11 @@ def run_validation_task(validation_run_id: int) -> None:
 
         try:
             paramiko_key = ssh_key_service.load_paramiko_key(db, run.ssh_key_id)
-        except (ssh_key_service.SSHKeyNotFoundError,
-                ssh_key_service.SSHKeyRetiredError,
-                ssh_key_service.PrivateKeyMissingError) as e:
+        except (
+            ssh_key_service.SSHKeyNotFoundError,
+            ssh_key_service.SSHKeyRetiredError,
+            ssh_key_service.PrivateKeyMissingError,
+        ) as e:
             run.status = ValidationRunStatus.failed
             run.progress_message = f"SSH key unusable: {e}"
             run.completed_at = _utcnow()
@@ -288,9 +285,7 @@ def run_validation_task(validation_run_id: int) -> None:
         baseline_run = _latest_completed_baseline_run(db, run.plan_id, run.wave_number)
         if baseline_run is None:
             run.status = ValidationRunStatus.failed
-            run.progress_message = (
-                "No completed baseline run for this wave — cannot validate"
-            )
+            run.progress_message = "No completed baseline run for this wave — cannot validate"
             run.completed_at = _utcnow()
             db.commit()
             return
@@ -300,17 +295,13 @@ def run_validation_task(validation_run_id: int) -> None:
         # are skipped — their corresponding validation rows will be marked
         # unreachable since there's nothing to compare against.
         baseline_rows = list(
-            db.scalars(
-                select(Baseline).where(Baseline.baseline_run_id == baseline_run.id)
-            ).all()
+            db.scalars(select(Baseline).where(Baseline.baseline_run_id == baseline_run.id)).all()
         )
         baselines_by_vm: dict[int, Baseline] = {b.vm_id: b for b in baseline_rows}
 
         # The VMValidation rows were pre-created by the API handler.
         validation_rows = list(
-            db.scalars(
-                select(VMValidation).where(VMValidation.validation_run_id == run.id)
-            ).all()
+            db.scalars(select(VMValidation).where(VMValidation.validation_run_id == run.id)).all()
         )
         validations_by_vm = {v.vm_id: v for v in validation_rows}
 
@@ -379,9 +370,7 @@ def run_validation_task(validation_run_id: int) -> None:
                     row.host_key_changed = True
 
             row.validated_at = _utcnow()
-            total_done = (
-                run.passed_vms + run.warned_vms + run.failed_vms + run.unreachable_vms
-            )
+            total_done = run.passed_vms + run.warned_vms + run.failed_vms + run.unreachable_vms
             run.progress_message = (
                 f"{total_done}/{run.total_vms} validated "
                 f"(p={run.passed_vms} w={run.warned_vms} "

@@ -28,7 +28,6 @@ from sqlalchemy.orm import Session
 from app.core.config import settings as app_config
 from app.core.ssh_key import (
     DEFAULT_COMMENT,
-    UnsupportedAlgorithmError,
     _write_keypair,
     load_key_info,
     normalize_algorithm,

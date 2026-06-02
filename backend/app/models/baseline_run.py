@@ -95,9 +95,7 @@ class BaselineRun(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (
-        Index("ix_baseline_runs_plan_wave", "plan_id", "wave_number"),
-    )
+    __table_args__ = (Index("ix_baseline_runs_plan_wave", "plan_id", "wave_number"),)
 
 
 class Baseline(Base):
@@ -153,6 +151,4 @@ class Baseline(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (
-        Index("ix_baselines_run_status", "baseline_run_id", "status"),
-    )
+    __table_args__ = (Index("ix_baselines_run_status", "baseline_run_id", "status"),)

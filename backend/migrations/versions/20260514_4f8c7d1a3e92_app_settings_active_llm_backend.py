@@ -103,17 +103,13 @@ def upgrade() -> None:
     # row. Use a portable UPDATE-then-INSERT-if-no-row sequence — both
     # SQLite and Postgres handle it identically.
     bind.execute(
-        sa.text(
-            "UPDATE app_settings SET active_llm_backend = :v WHERE id = 1"
-        ),
+        sa.text("UPDATE app_settings SET active_llm_backend = :v WHERE id = 1"),
         {"v": seed_value},
     )
     # Insert id=1 if it's still missing. Both dialects accept this
     # form; we don't use ON CONFLICT because SQLite prior to 3.24 lacks
     # it and the test suite uses SQLite.
-    has_row = bind.execute(
-        sa.text("SELECT 1 FROM app_settings WHERE id = 1")
-    ).scalar()
+    has_row = bind.execute(sa.text("SELECT 1 FROM app_settings WHERE id = 1")).scalar()
     if not has_row:
         bind.execute(
             sa.text(

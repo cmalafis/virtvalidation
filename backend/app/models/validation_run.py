@@ -92,9 +92,7 @@ class ValidationRun(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (
-        Index("ix_validation_runs_plan_wave", "plan_id", "wave_number"),
-    )
+    __table_args__ = (Index("ix_validation_runs_plan_wave", "plan_id", "wave_number"),)
 
 
 class VMValidation(Base):
@@ -146,6 +144,4 @@ class VMValidation(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (
-        Index("ix_vm_validations_run_verdict", "validation_run_id", "verdict"),
-    )
+    __table_args__ = (Index("ix_vm_validations_run_verdict", "validation_run_id", "verdict"),)

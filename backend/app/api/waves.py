@@ -212,9 +212,7 @@ def get_baseline_run(run_id: int, db: Session = Depends(get_db)) -> BaselineRunR
         raise HTTPException(status_code=404, detail=f"Baseline run {run_id} not found")
     rows = list(
         db.scalars(
-            select(Baseline)
-            .where(Baseline.baseline_run_id == run_id)
-            .order_by(Baseline.id.asc())
+            select(Baseline).where(Baseline.baseline_run_id == run_id).order_by(Baseline.id.asc())
         ).all()
     )
     return BaselineRunRead(
@@ -265,9 +263,7 @@ def retry_failed_baseline(
         ).all()
     )
     if not failed_rows:
-        raise HTTPException(
-            status_code=422, detail="No failed VMs to retry in this run"
-        )
+        raise HTTPException(status_code=422, detail="No failed VMs to retry in this run")
 
     # Verify the original SSH key is still active. Operators who retired
     # the key would otherwise hit a 500 from the background task.
@@ -508,9 +504,7 @@ def revoke_validation_key(
         host = vm.ip_address or vm.target_hostname or vm.source_hostname
         if not host:
             synthetic.append(
-                SSHKeyRevocationOutcome(
-                    vm_id=vm.id, succeeded=False, detail="no_host_address"
-                )
+                SSHKeyRevocationOutcome(vm_id=vm.id, succeeded=False, detail="no_host_address")
             )
             continue
         targets.append(

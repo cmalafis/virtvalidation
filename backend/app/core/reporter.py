@@ -528,6 +528,7 @@ def render_pdf(
     # Lazy import so the rest of the reporter module can be exercised in
     # tests without the renderer dep installed.
     from io import BytesIO  # noqa: PLC0415
+
     from xhtml2pdf import pisa  # noqa: PLC0415
 
     if generated_at is None:

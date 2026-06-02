@@ -61,9 +61,7 @@ class _CountingEngine:
 async def test_all_vms_reach_terminal_state():
     engine = _CountingEngine(in_flight_ceiling=10)
     targets = [VMTarget(vm_id=i, host=f"10.0.0.{i}") for i in range(1, 51)]
-    results = await run_collection_batch(
-        targets=targets, engine=engine, max_concurrency=10
-    )
+    results = await run_collection_batch(targets=targets, engine=engine, max_concurrency=10)
     assert len(results) == 50
     assert {r.vm_id for r in results} == set(range(1, 51))
     assert all(r.succeeded for r in results)
@@ -74,9 +72,7 @@ async def test_concurrency_never_exceeds_ceiling():
     engine = _CountingEngine(in_flight_ceiling=5)
     targets = [VMTarget(vm_id=i, host=f"10.0.0.{i}") for i in range(1, 101)]
     await run_collection_batch(targets=targets, engine=engine, max_concurrency=5)
-    assert engine.max_seen <= 5, (
-        f"Concurrency ceiling violated: saw {engine.max_seen} in flight"
-    )
+    assert engine.max_seen <= 5, f"Concurrency ceiling violated: saw {engine.max_seen} in flight"
     # Sanity: with 100 VMs and 5 ceiling, we should have actually used some
     # parallelism — otherwise the test is meaningless.
     assert engine.max_seen >= 2
@@ -99,9 +95,7 @@ async def test_per_vm_engine_exception_does_not_abort_batch():
 
     engine = _BadEngine()
     targets = [VMTarget(vm_id=i, host=f"h{i}") for i in range(1, 6)]
-    results = await run_collection_batch(
-        targets=targets, engine=engine, max_concurrency=3
-    )
+    results = await run_collection_batch(targets=targets, engine=engine, max_concurrency=3)
     by_id = {r.vm_id: r for r in results}
     assert set(by_id) == {1, 2, 3, 4, 5}
     assert by_id[3].succeeded is False
@@ -158,9 +152,7 @@ async def test_callback_exception_does_not_abort_batch():
 @pytest.mark.asyncio
 async def test_empty_target_list_returns_empty_list():
     engine = MagicMock(spec=CollectionEngine)
-    results = await run_collection_batch(
-        targets=[], engine=engine, max_concurrency=5
-    )
+    results = await run_collection_batch(targets=[], engine=engine, max_concurrency=5)
     assert results == []
     engine.collect.assert_not_called()
 
@@ -171,9 +163,7 @@ async def test_concurrency_clamped_to_safe_range():
     (clamped to 1, sequential)."""
     engine = _CountingEngine(in_flight_ceiling=1)
     targets = [VMTarget(vm_id=i, host=f"h{i}") for i in range(1, 6)]
-    results = await run_collection_batch(
-        targets=targets, engine=engine, max_concurrency=0
-    )
+    results = await run_collection_batch(targets=targets, engine=engine, max_concurrency=0)
     assert len(results) == 5
     assert engine.max_seen == 1  # clamped to 1
 
@@ -188,9 +178,7 @@ async def test_scale_1000_mock_vms_complete():
     import time
 
     start = time.monotonic()
-    results = await run_collection_batch(
-        targets=targets, engine=engine, max_concurrency=25
-    )
+    results = await run_collection_batch(targets=targets, engine=engine, max_concurrency=25)
     elapsed = time.monotonic() - start
     assert len(results) == 1000
     assert engine.completed == 1000

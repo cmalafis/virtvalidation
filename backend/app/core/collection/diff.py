@@ -155,7 +155,12 @@ def _diff_mounts(baseline: dict, current: dict) -> dict:
     for target, m in base.items():
         if target not in curr:
             changes.append(
-                {"mount": target, "baseline": m.get("fstype"), "current": "missing", "verdict": "warn"}
+                {
+                    "mount": target,
+                    "baseline": m.get("fstype"),
+                    "current": "missing",
+                    "verdict": "warn",
+                }
             )
             worst = _bump(worst, "warn")
             continue
@@ -172,7 +177,12 @@ def _diff_mounts(baseline: dict, current: dict) -> dict:
 
     for target in curr.keys() - base.keys():
         changes.append(
-            {"mount": target, "baseline": None, "current": curr[target].get("fstype"), "verdict": "info"}
+            {
+                "mount": target,
+                "baseline": None,
+                "current": curr[target].get("fstype"),
+                "verdict": "info",
+            }
         )
         worst = _bump(worst, "info")
 
@@ -207,10 +217,14 @@ def _diff_cron(baseline: dict, current: dict) -> dict:
     changes: list[dict] = []
     worst = "pass"
     for entry in missing:
-        changes.append({"entry": entry, "baseline": "present", "current": "absent", "verdict": "warn"})
+        changes.append(
+            {"entry": entry, "baseline": "present", "current": "absent", "verdict": "warn"}
+        )
         worst = _bump(worst, "warn")
     for entry in added:
-        changes.append({"entry": entry, "baseline": "absent", "current": "present", "verdict": "info"})
+        changes.append(
+            {"entry": entry, "baseline": "absent", "current": "present", "verdict": "info"}
+        )
         worst = _bump(worst, "info")
 
     return {"name": "cron", "verdict": worst, "changes": changes}

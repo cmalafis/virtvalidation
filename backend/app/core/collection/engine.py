@@ -157,18 +157,14 @@ class CollectionEngine:
             missing = pass1_data_keys() - set((state or {}).keys())
             if missing:
                 result.failure_category = "partial"
-                result.failure_detail = (
-                    "missing probe data: " + ", ".join(sorted(missing))
-                )
+                result.failure_detail = "missing probe data: " + ", ".join(sorted(missing))
                 # We still consider this "succeeded" overall because the
                 # partial result is useful for validation; the category
                 # is what the operator's review surface highlights.
                 result.succeeded = True
                 # Probes that ran = those that produced a key.
                 result.probes_run = [
-                    p
-                    for p in pass1_probe_names()
-                    if _probe_data_key(p) in (state or {})
+                    p for p in pass1_probe_names() if _probe_data_key(p) in (state or {})
                 ]
             else:
                 result.succeeded = True

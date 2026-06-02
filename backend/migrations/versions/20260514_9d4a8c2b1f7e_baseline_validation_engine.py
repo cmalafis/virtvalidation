@@ -60,9 +60,7 @@ VALIDATION_RUN_STATUS = sa.Enum(
 )
 # Deliberate name != value mapping (see model docstring). Values must match
 # what the ORM column's ``values_callable`` returns.
-VM_VALIDATION_VERDICT = sa.Enum(
-    "pass", "warn", "fail", "unreachable", name="vm_validation_verdict"
-)
+VM_VALIDATION_VERDICT = sa.Enum("pass", "warn", "fail", "unreachable", name="vm_validation_verdict")
 
 _PG_ENUMS = (
     SSH_KEY_STATUS,
@@ -109,9 +107,7 @@ def upgrade() -> None:
     with op.batch_alter_table("ssh_keys", schema=None) as batch_op:
         batch_op.create_index("ix_ssh_keys_status", ["status"], unique=False)
         batch_op.create_index("ix_ssh_keys_plan_id", ["plan_id"], unique=False)
-        batch_op.create_index(
-            "ix_ssh_keys_status_plan", ["status", "plan_id"], unique=False
-        )
+        batch_op.create_index("ix_ssh_keys_status_plan", ["status", "plan_id"], unique=False)
 
     op.create_table(
         "baseline_runs",
@@ -142,9 +138,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     with op.batch_alter_table("baseline_runs", schema=None) as batch_op:
-        batch_op.create_index(
-            "ix_baseline_runs_status", ["status"], unique=False
-        )
+        batch_op.create_index("ix_baseline_runs_status", ["status"], unique=False)
         batch_op.create_index(
             "ix_baseline_runs_plan_wave", ["plan_id", "wave_number"], unique=False
         )
@@ -182,16 +176,12 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["baseline_run_id"], ["baseline_runs.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["baseline_run_id"], ["baseline_runs.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["vm_id"], ["vms.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     with op.batch_alter_table("baselines", schema=None) as batch_op:
-        batch_op.create_index(
-            "ix_baselines_baseline_run_id", ["baseline_run_id"], unique=False
-        )
+        batch_op.create_index("ix_baselines_baseline_run_id", ["baseline_run_id"], unique=False)
         batch_op.create_index("ix_baselines_vm_id", ["vm_id"], unique=False)
         batch_op.create_index("ix_baselines_status", ["status"], unique=False)
         batch_op.create_index(
@@ -214,9 +204,7 @@ def upgrade() -> None:
         sa.Column("passed_vms", sa.Integer(), server_default="0", nullable=False),
         sa.Column("warned_vms", sa.Integer(), server_default="0", nullable=False),
         sa.Column("failed_vms", sa.Integer(), server_default="0", nullable=False),
-        sa.Column(
-            "unreachable_vms", sa.Integer(), server_default="0", nullable=False
-        ),
+        sa.Column("unreachable_vms", sa.Integer(), server_default="0", nullable=False),
         sa.Column("progress_message", sa.String(length=256), nullable=True),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
@@ -231,9 +219,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     with op.batch_alter_table("validation_runs", schema=None) as batch_op:
-        batch_op.create_index(
-            "ix_validation_runs_status", ["status"], unique=False
-        )
+        batch_op.create_index("ix_validation_runs_status", ["status"], unique=False)
         batch_op.create_index(
             "ix_validation_runs_plan_wave",
             ["plan_id", "wave_number"],
@@ -262,9 +248,7 @@ def upgrade() -> None:
             sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"),
             nullable=True,
         ),
-        sa.Column(
-            "host_key_changed", sa.Boolean(), server_default="0", nullable=False
-        ),
+        sa.Column("host_key_changed", sa.Boolean(), server_default="0", nullable=False),
         sa.Column("failure_category", sa.String(length=64), nullable=True),
         sa.Column("failure_detail", sa.Text(), nullable=True),
         sa.Column(
@@ -273,9 +257,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["validation_run_id"], ["validation_runs.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["validation_run_id"], ["validation_runs.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["vm_id"], ["vms.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["baseline_id"], ["baselines.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
@@ -287,9 +269,7 @@ def upgrade() -> None:
             unique=False,
         )
         batch_op.create_index("ix_vm_validations_vm_id", ["vm_id"], unique=False)
-        batch_op.create_index(
-            "ix_vm_validations_verdict", ["verdict"], unique=False
-        )
+        batch_op.create_index("ix_vm_validations_verdict", ["verdict"], unique=False)
         batch_op.create_index(
             "ix_vm_validations_run_verdict",
             ["validation_run_id", "verdict"],

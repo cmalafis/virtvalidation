@@ -26,7 +26,6 @@ from app.core.collection.collector_spec import (
 from app.core.collection.engine import (
     FAILURE_CATEGORIES,
     CollectionEngine,
-    CollectionResult,
     VMTarget,
     _categorize_ssh_error,
 )
@@ -48,9 +47,7 @@ def _full_state() -> dict:
         "ports": [],
         "mounts": [],
         "cron": {"user_crontabs": {}, "system": []},
-        **{k: {} for k in keys - {
-            "meta", "services", "network", "ports", "mounts", "cron"
-        }},
+        **{k: {} for k in keys - {"meta", "services", "network", "ports", "mounts", "cron"}},
     }
 
 
