@@ -15,8 +15,8 @@ SBOM-embedded, signed, near-zero CVE) at the cost of distroless
 ergonomics — no shell inside the pod.
 
 The standard variant pins FROM lines to digests rather than `:latest`
-so every build is reproducible and Dependabot can surface base-image
-updates as PRs.
+so every build is reproducible. Base-image updates are applied manually
+for now (the Dependabot automation was deferred — see CLAUDE.md).
 
 This document explains why UBI is the only supported base, how the
 images are laid out, how to scan them, and how to update versions.
@@ -156,9 +156,10 @@ rather than five minutes into the layer cache.
 ## Updating base image versions
 
 Both variants pin their FROM lines to `@sha256:` digests rather than
-floating tags so every build is reproducible. Pinning to digests means
-Dependabot opens a PR when Red Hat publishes a new patched image (the
-`docker` ecosystem watches the FROM lines).
+floating tags so every build is reproducible. Digest bumps are done
+manually for now — check the Red Hat catalog for newly-published
+patched digests and update the FROM lines. (Automated digest-bump PRs
+via Dependabot were deferred; see CLAUDE.md.)
 
 When Red Hat ships a new minor (e.g., python-312 → python-313, nginx
 1.24 → nginx 1.26) OR a new patched digest of the current minor,
