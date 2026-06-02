@@ -197,11 +197,18 @@ bump (paramiko + cryptography are the usual suspects).
 
 ---
 
-## Security scanning
+## Security scanning (optional, local)
+
+> **Note:** Automated CI scanning and dependency-update bots were
+> deferred during early development (see CLAUDE.md → "CI & security
+> scanning (intentionally deferred)"). There is no scan gate in CI
+> today. The local opt-in scan below remains available for developers
+> who want it, and the hardened image variant exists for its runtime
+> security properties independent of any scanner.
 
 The build script's `-s` flag runs **trivy** (preferred) or **grype**
-against the freshly built image and fails the build on
-HIGH/CRITICAL findings.
+against the freshly built image and fails the *local* build on
+HIGH/CRITICAL findings. It is opt-in — nothing scans automatically.
 
 ### Local install
 
@@ -211,21 +218,16 @@ brew install aquasecurity/trivy/trivy
 brew install grype
 ```
 
-### CI integration
+UBI base images carry their own CVE feed (`vuln-listings.redhat.com`)
+which trivy consumes automatically — VEX statements published by Red
+Hat suppress findings already known to be non-exploitable in the
+product.
 
-`.github/workflows/release-images.yml` runs trivy on every push and
-gates the publish step on a clean scan. UBI base images carry their
-own CVE feed (`vuln-listings.redhat.com`) which trivy consumes
-automatically — VEX statements published by Red Hat suppress
-findings already known to be non-exploitable in the product.
-
-### What we do *not* scan
+### What the `-s` flag does *not* scan
 
 - Build-stage layers (`ubi9/nodejs-20`). Those layers don't ship in
   the runtime image, so a CVE in a node devDep doesn't reach
   production. Trivy is invoked against the final tag only.
-- Application Python dependencies. Those are tracked separately by
-  Dependabot via `requirements.txt` PRs.
 
 ---
 
@@ -357,13 +359,11 @@ disturbing CI:
    # Username: <NNN>|<name>
    # Password: <token>
    ```
-3. **GitHub Actions** (for the `images.yml` workflow):
-   - Add repository secrets `REDHAT_REGISTRY_USER` and
-     `REDHAT_REGISTRY_TOKEN`.
-   - Add repository **variables** (not secrets) `HARDENED_PYTHON_IMAGE`
-     and `HARDENED_NGINX_IMAGE` with the catalog paths — these are
-     not sensitive but vary per environment.
-4. **OpenShift cluster** (for pulling the hardened images at deploy
+   The hardened base catalog paths are passed to the build script via
+   the `HARDENED_PYTHON` / `HARDENED_NGINX` env vars (see
+   `scripts/build-all-images.sh`). There is no CI build path today —
+   hardened images are built locally and pushed from the Mac.
+3. **OpenShift cluster** (for pulling the hardened images at deploy
    time):
    ```bash
    oc -n virtvalidate create secret docker-registry redhat-registry-pull \

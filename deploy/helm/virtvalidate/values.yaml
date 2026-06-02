@@ -17,8 +17,8 @@ image:
   # "standard" uses the digest-pinned UBI 9 image tags. "hardened"
   # appends a "-hardened" suffix to the resolved tag and pulls from
   # registry.redhat.io — requires image.pullSecrets to reference a
-  # service-account pull secret. See docs/SECURITY_POSTURE.md for the
-  # tradeoffs and docs/CONTAINER_IMAGES.md for the pull-secret recipe.
+  # service-account pull secret. See docs/CONTAINER_IMAGES.md for the
+  # variant tradeoffs and the pull-secret recipe.
   variant: standard
   # Optional list of pull-secret names to inject into every internal
   # workload (backend + frontend Deployments, migrations Job). Leave
