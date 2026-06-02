@@ -225,11 +225,12 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
     `registry.redhat.io`. Minimal, signed, SBOM-embedded, ~0 CVE.
     Hardened images get a `-hardened` suffix on their Quay tag.
   - Build the full matrix with `scripts/build-all-images.sh <tag>`.
-    Standard is built on every push + PR; hardened is built on
-    pushes to main only.
+    Both variants are built locally and pushed from the dev Mac
+    (there is no CI build path — see "CI & security scanning
+    (intentionally deferred)" below).
   - Deploy selection is via the Helm `image.variant` value
     (`standard` | `hardened`). Default is `standard`. See the chart
-    README + `docs/SECURITY_POSTURE.md`.
+    README + `docs/CONTAINER_IMAGES.md`.
   - Don't swap to community bases even temporarily — the FIPS
     posture quietly breaks.
   - **Distroless caveat.** Hardened images have no shell.
@@ -239,9 +240,25 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
     Local dev (podman-compose) uses standard images for easy
     iteration.
   See `docs/CONTAINER_IMAGES.md` for the full rationale, image
-  layout, scanning procedure, registry.redhat.io auth, and air-gapped
-  mirroring guidance for both variants. See `docs/SECURITY_POSTURE.md`
-  for the procurement-facing security posture.
+  layout, registry.redhat.io auth, and air-gapped mirroring guidance
+  for both variants.
+
+## CI & security scanning (intentionally deferred)
+
+CI gates and security scanners (Snyk, Trivy, CodeQL, Dependabot) were
+removed during early development — they were premature for a solo,
+pre-alpha project and added friction without payoff. Development relies
+on local `ruff` and `pytest` discipline for now (plus a blocking
+`gitleaks` pre-commit hook, kept because leaked credentials are
+unrecoverable). CI and scanning will be reintroduced deliberately once
+there is a shippable product, a release cadence, and/or contributors to
+protect.
+
+This does NOT affect the dual-variant container images. The standard +
+hardened image build (`scripts/build-all-images.sh`, the `-hardened`
+tag suffix, the Helm `image.variant` toggle) is a PRODUCT feature and
+remains fully supported. The hardened variant exists for its runtime
+security properties, independent of the deferred CI scanning.
 
 ## Architecture documentation
 - `docs/ARCHITECTURE.md` and `docs/architecture-diagram.html` are
