@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import shlex
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,7 @@ import paramiko
 from app.core.commands import CommandSet, command_set_for
 from app.core.fips import FIPSViolation, validate_ssh_key
 from app.core.os_profile import UNKNOWN_PROFILE, OSProfile, detect, detect_windows
+from app.core.ssh_guard import SSHCommandNotAllowed, assert_read_only
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +165,17 @@ class SSHCollector:
         # The wrapper consults this after collect() to decide whether
         # to write an audit row.
         self.last_host_key_event: Optional[dict] = None
+        # OS family of the current target, set in ``collect`` once detection
+        # picks a CommandSet. Read by the read-only gate in ``_run`` for
+        # clearer error context. Stays "unknown" during OS detection itself
+        # (the gate routes on command content, not this field).
+        self._active_os_family: str = "unknown"
+        # Per-command audit accumulator. One dict per command ``_run``
+        # executes (or blocks), cleared at the top of ``collect`` so each VM
+        # gets its own list. The engine copies this into the CollectionResult
+        # so the orchestrator thread can persist CommandAudit rows — the
+        # collector itself never touches the DB.
+        self.command_log: list[dict] = []
 
     def collect(self, host: str, username: str = "virtvalidate") -> dict:
         """SSH into a VM and collect full system state as structured JSON.
@@ -172,10 +185,13 @@ class SSHCollector:
         know whether it's talking to RHEL 7 or RHEL 9.
         """
         started = datetime.now(timezone.utc)
+        # Fresh per-VM command audit — never carry rows across collections.
+        self.command_log = []
         with self._connect(host, username) as client:
             # ---- step 1: OS detection -----------------------------------
             os_profile = self._detect_os(client)
             cs = command_set_for(os_profile)
+            self._active_os_family = os_profile.distro_family
             if os_profile.detection_confidence == "low":
                 logger.warning(
                     "OS detection unclear for %s — falling back to " "modern-Linux defaults",
@@ -378,10 +394,27 @@ class SSHCollector:
         layer always sees clean UTF-8 text without CRLF artifacts. A
         plain Linux session runs through this normalization as a no-op
         because UTF-8 BOMs are rare and CRLF→LF on stripped lines is safe.
+
+        Every command passes the read-only gate before it touches the wire.
+        The collector only ever issues commands from the fixed
+        ``commands.py`` dispatch table, so this never fires in normal
+        operation — it's a fail-closed backstop against a future change
+        introducing a mutating command on a production host.
+
+        Every invocation is recorded in ``self.command_log`` (including a
+        blocked command, before the exception propagates) so the audit
+        trail captures exactly what the agent ran on the host.
         """
+        started = time.monotonic()
+        try:
+            assert_read_only(command, self._active_os_family)
+        except SSHCommandNotAllowed:
+            self._record_command(command, exit_status=None, raw=b"", started=started, blocked=True)
+            raise
         _, stdout, _stderr = client.exec_command(command, timeout=self.command_timeout)
         exit_code = stdout.channel.recv_exit_status()
         raw = stdout.read()
+        self._record_command(command, exit_status=exit_code, raw=raw, started=started)
         if exit_code != 0:
             return ""
         # PowerShell honors $OutputEncoding for stdout; its default differs
@@ -399,6 +432,40 @@ class SSHCollector:
         # Normalize CRLF → LF so existing line-based parsers don't see
         # trailing \r artifacts on Windows output.
         return text.replace("\r\n", "\n").replace("\r", "\n")
+
+    #: Max stdout bytes retained as a text preview in the audit row. The full
+    #: bytes are never stored — just the length + a SHA-256 for verification.
+    _STDOUT_PREVIEW_BYTES = 4096
+
+    def _record_command(
+        self,
+        command: str,
+        *,
+        exit_status: int | None,
+        raw: bytes,
+        started: float,
+        blocked: bool = False,
+    ) -> None:
+        """Append one audit record for a command ``_run`` handled.
+
+        Stores the command, exit status, stdout length + SHA-256 (so output
+        can be verified without retaining it), a bounded text preview, the
+        wall-clock duration, and whether the read-only gate blocked it.
+        """
+        preview: str | None = None
+        if raw:
+            preview = raw[: self._STDOUT_PREVIEW_BYTES].decode("utf-8", errors="replace")
+        self.command_log.append(
+            {
+                "command": command,
+                "exit_status": exit_status,
+                "stdout_byte_count": len(raw),
+                "stdout_sha256": hashlib.sha256(raw).hexdigest() if raw else None,
+                "stdout_truncated": preview,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "blocked": blocked,
+            }
+        )
 
     def _run_json(self, client: paramiko.SSHClient, command: str):
         """Run a command and parse its stdout as JSON.

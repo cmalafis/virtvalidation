@@ -1220,7 +1220,8 @@ const DATA = {
         "depends_on": [
           "app.core.commands",
           "app.core.fips",
-          "app.core.os_profile"
+          "app.core.os_profile",
+          "app.core.ssh_guard"
         ]
       }
     ],
@@ -2146,6 +2147,30 @@ const DATA = {
     "system": [
       {
         "kind": "module",
+        "id": "app.api.command_audits",
+        "title": "app.api.command_audits",
+        "subtitle": "backend/app/api/command_audits.py",
+        "summary": "Read-only per-command SSH audit endpoint.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/command-audits",
+            "handler": "list_command_audits",
+            "summary": "Paginated, filterable command-audit listing \u2014 newest first."
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.db",
+          "app.core.limits",
+          "app.models.command_audit",
+          "app.schemas.command_audit"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.api.health",
         "title": "app.api.health",
         "subtitle": "backend/app/api/health.py",
@@ -2190,6 +2215,36 @@ const DATA = {
           "app.core.fips",
           "app.core.llm.runtime",
           "app.core.migrations"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.api.inference_logs",
+        "title": "app.api.inference_logs",
+        "subtitle": "backend/app/api/inference_logs.py",
+        "summary": "Read-only inference-log endpoints.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/inference-logs",
+            "handler": "list_inference_logs",
+            "summary": "Paginated, filterable inference-log listing \u2014 newest first."
+          },
+          {
+            "method": "GET",
+            "path": "/api/inference-logs/stats",
+            "handler": "inference_log_stats",
+            "summary": "Roll-up counts by method and operation \u2014 feeds the LLM-health panel."
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.db",
+          "app.core.limits",
+          "app.models.inference_log",
+          "app.schemas.inference_log"
         ]
       },
       {
@@ -2471,7 +2526,6 @@ const DATA = {
           "app.core.config",
           "app.core.db",
           "app.core.fips",
-          "app.core.llm.factory",
           "app.core.llm.runtime",
           "app.core.llm.types",
           "app.core.scheduler",
@@ -3125,6 +3179,12 @@ const DATA = {
           },
           {
             "method": "GET",
+            "path": "/api/plans/{plan_id}/waves/{wave_number}/preview",
+            "handler": "preview_wave_run",
+            "summary": "Operator dry-run: list the target hosts, the read-only commands that"
+          },
+          {
+            "method": "GET",
             "path": "/api/baseline-runs/{run_id}",
             "handler": "get_baseline_run",
             "summary": ""
@@ -3157,17 +3217,22 @@ const DATA = {
         "classes": [],
         "functions": [],
         "depends_on": [
+          "app.core",
           "app.core.audit",
           "app.core.collection.wave_jobs",
+          "app.core.commands",
           "app.core.db",
           "app.models.baseline_run",
           "app.models.plan",
+          "app.models.settings",
           "app.models.ssh_key",
           "app.models.validation_run",
+          "app.models.vcenter",
           "app.models.vm",
           "app.schemas.baseline_run",
           "app.schemas.ssh_key",
           "app.schemas.validation_run",
+          "app.schemas.wave_preview",
           "app.services"
         ]
       },
@@ -3552,7 +3617,8 @@ const DATA = {
               "vm_id",
               "host",
               "port",
-              "username"
+              "username",
+              "vcenter_id"
             ],
             "methods": [],
             "summary": "Minimal connection identity for one VM. Keeps the engine DB-agnostic."
@@ -3572,7 +3638,8 @@ const DATA = {
               "failure_detail",
               "started_at",
               "completed_at",
-              "duration_ms"
+              "duration_ms",
+              "command_log"
             ],
             "methods": [],
             "summary": ""
@@ -3653,7 +3720,6 @@ const DATA = {
         ],
         "depends_on": [
           "app.core",
-          "app.core.collection.collector_spec",
           "app.core.collection.diff",
           "app.core.collection.engine",
           "app.core.collection.orchestrator",
@@ -3710,6 +3776,10 @@ const DATA = {
           {
             "name": "command_set_for",
             "summary": "Pick the right ``CommandSet`` for an ``OSProfile``."
+          },
+          {
+            "name": "command_set_for_family",
+            "summary": "Best-effort ``CommandSet`` from just a free-text OS label, WITHOUT"
           }
         ],
         "depends_on": [
@@ -3754,6 +3824,8 @@ const DATA = {
               "ssh_key_path",
               "cluster_name",
               "ssh_max_concurrency",
+              "ssh_max_concurrency_per_vcenter",
+              "ssh_circuit_breaker_threshold",
               "ssh_command_timeout_seconds",
               "ssh_connect_timeout_seconds",
               "fips_mode",
@@ -3783,6 +3855,13 @@ const DATA = {
               "llm_maas_api_key",
               "llm_maas_timeout_seconds",
               "llm_maas_verify_ssl",
+              "llm_trustyai_base_url",
+              "llm_trustyai_model",
+              "llm_trustyai_api_key",
+              "llm_trustyai_input_detectors",
+              "llm_trustyai_output_detectors",
+              "llm_trustyai_timeout_seconds",
+              "llm_trustyai_verify_ssl",
               "mtv_namespace",
               "mtv_source_provider",
               "mtv_destination_provider",
@@ -4031,6 +4110,14 @@ const DATA = {
             "summary": "Endpoint returned a non-2xx status or malformed body."
           },
           {
+            "name": "LLMGuardrailError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "A TrustyAI Guardrails Orchestrator detector flagged the input or"
+          },
+          {
             "name": "LLMBackend",
             "kind": "class",
             "table": "",
@@ -4150,9 +4237,27 @@ const DATA = {
           "app.core.llm.maas_backend",
           "app.core.llm.mock_backend",
           "app.core.llm.ollama_backend",
+          "app.core.llm.trustyai_backend",
           "app.core.llm.types",
           "app.core.llm.vllm_backend"
         ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.inference_log",
+        "title": "app.core.llm.inference_log",
+        "subtitle": "backend/app/core/llm/inference_log.py",
+        "summary": "Persist one :class:`~app.models.inference_log.InferenceLog` per LLM call.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "record_inference",
+            "summary": "Write one InferenceLog row. Best-effort \u2014 never raises to the caller."
+          }
+        ],
+        "depends_on": []
       },
       {
         "kind": "module",
@@ -4412,6 +4517,46 @@ const DATA = {
         ],
         "depends_on": [
           "app.core"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.llm.trustyai_backend",
+        "title": "app.core.llm.trustyai_backend",
+        "subtitle": "backend/app/core/llm/trustyai_backend.py",
+        "summary": "TrustyAI Guardrails Orchestrator backend (RHOAI).",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "TrustyAIBackend",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "chat",
+                "summary": ""
+              },
+              {
+                "name": "chat_stream",
+                "summary": ""
+              },
+              {
+                "name": "health_check",
+                "summary": ""
+              },
+              {
+                "name": "list_models",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.llm.base"
         ]
       },
       {
@@ -4710,6 +4855,7 @@ const DATA = {
         "depends_on": [
           "app.core",
           "app.core.audit",
+          "app.core.llm.inference_log",
           "app.core.vm_lifecycle",
           "app.models.plan",
           "app.models.target",
@@ -4745,7 +4891,12 @@ const DATA = {
               "notable_concerns",
               "method",
               "mtv_yaml",
-              "vm_names"
+              "vm_names",
+              "inference_messages",
+              "inference_response",
+              "inference_backend_type",
+              "inference_model",
+              "inference_latency_ms"
             ],
             "methods": [
               {
@@ -5016,6 +5167,32 @@ const DATA = {
           "app.core.audit",
           "app.models.vm"
         ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.ssh_guard",
+        "title": "app.core.ssh_guard",
+        "subtitle": "backend/app/core/ssh_guard.py",
+        "summary": "Read-only command gate for the SSH collector.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "SSHCommandNotAllowed",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "A command failed the read-only gate and was refused before execution."
+          }
+        ],
+        "functions": [
+          {
+            "name": "assert_read_only",
+            "summary": "Raise :class:`SSHCommandNotAllowed` unless ``command`` is read-only."
+          }
+        ],
+        "depends_on": []
       },
       {
         "kind": "module",
@@ -5356,6 +5533,7 @@ const DATA = {
           "app.core.capture",
           "app.core.config",
           "app.core.llm",
+          "app.core.llm.inference_log",
           "app.core.ssh",
           "app.core.validation_cache",
           "app.core.validation_tiers",
@@ -5611,7 +5789,9 @@ const DATA = {
         ],
         "depends_on": [
           "app.api.audit",
+          "app.api.command_audits",
           "app.api.health",
+          "app.api.inference_logs",
           "app.api.network_reviews",
           "app.api.plans",
           "app.api.reports",
@@ -5699,6 +5879,8 @@ const DATA = {
               "captured_vms",
               "failed_vms",
               "progress_message",
+              "authorized_by",
+              "authorization_reason",
               "started_at",
               "completed_at",
               "created_at"
@@ -5727,6 +5909,43 @@ const DATA = {
             ],
             "methods": [],
             "summary": "Per-VM baseline sample owned by a :class:`BaselineRun`."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.command_audit",
+        "title": "app.models.command_audit",
+        "subtitle": "backend/app/models/command_audit.py",
+        "summary": "Per-command SSH audit trail \u2014 exactly what the agent ran on each host.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "CommandAudit",
+            "kind": "model",
+            "table": "command_audits",
+            "fields": [
+              "id",
+              "vm_id",
+              "host",
+              "run_type",
+              "run_id",
+              "command",
+              "exit_status",
+              "stdout_byte_count",
+              "stdout_sha256",
+              "stdout_truncated",
+              "duration_ms",
+              "blocked",
+              "started_at"
+            ],
+            "methods": [],
+            "summary": ""
           }
         ],
         "functions": [],
@@ -5799,6 +6018,44 @@ const DATA = {
             ],
             "methods": [],
             "summary": "A migration program is the top-level container an operator runs."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.inference_log",
+        "title": "app.models.inference_log",
+        "subtitle": "backend/app/models/inference_log.py",
+        "summary": "Full LLM inference capture \u2014 one row per model call, input and output.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "InferenceLog",
+            "kind": "model",
+            "table": "inference_logs",
+            "fields": [
+              "id",
+              "operation",
+              "backend_type",
+              "model",
+              "method",
+              "input_messages",
+              "output_text",
+              "detections",
+              "verdict",
+              "latency_ms",
+              "resource_type",
+              "resource_id",
+              "vm_id",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
           }
         ],
         "functions": [],
@@ -6006,6 +6263,7 @@ const DATA = {
               "active_llm_backend",
               "last_llm_error",
               "last_llm_error_at",
+              "ssh_operations_enabled",
               "updated_at"
             ],
             "methods": [],
@@ -6365,6 +6623,8 @@ const DATA = {
               "failed_vms",
               "unreachable_vms",
               "progress_message",
+              "authorized_by",
+              "authorization_reason",
               "started_at",
               "completed_at",
               "created_at"
@@ -6510,7 +6770,9 @@ const DATA = {
             "kind": "schema",
             "table": "",
             "fields": [
-              "ssh_key_id"
+              "ssh_key_id",
+              "authorized_by",
+              "authorization_reason"
             ],
             "methods": [],
             "summary": ""
@@ -6551,6 +6813,8 @@ const DATA = {
               "captured_vms",
               "failed_vms",
               "progress_message",
+              "authorized_by",
+              "authorization_reason",
               "started_at",
               "completed_at",
               "created_at",
@@ -6576,6 +6840,115 @@ const DATA = {
         "depends_on": [
           "app.models.baseline_run"
         ]
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.command_audit",
+        "title": "app.schemas.command_audit",
+        "subtitle": "backend/app/schemas/command_audit.py",
+        "summary": "Schemas for the read-only per-command audit surface.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "CommandAuditRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "vm_id",
+              "host",
+              "run_type",
+              "run_id",
+              "command",
+              "exit_status",
+              "stdout_byte_count",
+              "stdout_sha256",
+              "stdout_truncated",
+              "duration_ms",
+              "blocked",
+              "started_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "CommandAuditListResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "items",
+              "total",
+              "skip",
+              "limit"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.inference_log",
+        "title": "app.schemas.inference_log",
+        "subtitle": "backend/app/schemas/inference_log.py",
+        "summary": "Schemas for the read-only inference-log audit surface.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "InferenceLogRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "operation",
+              "backend_type",
+              "model",
+              "method",
+              "input_messages",
+              "output_text",
+              "detections",
+              "verdict",
+              "latency_ms",
+              "resource_type",
+              "resource_id",
+              "vm_id",
+              "created_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "InferenceLogListResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "items",
+              "total",
+              "skip",
+              "limit"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "InferenceLogStats",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "total",
+              "by_method",
+              "by_operation"
+            ],
+            "methods": [],
+            "summary": "Roll-up for the dashboard: how many calls, and how often each"
+          }
+        ],
+        "functions": [],
+        "depends_on": []
       },
       {
         "kind": "module",
@@ -6789,6 +7162,7 @@ const DATA = {
               "ollama_model",
               "schedule_preset",
               "ssh_host_key_policy",
+              "ssh_operations_enabled",
               "updated_at",
               "next_run_at"
             ],
@@ -6802,7 +7176,8 @@ const DATA = {
             "fields": [
               "ollama_model",
               "schedule_preset",
-              "ssh_host_key_policy"
+              "ssh_host_key_policy",
+              "ssh_operations_enabled"
             ],
             "methods": [],
             "summary": ""
@@ -7602,7 +7977,9 @@ const DATA = {
             "kind": "schema",
             "table": "",
             "fields": [
-              "ssh_key_id"
+              "ssh_key_id",
+              "authorized_by",
+              "authorization_reason"
             ],
             "methods": [],
             "summary": ""
@@ -7643,6 +8020,8 @@ const DATA = {
               "failed_vms",
               "unreachable_vms",
               "progress_message",
+              "authorized_by",
+              "authorization_reason",
               "started_at",
               "completed_at",
               "created_at",
@@ -7874,6 +8253,51 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.schemas.wave_preview",
+        "title": "app.schemas.wave_preview",
+        "subtitle": "backend/app/schemas/wave_preview.py",
+        "summary": "Schema for the wave dry-run preview \u2014 what WOULD run, without connecting.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "WaveVMPreview",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "name",
+              "host",
+              "username",
+              "os_family",
+              "environment",
+              "commands"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "WavePreviewResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "plan_id",
+              "wave_number",
+              "vm_count",
+              "requires_authorization",
+              "authorization_reason",
+              "ssh_operations_enabled",
+              "vms"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
         "id": "app.services.ssh_key_service",
         "title": "app.services.ssh_key_service",
         "subtitle": "backend/app/services/ssh_key_service.py",
@@ -7971,6 +8395,45 @@ const DATA = {
         "members": [
           {
             "name": "App",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/components/AgentActivity.jsx",
+        "title": "AgentActivity.jsx",
+        "subtitle": "frontend/src/components/AgentActivity.jsx",
+        "summary": "Agent Activity \u2014 the operator's \"what is the agent actually doing?\" surface.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/command-audits?{id}",
+          "/api/inference-logs/stats",
+          "/api/inference-logs?{id}"
+        ],
+        "members": [
+          {
+            "name": "Pager",
+            "kind": "component"
+          },
+          {
+            "name": "pagerBtn",
+            "kind": "helper"
+          },
+          {
+            "name": "Badge",
+            "kind": "component"
+          },
+          {
+            "name": "CommandAuditTable",
+            "kind": "component"
+          },
+          {
+            "name": "InferenceLogTable",
+            "kind": "component"
+          },
+          {
+            "name": "AgentActivity",
             "kind": "component"
           }
         ]
@@ -9191,12 +9654,17 @@ const DATA = {
           "/api/baseline-runs/{id}",
           "/api/baseline-runs/{id}/retry-failed",
           "/api/plans/{id}/waves/{id}/baseline",
+          "/api/plans/{id}/waves/{id}/preview",
           "/api/plans/{id}/waves/{id}/revoke-validation-key",
           "/api/plans/{id}/waves/{id}/validate",
           "/api/ssh-keys?status=active&limit=200",
           "/api/validation-runs/{id}"
         ],
         "members": [
+          {
+            "name": "AuthLine",
+            "kind": "component"
+          },
           {
             "name": "WaveRunsPanel",
             "kind": "component"

@@ -169,6 +169,133 @@ async def test_concurrency_clamped_to_safe_range():
 
 
 @pytest.mark.asyncio
+async def test_reaches_requested_simultaneity_of_20():
+    """Operator requirement: validation must run on 10-20 machines at once.
+
+    The other concurrency tests pin the *upper* bound (never exceed the
+    ceiling). This one pins the *floor* deterministically: with a ceiling
+    of 20 and >=20 targets, exactly 20 collections must be in flight
+    simultaneously. A ``threading.Barrier(20)`` makes that provable —
+    every worker blocks until 20 have arrived, so the batch can only
+    progress if the orchestrator genuinely admits 20 at once. The barrier
+    has a timeout so a regression (e.g. an accidental ceiling of 1) fails
+    the test instead of hanging the suite.
+    """
+
+    class _BarrierEngine:
+        def __init__(self, parties: int) -> None:
+            self.barrier = threading.Barrier(parties, timeout=10)
+            self.max_seen = 0
+            self.current = 0
+            self.lock = threading.Lock()
+
+        def collect(self, target: VMTarget) -> CollectionResult:
+            with self.lock:
+                self.current += 1
+                self.max_seen = max(self.max_seen, self.current)
+            # Block until 20 workers are simultaneously in flight. This can
+            # only succeed if the orchestrator admits 20 at once.
+            self.barrier.wait()
+            with self.lock:
+                self.current -= 1
+            return _result(target.vm_id)
+
+    engine = _BarrierEngine(parties=20)
+    targets = [VMTarget(vm_id=i, host=f"10.0.0.{i}") for i in range(1, 41)]
+    results = await run_collection_batch(targets=targets, engine=engine, max_concurrency=20)
+    assert len(results) == 40
+    assert all(r.succeeded for r in results)
+    # The barrier could only trip if 20 ran concurrently.
+    assert engine.max_seen == 20, f"expected 20 simultaneous, saw {engine.max_seen}"
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_short_circuits_after_consecutive_failures():
+    """After N consecutive connection failures to one vCenter, the remaining
+    targets in that vCenter are short-circuited without connecting."""
+
+    class _AlwaysUnreachable:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def collect(self, target: VMTarget) -> CollectionResult:
+            self.calls += 1
+            return _result(target.vm_id, succeeded=False, failure_category="unreachable")
+
+    engine = _AlwaysUnreachable()
+    # All same vCenter; serial (max_concurrency=1) so "consecutive" is exact.
+    targets = [VMTarget(vm_id=i, host=f"h{i}", vcenter_id=1) for i in range(1, 11)]
+    results = await run_collection_batch(
+        targets=targets,
+        engine=engine,
+        max_concurrency=1,
+        circuit_breaker_threshold=3,
+    )
+    assert len(results) == 10
+    # Only the first 3 actually attempted a connection; the rest tripped.
+    assert engine.calls == 3
+    tripped = [r for r in results if "Circuit breaker" in (r.failure_detail or "")]
+    assert len(tripped) == 7
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_is_per_vcenter():
+    """A tripped vCenter doesn't short-circuit a healthy one."""
+
+    class _Engine:
+        def collect(self, target: VMTarget) -> CollectionResult:
+            if target.vcenter_id == 1:
+                return _result(target.vm_id, succeeded=False, failure_category="unreachable")
+            return _result(target.vm_id, succeeded=True)
+
+    targets = [VMTarget(vm_id=i, host=f"h{i}", vcenter_id=1) for i in range(1, 6)] + [
+        VMTarget(vm_id=i, host=f"h{i}", vcenter_id=2) for i in range(100, 105)
+    ]
+    results = await run_collection_batch(
+        targets=targets,
+        engine=_Engine(),
+        max_concurrency=1,
+        circuit_breaker_threshold=3,
+    )
+    by_id = {r.vm_id: r for r in results}
+    # vCenter 2 all succeed regardless of vCenter 1's breaker.
+    assert all(by_id[i].succeeded for i in range(100, 105))
+
+
+@pytest.mark.asyncio
+async def test_per_vcenter_concurrency_cap():
+    """In-flight sessions to a single vCenter never exceed the per-vCenter cap
+    even when the global ceiling is higher."""
+
+    class _CountingPerVc:
+        def __init__(self) -> None:
+            self.current = 0
+            self.max_seen = 0
+            self.lock = threading.Lock()
+
+        def collect(self, target: VMTarget) -> CollectionResult:
+            import time
+
+            with self.lock:
+                self.current += 1
+                self.max_seen = max(self.max_seen, self.current)
+            time.sleep(0.02)
+            with self.lock:
+                self.current -= 1
+            return _result(target.vm_id)
+
+    engine = _CountingPerVc()
+    targets = [VMTarget(vm_id=i, host=f"h{i}", vcenter_id=1) for i in range(1, 21)]
+    await run_collection_batch(
+        targets=targets,
+        engine=engine,
+        max_concurrency=20,
+        max_concurrency_per_vcenter=3,
+    )
+    assert engine.max_seen <= 3, f"per-vCenter cap violated: saw {engine.max_seen}"
+
+
+@pytest.mark.asyncio
 async def test_scale_1000_mock_vms_complete():
     """Brief's scale requirement: 1000 VMs must complete in reasonable
     wall-clock at the default concurrency. Each mock takes ~20ms; 1000

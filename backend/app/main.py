@@ -5,7 +5,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.audit import router as audit_router
+from app.api.command_audits import router as command_audits_router
 from app.api.health import router as health_router
+from app.api.inference_logs import router as inference_logs_router
 from app.api.network_reviews import router as network_reviews_router
 from app.api.plans import router as plans_router
 from app.api.plans import strategies_router as planning_strategies_router
@@ -182,6 +184,8 @@ app.include_router(health_router, prefix="/api/health")
 app.include_router(system_router, prefix="/api/system")
 app.include_router(settings_router, prefix="/api/settings")
 app.include_router(audit_router, prefix="/api/audit")
+app.include_router(inference_logs_router, prefix="/api/inference-logs")
+app.include_router(command_audits_router, prefix="/api/command-audits")
 app.include_router(templates_router, prefix="/api/templates")
 app.include_router(reports_router, prefix="/api/reports")
 app.include_router(rvtools_router, prefix="/api/rvtools")

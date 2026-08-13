@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, String, Text, func
+from sqlalchemy import Boolean, DateTime, Enum, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -76,6 +76,13 @@ class AppSettings(Base):
     last_llm_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_llm_error_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # Global kill-switch for SSH operations against managed hosts. When False,
+    # the API refuses to start any baseline/validation run (503) — the operator
+    # can halt the agent instantly without a redeploy. Defaults True so a fresh
+    # deployment is operational; operators flip it off from the Settings UI.
+    ssh_operations_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1", nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

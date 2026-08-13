@@ -13,6 +13,7 @@ class AppSettingsRead(BaseModel):
     ollama_model: str
     schedule_preset: SchedulePreset
     ssh_host_key_policy: SSHHostKeyPolicy
+    ssh_operations_enabled: bool
     updated_at: datetime
     # Populated from the running APScheduler instance — None when the
     # scheduler isn't running (tests, freshly booted process, etc.).
@@ -24,6 +25,9 @@ class AppSettingsUpdate(BaseModel):
     ollama_model: str | None = Field(default=None, min_length=1, max_length=128)
     schedule_preset: SchedulePreset | None = None
     ssh_host_key_policy: SSHHostKeyPolicy | None = None
+    # Global SSH kill-switch. Set False to immediately refuse new
+    # baseline/validation runs.
+    ssh_operations_enabled: bool | None = None
 
 
 class HealthStatus(BaseModel):

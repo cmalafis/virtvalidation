@@ -87,7 +87,7 @@ def test_baseline_kickoff_returns_202_and_creates_per_vm_rows(
     key_id = key.id
 
     # Patch the orchestrator so the background task is fast + deterministic.
-    async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete):
+    async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete, **kwargs):
         results = []
         for t in targets:
             result = CollectionResult(
@@ -134,7 +134,7 @@ def test_baseline_partial_success_records_failures(
     key = ssh_key_service.generate_keypair(db_session, name="partial-key")
     key_id = key.id
 
-    async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete):
+    async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete, **kwargs):
         # First VM fails, second is unreachable, third succeeds.
         for i, t in enumerate(targets):
             if i == 0:
@@ -212,7 +212,7 @@ def test_retry_failed_creates_new_run_with_only_failed_vms(
     key = ssh_key_service.generate_keypair(db_session, name="retry-key")
     key_id = key.id
 
-    async def first_run(*, targets, engine, max_concurrency, on_vm_complete):
+    async def first_run(*, targets, engine, max_concurrency, on_vm_complete, **kwargs):
         # First and last succeed, middle fails.
         for i, t in enumerate(targets):
             if i == 1:
@@ -247,7 +247,7 @@ def test_retry_failed_creates_new_run_with_only_failed_vms(
     # Now retry — the new run should only have 1 VM.
     seen_vm_ids: list[int] = []
 
-    async def second_run(*, targets, engine, max_concurrency, on_vm_complete):
+    async def second_run(*, targets, engine, max_concurrency, on_vm_complete, **kwargs):
         for t in targets:
             seen_vm_ids.append(t.vm_id)
             result = CollectionResult(
@@ -275,7 +275,7 @@ def test_retry_failed_creates_new_run_with_only_failed_vms(
 # Validation kick-off + read
 # ---------------------------------------------------------------------------
 def _seed_completed_baseline(client, plan_id, key_id, monkeypatch):
-    async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete):
+    async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete, **kwargs):
         for t in targets:
             result = CollectionResult(
                 vm_id=t.vm_id,
@@ -336,7 +336,7 @@ def test_validation_produces_fail_when_service_regression(
     _seed_completed_baseline(client, plan.id, key_id, monkeypatch)
 
     # Validation collection: ssh service is failed → fail verdict.
-    async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete):
+    async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete, **kwargs):
         for t in targets:
             state = _full_state(t.host)
             state["services"] = [{"unit": "sshd.service", "active": "failed", "sub": "failed"}]
@@ -368,7 +368,7 @@ def test_validation_unreachable_when_collection_fails(
     key_id = key.id
     _seed_completed_baseline(client, plan.id, key_id, monkeypatch)
 
-    async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete):
+    async def fake_batch(*, targets, engine, max_concurrency, on_vm_complete, **kwargs):
         for t in targets:
             result = CollectionResult(
                 vm_id=t.vm_id,

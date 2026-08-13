@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Any, Optional
 
-from app.core.llm.base import LLMAuthError, LLMBackend, LLMBackendError
+from app.core.llm.base import LLMAuthError, LLMBackend, LLMBackendError, LLMGuardrailError
 from app.core.llm.runtime import get_active_backend
 from app.core.llm.status import clear_last_llm_error, record_last_llm_error
 
@@ -226,6 +226,7 @@ class LLMClient:
         vm_role: str,
         *,
         max_retries: int = 1,
+        capture: Optional[dict] = None,
     ) -> dict:
         """Reason over pre/post migration diff and return a structured verdict.
 
@@ -235,6 +236,13 @@ class LLMClient:
         retry also fails, the verdict is marked ``manual_review`` so
         the bulk pipeline can flag it for an operator without
         blocking other VMs.
+
+        ``capture`` is an optional out-dict the caller can pass to receive
+        the exact ``messages`` sent, the raw ``raw_response`` text, and the
+        ``method`` taken (``llm`` / ``llm_retry_N`` / ``manual_review``) for
+        the InferenceLog audit row. It's populated on every non-raising
+        return path so the orchestrator can persist what the model saw and
+        produced without the verdict dict (which gets cached) carrying it.
         """
         diff = self._diff_state(baseline, current_state)
         # The OS profile is captured at baseline time; surface it in the
@@ -285,6 +293,35 @@ class LLMClient:
                     f"validation. Check the configured credentials."
                 )
                 raise LLMError(str(e)) from e
+            except LLMGuardrailError as e:
+                # A guardrail detector flagged the input or output. Asymmetric
+                # like an auth failure: surface to the operator banner AND
+                # complete the flow via a manual-review verdict (the
+                # validate-retry-fallback rule — never a 5xx because a detector
+                # fired). The flagged content is NOT cached.
+                record_last_llm_error(
+                    f"{getattr(self.backend, 'backend_type', 'LLM')} guardrail "
+                    f"detector flagged a validation prompt/response. The result "
+                    f"was routed to manual review. {e}"
+                )
+                if capture is not None:
+                    capture["messages"] = messages
+                    capture["raw_response"] = last_raw
+                    capture["method"] = "mechanical_fallback_guardrail"
+                    capture["detections"] = getattr(e, "detections", {})
+                return {
+                    "status": "warn",
+                    "summary": (
+                        "A TrustyAI guardrail detector flagged this validation "
+                        f"exchange ({e}). Routed to manual operator review."
+                    ),
+                    "findings": [],
+                    "remediation": [],
+                    "confidence": "low",
+                    "diff": diff,
+                    "model": "",
+                    "needs_manual_review": True,
+                }
             except LLMBackendError as e:
                 raise LLMError(str(e)) from e
             last_raw = response.get("content", "")
@@ -295,6 +332,10 @@ class LLMClient:
                 verdict["needs_manual_review"] = False
                 # Successful LLM call — clear any stale auth banner.
                 clear_last_llm_error()
+                if capture is not None:
+                    capture["messages"] = messages
+                    capture["raw_response"] = last_raw
+                    capture["method"] = "llm" if attempt == 0 else f"llm_retry_{attempt}"
                 return verdict
             except LLMError as e:
                 last_validation_error = str(e)
@@ -307,6 +348,10 @@ class LLMClient:
 
         # All retries exhausted — surface a "manual review" verdict
         # rather than failing the whole bulk run.
+        if capture is not None:
+            capture["messages"] = messages
+            capture["raw_response"] = last_raw
+            capture["method"] = "manual_review"
         return {
             "status": "warn",
             "summary": (

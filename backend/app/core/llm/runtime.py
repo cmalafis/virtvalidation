@@ -144,6 +144,10 @@ def is_backend_configured(backend_type: str, cfg: Settings | None = None) -> boo
         return bool(cfg.vllm_endpoint and cfg.vllm_model_name)
     if bt == LLMBackendType.maas.value:
         return bool(cfg.llm_maas_base_url and cfg.llm_maas_model and cfg.llm_maas_api_key)
+    if bt == LLMBackendType.trustyai.value:
+        # API key is OPTIONAL (an in-cluster orchestrator may be
+        # unauthenticated) — only the endpoint + model are required.
+        return bool(cfg.llm_trustyai_base_url and cfg.llm_trustyai_model)
     if bt == LLMBackendType.mock.value:
         return True
     return False
@@ -177,6 +181,11 @@ def missing_config_for(backend_type: str, cfg: Settings | None = None) -> list[s
             missing.append("LLM_MAAS_MODEL")
         if not cfg.llm_maas_api_key:
             missing.append("LLM_MAAS_API_KEY")
+    elif bt == LLMBackendType.trustyai.value:
+        if not cfg.llm_trustyai_base_url:
+            missing.append("LLM_TRUSTYAI_BASE_URL")
+        if not cfg.llm_trustyai_model:
+            missing.append("LLM_TRUSTYAI_MODEL")
     return missing
 
 

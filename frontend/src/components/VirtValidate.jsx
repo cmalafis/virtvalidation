@@ -2296,6 +2296,16 @@ export default function VirtValidate() {
             }}>
               ⤳ Mappings
             </Link>
+            <Link to="/agent-activity" title="Command audit + LLM inference log" style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              background: "transparent", border: "1px solid #3a3a55",
+              color: "#aaaacc", textDecoration: "none",
+              padding: "10px 16px", fontSize: 12,
+              fontFamily: "'Barlow', sans-serif",
+              letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700,
+            }}>
+              ◈ Agent Activity
+            </Link>
             <Link to="/settings" title="System configuration" style={{
               display: "inline-flex", alignItems: "center", gap: 8,
               background: "transparent", border: "1px solid #3a3a55",

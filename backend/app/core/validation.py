@@ -41,6 +41,7 @@ from app.core.capture import (
 )
 from app.core.config import settings
 from app.core.llm import LLMClient, LLMError
+from app.core.llm.inference_log import record_inference
 from app.core.ssh import SSHCollectionError, SSHCollector
 from app.core.validation_cache import lookup as cache_lookup
 from app.core.validation_cache import store as cache_store
@@ -309,8 +310,9 @@ def run_validation(
         else:
             client = llm_client or LLMClient()
             llm_started = time.monotonic()
+            capture: dict = {}
             try:
-                verdict = client.validate(baseline, current, vm_role=vm.role or "")
+                verdict = client.validate(baseline, current, vm_role=vm.role or "", capture=capture)
             except LLMError as e:
                 raise ValidationError(f"LLM reasoning failed: {e}") from e
             latency_ms = int((time.monotonic() - llm_started) * 1000)
@@ -344,6 +346,23 @@ def run_validation(
                 output_tokens=verdict.get("output_tokens") or 0,
             )
             usage_recorded = True
+            # Full inference capture — the auditable record of what the agent
+            # asked the model about this production VM and what it answered.
+            record_inference(
+                db,
+                operation="validation",
+                backend_type=getattr(getattr(client, "backend", None), "backend_type", "unknown"),
+                model=verdict.get("model") or "",
+                method=capture.get("method") or "llm",
+                input_messages=capture.get("messages"),
+                output_text=capture.get("raw_response"),
+                detections=capture.get("detections"),
+                verdict=verdict.get("status"),
+                latency_ms=latency_ms,
+                resource_type="vm",
+                resource_id=vm.id,
+                vm_id=vm.id,
+            )
 
     status_str = verdict.get("status", "warn")
     if status_str not in _VERDICT_TO_ENUM:

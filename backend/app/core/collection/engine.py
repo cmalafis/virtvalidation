@@ -57,6 +57,10 @@ class VMTarget:
     host: str
     port: int = 22
     username: str = "virtvalidate"
+    # Source vCenter id, used by the orchestrator for per-vCenter concurrency
+    # limits + circuit breaking. Optional so existing callers/tests that build
+    # bare targets keep working.
+    vcenter_id: int | None = None
 
 
 @dataclass
@@ -72,6 +76,10 @@ class CollectionResult:
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: datetime | None = None
     duration_ms: int = 0
+    # Per-command audit records accumulated by the SSHCollector for this VM
+    # (one dict per command run or blocked). Persisted as CommandAudit rows
+    # by the orchestrator thread — see app.core.collection.wave_jobs.
+    command_log: list[dict] = field(default_factory=list)
 
 
 class CollectionEngine:
@@ -106,6 +114,7 @@ class CollectionEngine:
         """
         result = CollectionResult(vm_id=target.vm_id, succeeded=False)
         start = time.monotonic()
+        collector: SSHCollector | None = None
 
         if not target.host:
             result.failure_category = "unreachable"
@@ -172,6 +181,10 @@ class CollectionEngine:
             result.collected_data = state
             return result
         finally:
+            # Copy the per-command audit trail even on failure — blocked or
+            # failed commands are exactly what an operator wants to see.
+            if collector is not None:
+                result.command_log = list(collector.command_log)
             result.completed_at = datetime.now(timezone.utc)
             result.duration_ms = int((time.monotonic() - start) * 1000)
 

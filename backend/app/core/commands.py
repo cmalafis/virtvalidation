@@ -164,9 +164,10 @@ def _rhel_modern() -> CommandSet:
 
 
 def _debian_like() -> CommandSet:
-    """Ubuntu / Debian. Wired up for forward compatibility — see the
-    "Future" rows in docs/COMPATIBILITY.md; we don't support running
-    against these in production yet."""
+    """Ubuntu / Debian — a supported collection target (see the
+    "Best effort" rows in docs/COMPATIBILITY.md). Dispatch is covered by
+    unit tests in tests/test_os_profile.py; live-VM CI coverage is still
+    pending."""
     return CommandSet(
         services_running=_SERVICES_SYSTEMD,
         network_addr_v4=_NETWORK_ADDR_V4,
@@ -371,4 +372,25 @@ def command_set_for(profile: OSProfile) -> CommandSet:
         return _rhel_modern()
     if profile.distro_family == "debian-like":
         return _debian_like()
+    return _modern_default()
+
+
+def command_set_for_family(os_family: str | None) -> CommandSet:
+    """Best-effort ``CommandSet`` from just a free-text OS label, WITHOUT
+    live detection. Used by the dry-run preview to show operators which
+    read-only commands *would* run before any connection is made.
+
+    The real per-collection dispatch (``command_set_for``) still happens
+    against the detected OSProfile at run time; this is only a preview, so
+    it maps the VM's declared ``os_family`` to the closest command set.
+    """
+    fam = (os_family or "").strip().lower()
+    if "win" in fam:
+        return _windows_powershell()
+    if any(tok in fam for tok in ("ubuntu", "debian")):
+        return _debian_like()
+    if fam in {"rhel7", "rhel-7", "centos7", "centos-7"}:
+        return _rhel7()
+    if any(tok in fam for tok in ("rhel", "rocky", "alma", "centos", "fedora", "ol", "oracle")):
+        return _rhel_modern()
     return _modern_default()

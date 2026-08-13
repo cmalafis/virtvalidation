@@ -45,6 +45,26 @@ const COLLECTION_STATUS_COLOR = {
   failed: "#ff5577",
 };
 
+// Shows who authorized a run against production / classified hosts. Only
+// rendered when the authorization gate applied (authorized_by is set).
+function AuthLine({ run }) {
+  if (!run?.authorized_by) return null;
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        color: "#ffe9aa",
+        marginTop: 4,
+        fontFamily: "'Barlow', sans-serif",
+      }}
+      title={run.authorization_reason || ""}
+    >
+      🔒 Authorized by {run.authorized_by}
+      {run.authorization_reason ? ` — ${run.authorization_reason}` : ""}
+    </div>
+  );
+}
+
 export default function WaveRunsPanel({ planId, waveNumber }) {
   const [keys, setKeys] = useState([]);
   const [keysLoading, setKeysLoading] = useState(true);
@@ -142,37 +162,58 @@ export default function WaveRunsPanel({ planId, waveNumber }) {
     };
   }, [validationRunId]);
 
-  const captureBaseline = async (sshKeyId) => {
+  // Build the run-creation body, including operator authorization fields when
+  // the wave's preview said they're required (production / CUI+ hosts).
+  const runBody = ({ sshKeyId, authorizedBy, authorizationReason }) => {
+    const body = { ssh_key_id: sshKeyId };
+    if (authorizedBy) body.authorized_by = authorizedBy;
+    if (authorizationReason) body.authorization_reason = authorizationReason;
+    return body;
+  };
+
+  // Map the two new server safeguards to clear operator messages.
+  const safeguardError = (e, fallback) => {
+    if (e.status === 503) {
+      toast.error(
+        "SSH operations are disabled by the global kill-switch. Re-enable in Settings.",
+        TOAST_OPTS,
+      );
+    } else {
+      toast.error(e.detail || e.message || fallback, TOAST_OPTS);
+    }
+  };
+
+  const captureBaseline = async (opts) => {
     setKicking(true);
     try {
       const r = await fetchJSON(`/api/plans/${planId}/waves/${waveNumber}/baseline`, {
         method: "POST",
-        body: { ssh_key_id: sshKeyId },
+        body: runBody(opts),
       });
       setBaselineRunId(r.baseline_run_id);
       setBaselineRun(null);
       toast.success("Baseline capture started", TOAST_OPTS);
       setShowCaptureModal(false);
     } catch (e) {
-      toast.error(e.message || "Baseline capture failed to start", TOAST_OPTS);
+      safeguardError(e, "Baseline capture failed to start");
     } finally {
       setKicking(false);
     }
   };
 
-  const runValidation = async (sshKeyId) => {
+  const runValidation = async (opts) => {
     setKicking(true);
     try {
       const r = await fetchJSON(`/api/plans/${planId}/waves/${waveNumber}/validate`, {
         method: "POST",
-        body: { ssh_key_id: sshKeyId },
+        body: runBody(opts),
       });
       setValidationRunId(r.validation_run_id);
       setValidationRun(null);
       toast.success("Validation started", TOAST_OPTS);
       setShowValidateModal(false);
     } catch (e) {
-      toast.error(e.message || "Validation failed to start", TOAST_OPTS);
+      safeguardError(e, "Validation failed to start");
     } finally {
       setKicking(false);
     }
@@ -295,6 +336,8 @@ export default function WaveRunsPanel({ planId, waveNumber }) {
       {/* Modals */}
       <KeyPickerModal
         open={showCaptureModal}
+        planId={planId}
+        waveNumber={waveNumber}
         title="Capture baseline for this wave"
         body="Select the SSH key to use. The appliance will connect to every VM in this wave and capture a structured baseline."
         keys={keys}
@@ -306,6 +349,8 @@ export default function WaveRunsPanel({ planId, waveNumber }) {
       />
       <KeyPickerModal
         open={showValidateModal}
+        planId={planId}
+        waveNumber={waveNumber}
         title="Validate this wave"
         body="Select the SSH key. The appliance will collect post-migration data from every VM in this wave and diff it against the baseline."
         keys={keys}
@@ -375,6 +420,7 @@ function BaselineProgressCard({ run, onRetryFailed }) {
               {run?.status}
             </span>
           </div>
+          <AuthLine run={run} />
           <div style={{ fontSize: 12, color: "#aaaacc" }}>
             {captured}/{total} captured, {failed} failed
             {run?.progress_message && (
@@ -500,6 +546,7 @@ function ValidationProgressCard({ run }) {
               {run?.status}
             </span>
           </div>
+          <AuthLine run={run} />
           <div style={{ fontSize: 12, color: "#aaaacc" }}>
             <VerdictPill verdict="pass" count={p} />
             <VerdictPill verdict="warn" count={w} />
@@ -663,18 +710,114 @@ function ProgressBar({ pct }) {
 // ---------------------------------------------------------------------------
 // Modals
 // ---------------------------------------------------------------------------
-function KeyPickerModal({ open, title, body, keys, keysLoading, busy, confirmLabel, onClose, onConfirm }) {
+function KeyPickerModal({
+  open,
+  planId,
+  waveNumber,
+  title,
+  body,
+  keys,
+  keysLoading,
+  busy,
+  confirmLabel,
+  onClose,
+  onConfirm,
+}) {
   const [selected, setSelected] = useState("");
+  const [authorizedBy, setAuthorizedBy] = useState("");
+  const [authorizationReason, setAuthorizationReason] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [showCommands, setShowCommands] = useState(false);
+
   useEffect(() => {
     if (open) {
       setSelected(keys.length > 0 ? String(keys[0].id) : "");
+      setAuthorizedBy("");
+      setAuthorizationReason("");
+      setShowCommands(false);
     }
   }, [open, keys]);
+
+  // Dry-run preview — which hosts + read-only commands would run, whether the
+  // authorization gate applies, and the kill-switch state. No SSH happens.
+  useEffect(() => {
+    if (!open || planId == null || waveNumber == null) return;
+    let alive = true;
+    setPreviewLoading(true);
+    setPreview(null);
+    fetchJSON(`/api/plans/${planId}/waves/${waveNumber}/preview`)
+      .then((d) => alive && setPreview(d))
+      .catch(() => alive && setPreview(null))
+      .finally(() => alive && setPreviewLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [open, planId, waveNumber]);
+
   if (!open) return null;
   const noKeys = !keysLoading && keys.length === 0;
+  const requiresAuth = !!preview?.requires_authorization;
+  const killed = preview != null && preview.ssh_operations_enabled === false;
+  const authIncomplete =
+    requiresAuth && (!authorizedBy.trim() || !authorizationReason.trim());
+  const blocked = busy || noKeys || !selected || killed || authIncomplete;
+  const vms = Array.isArray(preview?.vms) ? preview.vms : [];
+
   return (
     <ModalShell title={title} onClose={onClose} busy={busy}>
       <div style={{ fontSize: 13, color: "#aaaacc", marginBottom: 14, lineHeight: 1.6 }}>{body}</div>
+
+      {killed && (
+        <div
+          style={{
+            padding: "12px 14px",
+            marginBottom: 14,
+            border: "1px solid #ff3355",
+            background: "#1a0a14",
+            color: "#ffccdd",
+            fontSize: 13,
+          }}
+        >
+          <strong>SSH operations are disabled</strong> by the global kill-switch.
+          Re-enable it in Settings before running this wave.
+        </div>
+      )}
+
+      {requiresAuth && (
+        <div
+          style={{
+            padding: "12px 14px",
+            marginBottom: 14,
+            border: "1px solid #ffaa0066",
+            background: "rgba(255,170,0,0.06)",
+            color: "#ffe9aa",
+            fontSize: 13,
+            lineHeight: 1.6,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Operator authorization required</div>
+          <div style={{ marginBottom: 10 }}>
+            This wave targets {preview?.authorization_reason || "production / classified hosts"}.
+            Record who authorized this and why before connecting.
+          </div>
+          <input
+            type="text"
+            placeholder="Authorized by (name / email)"
+            value={authorizedBy}
+            onChange={(e) => setAuthorizedBy(e.target.value)}
+            style={{ ...inputStyle, marginBottom: 8 }}
+          />
+          <textarea
+            placeholder="Authorization reason (e.g. change ticket, approval window)"
+            value={authorizationReason}
+            onChange={(e) => setAuthorizationReason(e.target.value)}
+            rows={2}
+            style={{ ...inputStyle, resize: "vertical" }}
+          />
+        </div>
+      )}
+
       {noKeys ? (
         <div
           style={{
@@ -703,14 +846,76 @@ function KeyPickerModal({ open, title, body, keys, keysLoading, busy, confirmLab
           ))}
         </select>
       )}
+
+      {/* Dry-run command preview — read-only commands that would run. */}
+      {previewLoading ? (
+        <div style={{ fontSize: 12, color: "#888899", marginTop: 12 }}>Loading preview…</div>
+      ) : vms.length > 0 ? (
+        <div style={{ marginTop: 14 }}>
+          <button
+            type="button"
+            onClick={() => setShowCommands((v) => !v)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#88aaff",
+              cursor: "pointer",
+              fontSize: 12,
+              padding: 0,
+            }}
+          >
+            {showCommands ? "▾" : "▸"} {vms.length} host{vms.length === 1 ? "" : "s"} · read-only
+            commands that will run
+          </button>
+          {showCommands && (
+            <div
+              style={{
+                marginTop: 8,
+                maxHeight: 200,
+                overflowY: "auto",
+                border: "1px solid #2a2a44",
+                background: "#06060f",
+                padding: 10,
+              }}
+            >
+              {vms.map((vm) => (
+                <div key={vm.vm_id} style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, color: "#ccccee", marginBottom: 3 }}>
+                    {vm.name} <span style={{ color: "#888899" }}>· {vm.host || "no host"}</span>
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "'Share Tech Mono', monospace",
+                      fontSize: 11,
+                      color: "#7788aa",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {(vm.commands || []).map((c, i) => (
+                      <div key={i}>{c}</div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
         <button onClick={onClose} disabled={busy} style={btnSecondaryStyle(busy)}>
           Cancel
         </button>
         <button
-          onClick={() => onConfirm(Number(selected))}
-          disabled={busy || noKeys || !selected}
-          style={btnPrimary(busy || noKeys || !selected)}
+          onClick={() =>
+            onConfirm({
+              sshKeyId: Number(selected),
+              authorizedBy: authorizedBy.trim(),
+              authorizationReason: authorizationReason.trim(),
+            })
+          }
+          disabled={blocked}
+          style={btnPrimary(blocked)}
         >
           {busy ? "Starting…" : confirmLabel}
         </button>

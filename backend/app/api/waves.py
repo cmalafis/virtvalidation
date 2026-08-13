@@ -31,12 +31,14 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core import environment as env_mod
 from app.core.audit import record_audit
 from app.core.collection.wave_jobs import (
     resolve_wave_vm_ids,
     run_baseline_task,
     run_validation_task,
 )
+from app.core.commands import command_set_for_family
 from app.core.db import get_db
 from app.models.baseline_run import (
     Baseline,
@@ -45,6 +47,7 @@ from app.models.baseline_run import (
     VMCollectionStatus,
 )
 from app.models.plan import MigrationPlan
+from app.models.settings import AppSettings
 from app.models.ssh_key import SSHKey, SSHKeyStatus
 from app.models.validation_run import (
     ValidationRun,
@@ -52,6 +55,7 @@ from app.models.validation_run import (
     VMValidation,
     VMValidationVerdict,
 )
+from app.models.vcenter import ClassificationLevel, VCenterSource
 from app.models.vm import VM
 from app.schemas.baseline_run import (
     BaselineRead,
@@ -70,6 +74,7 @@ from app.schemas.validation_run import (
     ValidationRunRead,
     VMValidationRead,
 )
+from app.schemas.wave_preview import WavePreviewResponse, WaveVMPreview
 from app.services import ssh_key_service
 
 logger = logging.getLogger(__name__)
@@ -136,6 +141,103 @@ def _utcnow() -> datetime:
 
 
 # ---------------------------------------------------------------------------
+# Production safeguards: kill-switch + authorization gate
+# ---------------------------------------------------------------------------
+_SENSITIVE_CLASSIFICATIONS = frozenset(
+    {ClassificationLevel.cui, ClassificationLevel.secret, ClassificationLevel.top_secret}
+)
+
+
+def _assert_ssh_operations_enabled(db: Session) -> None:
+    """503 when the global SSH kill-switch is off.
+
+    Checked synchronously in the API layer (before the 202) so the operator
+    gets the refusal immediately rather than discovering it in a background
+    task. Absent settings row → treated as enabled (fresh deploy default).
+    """
+    s = db.get(AppSettings, 1)
+    if s is not None and not s.ssh_operations_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "SSH operations are disabled by the global kill-switch. "
+                "Re-enable in Settings before running baseline/validation."
+            ),
+        )
+
+
+def _authorization_requirement(db: Session, vms: list[VM]) -> tuple[bool, str]:
+    """Decide whether this wave needs explicit operator authorization, and why.
+
+    Required when ANY target VM is production-environment OR its source vCenter
+    is classified CUI or above. Returns ``(required, human_reason)``.
+    """
+    reasons: list[str] = []
+    prod = [vm for vm in vms if env_mod.normalize(vm.environment) == env_mod.Environment.PRODUCTION]
+    if prod:
+        reasons.append(f"{len(prod)} production VM(s)")
+    vc_ids = {vm.source_vcenter_id for vm in vms if vm.source_vcenter_id is not None}
+    if vc_ids:
+        sensitive = list(
+            db.scalars(
+                select(VCenterSource).where(
+                    VCenterSource.id.in_(vc_ids),
+                    VCenterSource.classification_level.in_(_SENSITIVE_CLASSIFICATIONS),
+                )
+            ).all()
+        )
+        if sensitive:
+            levels = sorted({s.classification_level.value for s in sensitive})
+            reasons.append(f"CUI+ classified source(s): {', '.join(levels)}")
+    return (bool(reasons), "; ".join(reasons))
+
+
+def _enforce_authorization(db: Session, vms: list[VM], payload) -> str:
+    """422 unless authorization is supplied when the gate applies.
+
+    Returns the reason string (empty when not required) so the caller can
+    persist it on the run row for the audit trail.
+    """
+    required, reason = _authorization_requirement(db, vms)
+    if required and not (payload.authorized_by and payload.authorization_reason):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Operator authorization required: this wave targets {reason}. "
+                "Provide 'authorized_by' and 'authorization_reason' to proceed."
+            ),
+        )
+    return reason
+
+
+def _preview_commands_for(os_family: str | None) -> list[str]:
+    """The read-only commands that WOULD run for a VM's declared OS family.
+
+    Best-effort preview only — the real dispatch happens against the detected
+    OS at run time. Empty fields (Windows leaves some Linux-shaped fields
+    blank) are dropped.
+    """
+    cs = command_set_for_family(os_family)
+    candidate = [
+        "cat /etc/os-release",  # OS-detection probe runs first on every host
+        cs.services_running,
+        cs.network_addr_v4,
+        cs.network_addr_v6,
+        cs.network_routes,
+        cs.resolv_conf,
+        cs.listening_ports,
+        cs.mounts,
+        cs.cron_users,
+        cs.cron_system_paths,
+        cs.os_release,
+        cs.uname_kernel,
+        cs.uname_arch,
+        cs.hostname_fqdn,
+    ]
+    return [c for c in candidate if c]
+
+
+# ---------------------------------------------------------------------------
 # Baseline kick-off
 # ---------------------------------------------------------------------------
 @waves_router.post(
@@ -151,9 +253,11 @@ def kick_off_baseline_run(
     request: Request,
     db: Session = Depends(get_db),
 ) -> BaselineRunAccepted:
+    _assert_ssh_operations_enabled(db)
     plan = _get_plan_or_404(db, plan_id)
     key = _resolve_active_key(db, payload.ssh_key_id)
     vms = _resolve_wave_vms(db, plan, wave_number)
+    auth_reason = _enforce_authorization(db, vms, payload)
 
     run = BaselineRun(
         plan_id=plan_id,
@@ -164,6 +268,8 @@ def kick_off_baseline_run(
         captured_vms=0,
         failed_vms=0,
         progress_message="Queued",
+        authorized_by=payload.authorized_by if auth_reason else None,
+        authorization_reason=payload.authorization_reason if auth_reason else None,
     )
     db.add(run)
     db.flush()  # need run.id before creating children
@@ -188,6 +294,9 @@ def kick_off_baseline_run(
             "wave_number": wave_number,
             "ssh_key_id": key.id,
             "total_vms": len(vms),
+            "authorization_required": bool(auth_reason),
+            "authorization_reason": auth_reason or None,
+            "authorized_by": run.authorized_by,
         },
     )
     db.commit()
@@ -199,6 +308,49 @@ def kick_off_baseline_run(
         baseline_run_id=run.id,
         status=run.status,
         status_url=f"/api/baseline-runs/{run.id}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dry-run preview — show exactly which hosts + commands a run would touch,
+# and whether authorization is required, WITHOUT connecting to anything.
+# ---------------------------------------------------------------------------
+@waves_router.get(
+    "/{plan_id}/waves/{wave_number}/preview",
+    response_model=WavePreviewResponse,
+)
+def preview_wave_run(
+    plan_id: int,
+    wave_number: int,
+    db: Session = Depends(get_db),
+) -> WavePreviewResponse:
+    """Operator dry-run: list the target hosts, the read-only commands that
+    would run on each, and the authorization/kill-switch posture — no SSH."""
+    plan = _get_plan_or_404(db, plan_id)
+    vms = _resolve_wave_vms(db, plan, wave_number)
+    required, reason = _authorization_requirement(db, vms)
+    s = db.get(AppSettings, 1)
+    enabled = True if s is None else bool(s.ssh_operations_enabled)
+    previews = [
+        WaveVMPreview(
+            vm_id=vm.id,
+            name=vm.name,
+            host=(vm.ip_address or vm.target_hostname or vm.source_hostname or ""),
+            username=vm.ssh_user or "virtvalidate",
+            os_family=vm.os_family,
+            environment=vm.environment,
+            commands=_preview_commands_for(vm.os_family),
+        )
+        for vm in vms
+    ]
+    return WavePreviewResponse(
+        plan_id=plan.id,
+        wave_number=wave_number,
+        vm_count=len(vms),
+        requires_authorization=required,
+        authorization_reason=reason,
+        ssh_operations_enabled=enabled,
+        vms=previews,
     )
 
 
@@ -225,6 +377,8 @@ def get_baseline_run(run_id: int, db: Session = Depends(get_db)) -> BaselineRunR
         captured_vms=run.captured_vms,
         failed_vms=run.failed_vms,
         progress_message=run.progress_message,
+        authorized_by=run.authorized_by,
+        authorization_reason=run.authorization_reason,
         started_at=run.started_at,
         completed_at=run.completed_at,
         created_at=run.created_at,
@@ -243,6 +397,7 @@ def retry_failed_baseline(
     request: Request,
     db: Session = Depends(get_db),
 ) -> BaselineRunAccepted:
+    _assert_ssh_operations_enabled(db)
     prior = db.get(BaselineRun, run_id)
     if prior is None:
         raise HTTPException(status_code=404, detail=f"Baseline run {run_id} not found")
@@ -286,6 +441,10 @@ def retry_failed_baseline(
         captured_vms=0,
         failed_vms=0,
         progress_message="Queued (retry-failed)",
+        # Retry inherits the original run's authorization — same hosts, same
+        # operator decision; no need to re-authorize.
+        authorized_by=prior.authorized_by,
+        authorization_reason=prior.authorization_reason,
     )
     db.add(new_run)
     db.flush()
@@ -338,9 +497,11 @@ def kick_off_validation_run(
     request: Request,
     db: Session = Depends(get_db),
 ) -> ValidationRunAccepted:
+    _assert_ssh_operations_enabled(db)
     plan = _get_plan_or_404(db, plan_id)
     key = _resolve_active_key(db, payload.ssh_key_id)
     vms = _resolve_wave_vms(db, plan, wave_number)
+    auth_reason = _enforce_authorization(db, vms, payload)
 
     # Hard requirement per the brief: validation requires a completed
     # baseline run for this wave. Without it there's nothing to diff.
@@ -369,6 +530,8 @@ def kick_off_validation_run(
         status=ValidationRunStatus.pending,
         total_vms=len(vms),
         progress_message="Queued",
+        authorized_by=payload.authorized_by if auth_reason else None,
+        authorization_reason=payload.authorization_reason if auth_reason else None,
     )
     db.add(run)
     db.flush()
@@ -394,6 +557,9 @@ def kick_off_validation_run(
             "ssh_key_id": key.id,
             "total_vms": len(vms),
             "baseline_run_id": has_baseline.id,
+            "authorization_required": bool(auth_reason),
+            "authorization_reason": auth_reason or None,
+            "authorized_by": run.authorized_by,
         },
     )
     db.commit()
@@ -435,6 +601,8 @@ def get_validation_run(run_id: int, db: Session = Depends(get_db)) -> Validation
         failed_vms=run.failed_vms,
         unreachable_vms=run.unreachable_vms,
         progress_message=run.progress_message,
+        authorized_by=run.authorized_by,
+        authorization_reason=run.authorization_reason,
         started_at=run.started_at,
         completed_at=run.completed_at,
         created_at=run.created_at,

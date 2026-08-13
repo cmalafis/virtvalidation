@@ -26,9 +26,9 @@ differences are confined to one place.
 | **Alma 8 / 9**   | Best effort | RHEL-derivative. `ID="almalinux"` recognized; routes through modern RHEL dispatch. |
 | **CentOS 7 / 8** | Best effort | EOL but still in-use. CentOS 7 routes through the legacy dispatch; CentOS 8 / Stream routes through the modern dispatch. |
 | **Fedora 39+**   | Best effort | RHEL family. Routes through modern RHEL dispatch; bleeding-edge package versions occasionally surface drift. |
-| **Ubuntu 22.04** | Future      | `CommandSet` exists (`apt`, `ufw`, `nftables`). Not yet exercised in CI. |
-| **Ubuntu 24.04** | Future      | Same dispatch as 22.04. |
-| **Debian 12**    | Future      | `ID="debian"` recognized; same dispatch as Ubuntu. |
+| **Ubuntu 22.04** | Best effort | Supported target. Debian-family dispatch (`apt`/`dpkg-query`, `ufw`, `nftables`, modern `ss -H`). Dispatch covered by unit tests (`tests/test_os_profile.py`); not yet exercised against a live VM in CI. |
+| **Ubuntu 24.04** | Best effort | Same dispatch as 22.04. |
+| **Debian 12**    | Best effort | `ID="debian"` recognized; same dispatch as Ubuntu. Dispatch unit-tested. |
 | **Other Linux**  | Best effort | Unknown distros fall back to "modern Linux" defaults (systemd, `ip`, `ss -H`, `dnf`-or-`apt` autodetect). The snapshot is tagged `detection_confidence: "low"` so reviewers know they're in best-effort territory. |
 
 ## Windows

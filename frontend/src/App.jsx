@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
+import AgentActivity from "./components/AgentActivity";
 import BulkOperations from "./components/BulkOperations";
 import NetworkReviewDetail from "./components/NetworkReviewDetail";
 import NetworkReviewNew from "./components/NetworkReviewNew";
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/capture-baselines" element={<BulkOperations />} />
         <Route path="/validate-batch" element={<BulkOperations />} />
         <Route path="/rvtools/upload" element={<RVToolsUpload />} />
+        <Route path="/agent-activity" element={<AgentActivity />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

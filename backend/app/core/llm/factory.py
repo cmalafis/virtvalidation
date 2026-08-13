@@ -26,6 +26,7 @@ from app.core.llm.kserve_backend import KServeBackend
 from app.core.llm.maas_backend import MaaSBackend
 from app.core.llm.mock_backend import MockBackend
 from app.core.llm.ollama_backend import OllamaBackend
+from app.core.llm.trustyai_backend import TrustyAIBackend
 from app.core.llm.types import LLMBackendType
 from app.core.llm.vllm_backend import VLLMBackend
 
@@ -110,6 +111,16 @@ def _instantiate(backend_type: str, cfg: Settings) -> LLMBackend:
             api_key=cfg.llm_maas_api_key or "",
             timeout=float(cfg.llm_maas_timeout_seconds),
             verify_ssl=cfg.llm_maas_verify_ssl,
+        )
+    if backend_type == LLMBackendType.trustyai.value:
+        return TrustyAIBackend(
+            base_url=cfg.llm_trustyai_base_url or "",
+            model_name=cfg.llm_trustyai_model or "",
+            api_key=cfg.llm_trustyai_api_key,
+            input_detectors=cfg.llm_trustyai_input_detectors,
+            output_detectors=cfg.llm_trustyai_output_detectors,
+            timeout=float(cfg.llm_trustyai_timeout_seconds),
+            verify_ssl=cfg.llm_trustyai_verify_ssl,
         )
     if backend_type == LLMBackendType.mock.value:
         # Dev-only canned-response backend. See app/core/llm/mock_backend.py

@@ -65,6 +65,29 @@ class LLMResponseError(LLMBackendError):
     """
 
 
+class LLMGuardrailError(LLMBackendError):
+    """A TrustyAI Guardrails Orchestrator detector flagged the input or
+    output (HTTP 200 with a ``warnings`` array — ``UNSUITABLE_INPUT`` /
+    ``UNSUITABLE_OUTPUT``).
+
+    Treated ASYMMETRICALLY from transient transport failures, like
+    ``LLMAuthError``: the caller falls back to mechanical annotation so the
+    flow still completes, AND surfaces the event to the operator
+    (``last_llm_error`` banner + a distinct ``mechanical_fallback_guardrail``
+    method) — a flagged prompt/response is a safety signal the operator must
+    see, not a quiet retry. Subclasses ``LLMBackendError`` so existing
+    ``except LLMBackendError`` handlers still catch it, but callers that want
+    the asymmetric treatment MUST catch it BEFORE the generic clause.
+
+    Carries ``detections`` (the orchestrator's structured detector output) so
+    the inference-log audit row can record exactly what fired.
+    """
+
+    def __init__(self, message: str, *, detections: dict | None = None) -> None:
+        super().__init__(message)
+        self.detections = detections or {}
+
+
 class LLMBackend(ABC):
     """Abstract base for all LLM inference backends.
 

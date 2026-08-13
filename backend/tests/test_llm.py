@@ -280,3 +280,30 @@ def test_validate_raises_only_on_backend_transport_error():
     client = LLMClient(backend=stub)
     with pytest.raises(LLMError, match="backend offline"):
         client.validate({}, {}, "web")
+
+
+def test_validate_guardrail_flag_returns_manual_review_not_raise(monkeypatch):
+    """A guardrail block (TrustyAI) must NOT 5xx — it returns a manual-review
+    verdict (validate-retry-fallback rule) AND surfaces an operator banner,
+    capturing the detections for the audit log."""
+    from app.core.llm.base import LLMGuardrailError
+
+    recorded: list[str] = []
+    monkeypatch.setattr("app.core.llm.client.record_last_llm_error", lambda m: recorded.append(m))
+
+    stub = StubBackend(
+        raise_on_call=LLMGuardrailError(
+            "TrustyAI guardrail detector flagged content (UNSUITABLE_INPUT).",
+            detections={"input": [{"detector_id": "prompt_injection"}]},
+        )
+    )
+    client = LLMClient(backend=stub)
+    capture: dict = {}
+    verdict = client.validate({}, {}, "web", capture=capture)
+
+    assert verdict["needs_manual_review"] is True
+    assert verdict["status"] == "warn"
+    assert capture["method"] == "mechanical_fallback_guardrail"
+    assert capture["detections"]["input"][0]["detector_id"] == "prompt_injection"
+    # Operator banner written.
+    assert recorded and "guardrail" in recorded[0].lower()

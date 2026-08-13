@@ -85,6 +85,16 @@ class AnnotatedWave:
     mtv_yaml: str = ""
     vm_names: list[str] = field(default_factory=list)
 
+    # Inference-capture fields — populated by Stage 6 so the pipeline's
+    # caller (which holds the DB session) can write one InferenceLog row per
+    # wave. Not serialized into MigrationPlan.waves[] (see to_dict); they're
+    # transient capture, not operator-facing plan content.
+    inference_messages: list[dict] | None = None
+    inference_response: str | None = None
+    inference_backend_type: str | None = None
+    inference_model: str = ""
+    inference_latency_ms: int = 0
+
     def to_dict(self) -> dict[str, Any]:
         """Render to the JSON shape persisted in MigrationPlan.waves[]."""
         return {

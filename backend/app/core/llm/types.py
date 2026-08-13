@@ -23,3 +23,6 @@ class LLMBackendType(str, enum.Enum):
     vllm = "vllm"
     mock = "mock"
     maas = "maas"
+    # TrustyAI Guardrails Orchestrator (RHOAI) — proxies an OpenAI-compatible
+    # model through input/output detectors. See trustyai_backend.py.
+    trustyai = "trustyai"

@@ -674,6 +674,7 @@ const BACKEND_LABELS = {
   kserve: "KServe (RHOAI / OpenShift)",
   vllm: "vLLM (direct)",
   maas: "Model-as-a-Service",
+  trustyai: "TrustyAI Guardrails (RHOAI)",
   mock:  "Mock (dev / CI — see docs/MOCK_BACKEND.md)",
 };
 
@@ -1214,7 +1215,8 @@ function ConfigurationForm({ onSavedModelChange }) {
     if (!draft || !original) return false;
     return draft.ollama_model !== original.ollama_model
       || draft.schedule_preset !== original.schedule_preset
-      || draft.ssh_host_key_policy !== original.ssh_host_key_policy;
+      || draft.ssh_host_key_policy !== original.ssh_host_key_policy
+      || draft.ssh_operations_enabled !== original.ssh_operations_enabled;
   }, [draft, original]);
 
   const onSave = async () => {
@@ -1226,6 +1228,7 @@ function ConfigurationForm({ onSavedModelChange }) {
         ollama_model: draft.ollama_model,
         schedule_preset: draft.schedule_preset,
         ssh_host_key_policy: draft.ssh_host_key_policy,
+        ssh_operations_enabled: draft.ssh_operations_enabled,
       },
     });
     try {
@@ -1432,6 +1435,48 @@ function ConfigurationForm({ onSavedModelChange }) {
                 );
               })}
             </div>
+          </div>
+
+          {/* ----- SSH operations kill-switch ----- */}
+          <div style={{ marginTop: 28, paddingTop: 22, borderTop: "1px solid #1a1a2e" }}>
+            <div style={{
+              fontSize: 16, fontFamily: "'Barlow', sans-serif",
+              fontWeight: 700, color: "#eeeeff", letterSpacing: "0.04em", marginBottom: 6,
+            }}>
+              SSH Operations Kill-Switch
+            </div>
+            <div style={{
+              fontSize: 14, color: "#aaaacc", marginBottom: 14,
+              fontFamily: "'Barlow', sans-serif", lineHeight: 1.6,
+            }}>
+              Global emergency stop. When disabled, the appliance refuses to start any
+              baseline or validation run (HTTP 503) — an instant halt for the agent
+              without a redeploy. Scheduled collections are blocked too.
+            </div>
+            <label style={{
+              display: "flex", alignItems: "center", gap: 14, padding: "16px 18px",
+              border: `1px solid ${draft.ssh_operations_enabled === false ? "#ff3355" : "#1a1a2e"}`,
+              background: draft.ssh_operations_enabled === false ? "rgba(255,51,85,0.08)" : "#07070f",
+              cursor: "pointer",
+            }}>
+              <input
+                type="checkbox"
+                checked={draft.ssh_operations_enabled !== false}
+                onChange={(e) => setDraft({ ...draft, ssh_operations_enabled: e.target.checked })}
+                disabled={saving}
+                style={{ accentColor: "#4488ff", width: 18, height: 18 }}
+              />
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: "#eeeeff" }}>
+                  {draft.ssh_operations_enabled === false
+                    ? "SSH operations DISABLED — runs are blocked"
+                    : "SSH operations enabled"}
+                </div>
+                <div style={{ fontSize: 13, color: "#aaaacc", marginTop: 4, lineHeight: 1.6 }}>
+                  Uncheck to halt all SSH activity against managed hosts immediately.
+                </div>
+              </div>
+            </label>
           </div>
         </div>
       )}

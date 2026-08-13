@@ -247,7 +247,7 @@ Depends on: `app.core`, `app.core.capture`, `app.core.config`, `app.core.ssh`, `
 <details><summary><strong><code>app.core.ssh</code></strong> — <em>External integration</em> · SSH Collection Engine.</summary>
 
 Path: `backend/app/core/ssh.py`  
-Depends on: `app.core.commands`, `app.core.fips`, `app.core.os_profile`
+Depends on: `app.core.commands`, `app.core.fips`, `app.core.os_profile`, `app.core.ssh_guard`
 
 **Classes**
 
@@ -586,6 +586,19 @@ Path: `backend/app/schemas/audit.py`
 
 Settings, scheduler config, health probes, app bootstrap.
 
+<details><summary><strong><code>app.api.command_audits</code></strong> — <em>API endpoints</em> · Read-only per-command SSH audit endpoint.</summary>
+
+Path: `backend/app/api/command_audits.py`  
+Depends on: `app.core.db`, `app.core.limits`, `app.models.command_audit`, `app.schemas.command_audit`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `GET` | `/api/command-audits` | `list_command_audits(db, skip, limit, run_type, run_id, vm_id, blocked)` | Paginated, filterable command-audit listing — newest first. |
+
+</details>
+
 <details><summary><strong><code>app.api.health</code></strong> — <em>API endpoints</em> · Health-check endpoints for the system tab on the settings page.</summary>
 
 Path: `backend/app/api/health.py`  
@@ -600,6 +613,20 @@ Depends on: `app.core.db`, `app.core.fips`, `app.core.llm.runtime`, `app.core.mi
 | `GET` | `/api/health/postgres` | `postgres_health(db)` | Run a SELECT 1 against the configured database. |
 | `GET` | `/api/health/schema` | `schema_health()` | Report the database&#x27;s Alembic migration state. |
 | `GET` | `/api/health/full` | `full_health(db)` | Combined status across the API and every backing dependency. |
+
+</details>
+
+<details><summary><strong><code>app.api.inference_logs</code></strong> — <em>API endpoints</em> · Read-only inference-log endpoints.</summary>
+
+Path: `backend/app/api/inference_logs.py`  
+Depends on: `app.core.db`, `app.core.limits`, `app.models.inference_log`, `app.schemas.inference_log`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `GET` | `/api/inference-logs` | `list_inference_logs(db, skip, limit, operation, method, backend_type, vm_id)` | Paginated, filterable inference-log listing — newest first. |
+| `GET` | `/api/inference-logs/stats` | `inference_log_stats(db, operation, method, backend_type, vm_id)` | Roll-up counts by method and operation — feeds the LLM-health panel. |
 
 </details>
 
@@ -666,7 +693,7 @@ Depends on: `app.core.audit`, `app.core.db`, `app.core.limits`, `app.core.rvtool
 <details><summary><strong><code>app.api.settings</code></strong> — <em>API endpoints</em> · Settings + system-info endpoints powering the /settings page.</summary>
 
 Path: `backend/app/api/settings.py`  
-Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.factory`, `app.core.llm.runtime`, `app.core.llm.types`, `app.core.scheduler`, `app.core.ssh_key`, `app.models.settings`, `app.schemas.settings`
+Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.runtime`, `app.core.llm.types`, `app.core.scheduler`, `app.core.ssh_key`, `app.models.settings`, `app.schemas.settings`
 
 **Routes**
 
@@ -858,13 +885,14 @@ Depends on: `app.core.audit`, `app.core.categorizer`, `app.core.db`, `app.core.r
 <details><summary><strong><code>app.api.waves</code></strong> — <em>API endpoints</em> · Wave-scoped baseline + validation endpoints.</summary>
 
 Path: `backend/app/api/waves.py`  
-Depends on: `app.core.audit`, `app.core.collection.wave_jobs`, `app.core.db`, `app.models.baseline_run`, `app.models.plan`, `app.models.ssh_key`, `app.models.validation_run`, `app.models.vm`, `app.schemas.baseline_run`, `app.schemas.ssh_key`, `app.schemas.validation_run`, `app.services`
+Depends on: `app.core`, `app.core.audit`, `app.core.collection.wave_jobs`, `app.core.commands`, `app.core.db`, `app.models.baseline_run`, `app.models.plan`, `app.models.settings`, `app.models.ssh_key`, `app.models.validation_run`, `app.models.vcenter`, `app.models.vm`, `app.schemas.baseline_run`, `app.schemas.ssh_key`, `app.schemas.validation_run`, `app.schemas.wave_preview`, `app.services`
 
 **Routes**
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
 | `POST` | `/api/plans/{plan_id}/waves/{wave_number}/baseline` | `kick_off_baseline_run(plan_id, wave_number, payload, background_tasks, request, db)` | — |
+| `GET` | `/api/plans/{plan_id}/waves/{wave_number}/preview` | `preview_wave_run(plan_id, wave_number, db)` | Operator dry-run: list the target hosts, the read-only commands that |
 | `GET` | `/api/baseline-runs/{run_id}` | `get_baseline_run(run_id, db)` | — |
 | `POST` | `/api/baseline-runs/{run_id}/retry-failed` | `retry_failed_baseline(run_id, background_tasks, request, db)` | — |
 | `POST` | `/api/plans/{plan_id}/waves/{wave_number}/validate` | `kick_off_validation_run(plan_id, wave_number, payload, background_tasks, request, db)` | — |
@@ -1002,9 +1030,9 @@ Depends on: `app.core.collection.collector_spec`, `app.core.ssh`
 
 - **`VMTarget`** (Class)
   - Minimal connection identity for one VM. Keeps the engine DB-agnostic.
-  - Fields: `vm_id`, `host`, `port`, `username`
+  - Fields: `vm_id`, `host`, `port`, `username`, `vcenter_id`
 - **`CollectionResult`** (Class)
-  - Fields: `vm_id`, `succeeded`, `collected_data`, `host_key_fingerprint`, `probe_catalog_version`, `probes_run`, `failure_category`, `failure_detail`, `started_at`, `completed_at`, `duration_ms`
+  - Fields: `vm_id`, `succeeded`, `collected_data`, `host_key_fingerprint`, `probe_catalog_version`, `probes_run`, `failure_category`, `failure_detail`, `started_at`, `completed_at`, `duration_ms`, `command_log`
 - **`CollectionEngine`** (Class)
   - Deterministic single-VM collector.
   - Methods:
@@ -1028,7 +1056,7 @@ Depends on: `app.core.collection.engine`
 <details><summary><strong><code>app.core.collection.wave_jobs</code></strong> — <em>Business logic</em> · Background-task orchestration for wave-scoped baseline + validation runs.</summary>
 
 Path: `backend/app/core/collection/wave_jobs.py`  
-Depends on: `app.core`, `app.core.collection.collector_spec`, `app.core.collection.diff`, `app.core.collection.engine`, `app.core.collection.orchestrator`, `app.core.config`, `app.models.baseline_run`, `app.models.plan`, `app.models.validation_run`, `app.models.vm`, `app.services`
+Depends on: `app.core`, `app.core.collection.diff`, `app.core.collection.engine`, `app.core.collection.orchestrator`, `app.core.config`, `app.models.baseline_run`, `app.models.plan`, `app.models.validation_run`, `app.models.vm`, `app.services`
 
 **Functions**
 
@@ -1053,6 +1081,7 @@ Depends on: `app.core.os_profile`
 **Functions**
 
 - `command_set_for(profile)` — Pick the right ``CommandSet`` for an ``OSProfile``.
+- `command_set_for_family(os_family)` — Best-effort ``CommandSet`` from just a free-text OS label, WITHOUT
 
 </details>
 
@@ -1074,7 +1103,7 @@ Path: `backend/app/core/config.py`
 **Classes**
 
 - **`Settings`** (Class)
-  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `ssh_max_concurrency`, `ssh_command_timeout_seconds`, `ssh_connect_timeout_seconds`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `llm_max_items_per_call`, `max_vms_per_plan`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `llm_maas_base_url`, `llm_maas_model`, `llm_maas_api_key`, `llm_maas_timeout_seconds`, `llm_maas_verify_ssl`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
+  - Fields: `database_url`, `ssh_key_path`, `cluster_name`, `ssh_max_concurrency`, `ssh_max_concurrency_per_vcenter`, `ssh_circuit_breaker_threshold`, `ssh_command_timeout_seconds`, `ssh_connect_timeout_seconds`, `fips_mode`, `ssh_key_algorithm`, `llm_backend_type`, `ollama_host`, `ollama_model`, `ollama_num_ctx`, `llm_read_timeout`, `llm_connect_timeout`, `llm_max_retries`, `llm_max_items_per_call`, `max_vms_per_plan`, `categorizer_batch_size`, `llm_cost_per_million_input_tokens`, `llm_cost_per_million_output_tokens`, `kserve_endpoint`, `kserve_model_name`, `kserve_token`, `kserve_token_file`, `kserve_verify_ssl`, `kserve_timeout_seconds`, `vllm_endpoint`, `vllm_model_name`, `llm_maas_base_url`, `llm_maas_model`, `llm_maas_api_key`, `llm_maas_timeout_seconds`, `llm_maas_verify_ssl`, `llm_trustyai_base_url`, `llm_trustyai_model`, `llm_trustyai_api_key`, `llm_trustyai_input_detectors`, `llm_trustyai_output_detectors`, `llm_trustyai_timeout_seconds`, `llm_trustyai_verify_ssl`, `mtv_namespace`, `mtv_source_provider`, `mtv_destination_provider`, `mtv_default_target_namespace`, `csv_template_path`
 
 </details>
 
@@ -1176,6 +1205,8 @@ Path: `backend/app/core/llm/base.py`
   - The inference call exceeded its read timeout.
 - **`LLMResponseError`** (Class)
   - Endpoint returned a non-2xx status or malformed body.
+- **`LLMGuardrailError`** (Class)
+  - A TrustyAI Guardrails Orchestrator detector flagged the input or
 - **`LLMBackend`** (Class)
   - Abstract base for all LLM inference backends.
   - Fields: `backend_type`, `max_planning_chunk_size`, `max_context_tokens`, `supports_concurrent_calls`, `max_concurrent_calls`
@@ -1213,13 +1244,23 @@ Depends on: `app.core.llm.base`, `app.core.llm.runtime`, `app.core.llm.status`
 <details><summary><strong><code>app.core.llm.factory</code></strong> — <em>Business logic</em> · Factory — picks the configured backend based on settings.</summary>
 
 Path: `backend/app/core/llm/factory.py`  
-Depends on: `app.core.config`, `app.core.llm.base`, `app.core.llm.kserve_backend`, `app.core.llm.maas_backend`, `app.core.llm.mock_backend`, `app.core.llm.ollama_backend`, `app.core.llm.types`, `app.core.llm.vllm_backend`
+Depends on: `app.core.config`, `app.core.llm.base`, `app.core.llm.kserve_backend`, `app.core.llm.maas_backend`, `app.core.llm.mock_backend`, `app.core.llm.ollama_backend`, `app.core.llm.trustyai_backend`, `app.core.llm.types`, `app.core.llm.vllm_backend`
 
 **Functions**
 
 - `get_llm_backend(cfg)` — Return the backend identified by ``cfg.llm_backend_type``.
 - `get_llm_backend_for_type(backend_type, cfg)` — Return the backend instance for an explicit type, instantiating
 - `reset_backend_cache(backend_type)` — Drop cached backend(s) so the next call re-instantiates from
+
+</details>
+
+<details><summary><strong><code>app.core.llm.inference_log</code></strong> — <em>Business logic</em> · Persist one :class:`~app.models.inference_log.InferenceLog` per LLM call.</summary>
+
+Path: `backend/app/core/llm/inference_log.py`  
+
+**Functions**
+
+- `record_inference(db)` — Write one InferenceLog row. Best-effort — never raises to the caller.
 
 </details>
 
@@ -1323,6 +1364,22 @@ Depends on: `app.core`
 
 - `record_last_llm_error(message)` — Write ``message`` to ``app_settings.last_llm_error`` and stamp
 - `clear_last_llm_error()` — Clear the banner — called on any successful LLM call so a stale
+
+</details>
+
+<details><summary><strong><code>app.core.llm.trustyai_backend</code></strong> — <em>Business logic</em> · TrustyAI Guardrails Orchestrator backend (RHOAI).</summary>
+
+Path: `backend/app/core/llm/trustyai_backend.py`  
+Depends on: `app.core.llm.base`
+
+**Classes**
+
+- **`TrustyAIBackend`** (Class)
+  - Methods:
+    - `chat(self, messages, model, temperature, max_tokens)`
+    - `chat_stream(self, messages, model, temperature)`
+    - `health_check(self)`
+    - `list_models(self)`
 
 </details>
 
@@ -1454,7 +1511,7 @@ Path: `backend/app/core/os_profile.py`
 <details><summary><strong><code>app.core.plan_generation</code></strong> — <em>Business logic</em> · BackgroundTask body for POST /api/plans.</summary>
 
 Path: `backend/app/core/plan_generation.py`  
-Depends on: `app.core`, `app.core.audit`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.vm`
+Depends on: `app.core`, `app.core.audit`, `app.core.llm.inference_log`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.vm`
 
 **Functions**
 
@@ -1473,7 +1530,7 @@ Depends on: `app.core.concurrency`, `app.core.family`, `app.core.mapping_validat
   - Raised by Stage 0 when mapping coverage is incomplete.
 - **`AnnotatedWave`** (Class)
   - A wave plus its Stage-6 annotation and Stage-7 YAML.
-  - Fields: `wave`, `description`, `risk_score`, `risk_rationale`, `notable_concerns`, `method`, `mtv_yaml`, `vm_names`
+  - Fields: `wave`, `description`, `risk_score`, `risk_rationale`, `notable_concerns`, `method`, `mtv_yaml`, `vm_names`, `inference_messages`, `inference_response`, `inference_backend_type`, `inference_model`, `inference_latency_ms`
   - Methods:
     - `to_dict(self)` — Render to the JSON shape persisted in MigrationPlan.waves[].
 - **`PlanPipelineResult`** (Class)
@@ -1555,6 +1612,21 @@ Depends on: `app.core`, `app.core.audit`, `app.models.vm`
 
 - `run_rvtools_import(db)` — Apply an RVTools delta against a vCenter scope.
 - `run_rvtools_import_async(task_id)` — BackgroundTask body. Opens its own session because the request
+
+</details>
+
+<details><summary><strong><code>app.core.ssh_guard</code></strong> — <em>Business logic</em> · Read-only command gate for the SSH collector.</summary>
+
+Path: `backend/app/core/ssh_guard.py`  
+
+**Classes**
+
+- **`SSHCommandNotAllowed`** (Class)
+  - A command failed the read-only gate and was refused before execution.
+
+**Functions**
+
+- `assert_read_only(command, os_family)` — Raise :class:`SSHCommandNotAllowed` unless ``command`` is read-only.
 
 </details>
 
@@ -1652,7 +1724,7 @@ Depends on: `app.models.ocp_namespace`, `app.models.target`, `app.models.target_
 <details><summary><strong><code>app.core.validation</code></strong> — <em>Business logic</em> · On-demand post-migration validation.</summary>
 
 Path: `backend/app/core/validation.py`  
-Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.config`, `app.core.llm`, `app.core.ssh`, `app.core.validation_cache`, `app.core.validation_tiers`, `app.models.validation`, `app.models.vm`
+Depends on: `app.core`, `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.config`, `app.core.llm`, `app.core.llm.inference_log`, `app.core.ssh`, `app.core.validation_cache`, `app.core.validation_tiers`, `app.models.validation`, `app.models.vm`
 
 **Classes**
 
@@ -1777,7 +1849,7 @@ Depends on: `app.core.config`, `app.core.preclassifier`
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.audit`, `app.api.health`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.llm.runtime`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.audit`, `app.api.command_audits`, `app.api.health`, `app.api.inference_logs`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.llm.runtime`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -1802,10 +1874,22 @@ Depends on: `app.core.db`
 - **`BaselineRunStatus`** (Class)
 - **`VMCollectionStatus`** (Class)
 - **`BaselineRun`** (SQLAlchemy model · table `baseline_runs`)
-  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `captured_vms`, `failed_vms`, `progress_message`, `started_at`, `completed_at`, `created_at`
+  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `captured_vms`, `failed_vms`, `progress_message`, `authorized_by`, `authorization_reason`, `started_at`, `completed_at`, `created_at`
 - **`Baseline`** (SQLAlchemy model · table `baselines`)
   - Per-VM baseline sample owned by a :class:`BaselineRun`.
   - Fields: `id`, `baseline_run_id`, `vm_id`, `status`, `collected_data`, `probe_catalog_version`, `probes_run`, `host_key_fingerprint`, `failure_category`, `failure_detail`, `collection_started_at`, `collection_completed_at`, `captured_at`
+
+</details>
+
+<details><summary><strong><code>app.models.command_audit</code></strong> — <em>Data models / schemas</em> · Per-command SSH audit trail — exactly what the agent ran on each host.</summary>
+
+Path: `backend/app/models/command_audit.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`CommandAudit`** (SQLAlchemy model · table `command_audits`)
+  - Fields: `id`, `vm_id`, `host`, `run_type`, `run_id`, `command`, `exit_status`, `stdout_byte_count`, `stdout_sha256`, `stdout_truncated`, `duration_ms`, `blocked`, `started_at`
 
 </details>
 
@@ -1827,6 +1911,18 @@ Depends on: `app.core.db`
 - **`MigrationProgram`** (SQLAlchemy model · table `migration_programs`)
   - A migration program is the top-level container an operator runs.
   - Fields: `id`, `name`, `description`, `source_vcenter_ids`, `strategy`, `created_at`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.models.inference_log</code></strong> — <em>Data models / schemas</em> · Full LLM inference capture — one row per model call, input and output.</summary>
+
+Path: `backend/app/models/inference_log.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`InferenceLog`** (SQLAlchemy model · table `inference_logs`)
+  - Fields: `id`, `operation`, `backend_type`, `model`, `method`, `input_messages`, `output_text`, `detections`, `verdict`, `latency_ms`, `resource_type`, `resource_id`, `vm_id`, `created_at`
 
 </details>
 
@@ -1886,7 +1982,7 @@ Depends on: `app.core.db`, `app.core.llm.types`
   - How the SSH collector handles unknown host keys.
 - **`AppSettings`** (SQLAlchemy model · table `app_settings`)
   - Singleton settings row — always id=1.
-  - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `active_llm_backend`, `last_llm_error`, `last_llm_error_at`, `updated_at`
+  - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `active_llm_backend`, `last_llm_error`, `last_llm_error_at`, `ssh_operations_enabled`, `updated_at`
 
 </details>
 
@@ -1989,7 +2085,7 @@ Depends on: `app.core.db`
 - **`VMValidationVerdict`** (Class)
   - Per-VM validation verdict.
 - **`ValidationRun`** (SQLAlchemy model · table `validation_runs`)
-  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `passed_vms`, `warned_vms`, `failed_vms`, `unreachable_vms`, `progress_message`, `started_at`, `completed_at`, `created_at`
+  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `passed_vms`, `warned_vms`, `failed_vms`, `unreachable_vms`, `progress_message`, `authorized_by`, `authorization_reason`, `started_at`, `completed_at`, `created_at`
 - **`VMValidation`** (SQLAlchemy model · table `vm_validations`)
   - Fields: `id`, `validation_run_id`, `vm_id`, `baseline_id`, `verdict`, `collected_data`, `diff_result`, `host_key_changed`, `failure_category`, `failure_detail`, `validated_at`
 
@@ -2032,14 +2128,43 @@ Depends on: `app.models.baseline_run`
 **Classes**
 
 - **`BaselineRunCreate`** (Pydantic schema)
-  - Fields: `ssh_key_id`
+  - Fields: `ssh_key_id`, `authorized_by`, `authorization_reason`
 - **`BaselineRead`** (Pydantic schema)
   - Fields: `id`, `baseline_run_id`, `vm_id`, `status`, `collected_data`, `probe_catalog_version`, `probes_run`, `host_key_fingerprint`, `failure_category`, `failure_detail`, `collection_started_at`, `collection_completed_at`, `captured_at`
 - **`BaselineRunRead`** (Pydantic schema)
-  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `captured_vms`, `failed_vms`, `progress_message`, `started_at`, `completed_at`, `created_at`, `baselines`
+  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `captured_vms`, `failed_vms`, `progress_message`, `authorized_by`, `authorization_reason`, `started_at`, `completed_at`, `created_at`, `baselines`
 - **`BaselineRunAccepted`** (Pydantic schema)
   - Body returned by POST endpoints that kick off a run.
   - Fields: `baseline_run_id`, `status`, `status_url`
+
+</details>
+
+<details><summary><strong><code>app.schemas.command_audit</code></strong> — <em>Data models / schemas</em> · Schemas for the read-only per-command audit surface.</summary>
+
+Path: `backend/app/schemas/command_audit.py`  
+
+**Classes**
+
+- **`CommandAuditRead`** (Pydantic schema)
+  - Fields: `id`, `vm_id`, `host`, `run_type`, `run_id`, `command`, `exit_status`, `stdout_byte_count`, `stdout_sha256`, `stdout_truncated`, `duration_ms`, `blocked`, `started_at`
+- **`CommandAuditListResponse`** (Pydantic schema)
+  - Fields: `items`, `total`, `skip`, `limit`
+
+</details>
+
+<details><summary><strong><code>app.schemas.inference_log</code></strong> — <em>Data models / schemas</em> · Schemas for the read-only inference-log audit surface.</summary>
+
+Path: `backend/app/schemas/inference_log.py`  
+
+**Classes**
+
+- **`InferenceLogRead`** (Pydantic schema)
+  - Fields: `id`, `operation`, `backend_type`, `model`, `method`, `input_messages`, `output_text`, `detections`, `verdict`, `latency_ms`, `resource_type`, `resource_id`, `vm_id`, `created_at`
+- **`InferenceLogListResponse`** (Pydantic schema)
+  - Fields: `items`, `total`, `skip`, `limit`
+- **`InferenceLogStats`** (Pydantic schema)
+  - Roll-up for the dashboard: how many calls, and how often each
+  - Fields: `total`, `by_method`, `by_operation`
 
 </details>
 
@@ -2099,9 +2224,9 @@ Depends on: `app.core.llm.types`, `app.models.settings`
 **Classes**
 
 - **`AppSettingsRead`** (Pydantic schema)
-  - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `updated_at`, `next_run_at`
+  - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `ssh_operations_enabled`, `updated_at`, `next_run_at`
 - **`AppSettingsUpdate`** (Pydantic schema)
-  - Fields: `ollama_model`, `schedule_preset`, `ssh_host_key_policy`
+  - Fields: `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `ssh_operations_enabled`
 - **`HealthStatus`** (Pydantic schema)
   - Fields: `status`, `host`, `version`, `latency_ms`, `error`
 - **`OllamaModel`** (Pydantic schema)
@@ -2268,11 +2393,11 @@ Depends on: `app.models.validation_run`
 **Classes**
 
 - **`ValidationRunCreate`** (Pydantic schema)
-  - Fields: `ssh_key_id`
+  - Fields: `ssh_key_id`, `authorized_by`, `authorization_reason`
 - **`VMValidationRead`** (Pydantic schema)
   - Fields: `id`, `validation_run_id`, `vm_id`, `baseline_id`, `verdict`, `collected_data`, `diff_result`, `host_key_changed`, `failure_category`, `failure_detail`, `validated_at`
 - **`ValidationRunRead`** (Pydantic schema)
-  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `passed_vms`, `warned_vms`, `failed_vms`, `unreachable_vms`, `progress_message`, `started_at`, `completed_at`, `created_at`, `validations`
+  - Fields: `id`, `plan_id`, `wave_number`, `ssh_key_id`, `status`, `total_vms`, `passed_vms`, `warned_vms`, `failed_vms`, `unreachable_vms`, `progress_message`, `authorized_by`, `authorization_reason`, `started_at`, `completed_at`, `created_at`, `validations`
 - **`ValidationRunAccepted`** (Pydantic schema)
   - Fields: `validation_run_id`, `status`, `status_url`
 - **`RevokeValidationKeyRequest`** (Pydantic schema)
@@ -2313,6 +2438,19 @@ Depends on: `app.core.limits`, `app.models.vcenter`
   - Fields: `id`, `kind`, `name`, `description`, `vm_count`
 - **`CategorizationTaskRead`** (Pydantic schema)
   - Fields: `task_id`, `source_vcenter_id`, `status`, `current_step`, `progress_percent`, `batches_total`, `batches_complete`, `started_at`, `completed_at`, `groups_created`, `error`
+
+</details>
+
+<details><summary><strong><code>app.schemas.wave_preview</code></strong> — <em>Data models / schemas</em> · Schema for the wave dry-run preview — what WOULD run, without connecting.</summary>
+
+Path: `backend/app/schemas/wave_preview.py`  
+
+**Classes**
+
+- **`WaveVMPreview`** (Pydantic schema)
+  - Fields: `vm_id`, `name`, `host`, `username`, `os_family`, `environment`, `commands`
+- **`WavePreviewResponse`** (Pydantic schema)
+  - Fields: `plan_id`, `wave_number`, `vm_count`, `requires_authorization`, `authorization_reason`, `ssh_operations_enabled`, `vms`
 
 </details>
 
@@ -2359,6 +2497,23 @@ React dashboard — inventory, validation, planning, audit.
 
 Exports / inner components:
 - **`App`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/components/AgentActivity.jsx</code></strong> — <em>Frontend component</em> · Agent Activity — the operator&#x27;s &quot;what is the agent actually doing?&quot; surface.</summary>
+
+API calls:
+- `/api/command-audits?{id}`
+- `/api/inference-logs/stats`
+- `/api/inference-logs?{id}`
+
+Exports / inner components:
+- **`Pager`** (component)
+- **`pagerBtn`** (helper)
+- **`Badge`** (component)
+- **`CommandAuditTable`** (component)
+- **`InferenceLogTable`** (component)
+- **`AgentActivity`** (component)
 
 </details>
 
@@ -2837,12 +2992,14 @@ API calls:
 - `/api/baseline-runs/{id}`
 - `/api/baseline-runs/{id}/retry-failed`
 - `/api/plans/{id}/waves/{id}/baseline`
+- `/api/plans/{id}/waves/{id}/preview`
 - `/api/plans/{id}/waves/{id}/revoke-validation-key`
 - `/api/plans/{id}/waves/{id}/validate`
 - `/api/ssh-keys?status=active&limit=200`
 - `/api/validation-runs/{id}`
 
 Exports / inner components:
+- **`AuthLine`** (component)
 - **`WaveRunsPanel`** (component)
 - **`BaselineProgressCard`** (component)
 - **`ValidationProgressCard`** (component)

@@ -12,6 +12,10 @@ from app.models.validation_run import ValidationRunStatus, VMValidationVerdict
 
 class ValidationRunCreate(BaseModel):
     ssh_key_id: int = Field(...)
+    # Required by the API only when the wave targets production / CUI+ hosts
+    # (the authorization gate). Ignored otherwise.
+    authorized_by: str | None = Field(default=None, max_length=255)
+    authorization_reason: str | None = Field(default=None, max_length=2000)
 
 
 class VMValidationRead(BaseModel):
@@ -44,6 +48,8 @@ class ValidationRunRead(BaseModel):
     failed_vms: int
     unreachable_vms: int
     progress_message: str | None = None
+    authorized_by: str | None = None
+    authorization_reason: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     created_at: datetime

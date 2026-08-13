@@ -267,6 +267,51 @@ class TestAnnotateOneWave:
         # status helper; check no obvious credential pattern leaks.
         assert "Bearer " not in recorded[0]
 
+    def test_guardrail_flag_falls_back_and_banners(self, monkeypatch):
+        from app.core.llm.base import LLMGuardrailError
+
+        recorded: list[str] = []
+        monkeypatch.setattr(
+            "app.core.wave_annotation.record_last_llm_error",
+            lambda message: recorded.append(message),
+        )
+
+        class _GuardrailBackend(LLMBackend):
+            backend_type = "trustyai"
+            default_model = "granite"
+            max_concurrent_calls = 1
+
+            async def chat(self, messages, model=None, temperature=0.1, max_tokens=None):
+                raise LLMGuardrailError(
+                    "TrustyAI guardrail detector flagged content (UNSUITABLE_INPUT).",
+                    detections={"input": [{"detector_id": "prompt_injection"}]},
+                )
+
+            async def chat_stream(
+                self, messages, model=None, temperature=0.1
+            ) -> AsyncIterator[str]:
+                raise LLMGuardrailError("flagged")
+                yield ""  # pragma: no cover
+
+            async def health_check(self):
+                return {"status": "online"}
+
+            def list_models(self):
+                return ["granite"]
+
+        result = asyncio.run(
+            annotate_one_wave(_wave(), backend=_GuardrailBackend(), max_attempts=3, semaphore=None)
+        )
+        # Distinct method so audit logs distinguish a guardrail block from
+        # auth/transient mechanical fallbacks.
+        assert result.method == "mechanical_fallback_guardrail"
+        # The plan still completed — mechanical annotation produced content.
+        assert result.description
+        # Operator banner written, naming the backend + guardrail.
+        assert len(recorded) == 1
+        assert "trustyai" in recorded[0].lower()
+        assert "guardrail" in recorded[0].lower()
+
     def test_successful_call_clears_stale_status(self, monkeypatch):
         cleared: list[bool] = []
 

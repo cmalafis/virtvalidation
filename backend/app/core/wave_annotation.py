@@ -27,11 +27,12 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from app.core.llm.base import LLMAuthError, LLMBackend, LLMBackendError
+from app.core.llm.base import LLMAuthError, LLMBackend, LLMBackendError, LLMGuardrailError
 from app.core.llm.status import clear_last_llm_error, record_last_llm_error
 
 logger = logging.getLogger(__name__)
@@ -439,17 +440,20 @@ async def annotate_one_wave(
 
     error_feedback: str | None = None
     sem = semaphore or asyncio.Semaphore(1)
+    backend_type = getattr(backend, "backend_type", "unknown")
+    last_messages: list[dict] | None = None
+    last_raw: str = ""
     for attempt in range(1, max_attempts + 1):
         prompt = _render_wave_prompt(wave, vm_name_by_id=name_lookup, error_feedback=error_feedback)
+        messages = [
+            {"role": "system", "content": WAVE_ANNOTATION_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        last_messages = messages
+        chat_started = time.monotonic()
         try:
             async with sem:
-                response = await backend.chat(
-                    messages=[
-                        {"role": "system", "content": WAVE_ANNOTATION_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.1,
-                )
+                response = await backend.chat(messages=messages, temperature=0.1)
         except LLMAuthError:
             # Auth failures are operator-config errors (wrong/expired
             # key), not "the model had a bad day". Surface them via
@@ -476,6 +480,36 @@ async def annotate_one_wave(
                 risk_rationale=ann.risk_rationale,
                 notable_concerns=list(ann.notable_concerns),
                 method="mechanical_fallback_auth",
+                inference_messages=last_messages,
+                inference_backend_type=backend_type,
+            )
+        except LLMGuardrailError as exc:
+            # A guardrail detector flagged this wave's prompt/response.
+            # Asymmetric like an auth failure: surface to the operator banner
+            # and fall back mechanically so the plan still completes. Caught
+            # BEFORE the generic LLMBackendError so the quiet-transient path
+            # doesn't swallow it.
+            logger.warning(
+                "wave_annotation.guardrail_flagged wave=%d attempt=%d backend=%s",
+                wave.wave_number,
+                attempt,
+                backend_type,
+            )
+            record_last_llm_error(
+                f"{backend_type} guardrail detector flagged a wave-annotation "
+                f"prompt/response. Wave annotations are using the mechanical "
+                f"fallback. {exc}"
+            )
+            ann = _mechanical_annotation(wave)
+            return AnnotatedWave(
+                wave=wave,
+                description=ann.description,
+                risk_score=ann.risk_score,
+                risk_rationale=ann.risk_rationale,
+                notable_concerns=list(ann.notable_concerns),
+                method="mechanical_fallback_guardrail",
+                inference_messages=last_messages,
+                inference_backend_type=backend_type,
             )
         except LLMBackendError as exc:
             # Transport errors short-circuit retries — the model
@@ -491,6 +525,8 @@ async def annotate_one_wave(
             break
 
         raw = response.get("content") or ""
+        last_raw = raw
+        latency_ms = int((time.monotonic() - chat_started) * 1000)
         try:
             ann = _parse_annotation(raw)
         except ValueError as exc:
@@ -515,6 +551,11 @@ async def annotate_one_wave(
             risk_rationale=ann.risk_rationale,
             notable_concerns=list(ann.notable_concerns),
             method=method,
+            inference_messages=last_messages,
+            inference_response=last_raw,
+            inference_backend_type=backend_type,
+            inference_model=response.get("model") or "",
+            inference_latency_ms=latency_ms,
         )
 
     # Every attempt failed (or transport error). Fall back.

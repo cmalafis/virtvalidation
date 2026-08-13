@@ -89,6 +89,12 @@ class BaselineRun(Base):
     )
     failed_vms: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     progress_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # Operator authorization for running against production / classified hosts.
+    # Populated by the kick-off endpoint when the authorization gate applies;
+    # null for runs that didn't require it. Provides the audit answer to "who
+    # authorized SSHing into these production servers, and why?".
+    authorized_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    authorization_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

@@ -122,6 +122,7 @@ _BACKEND_LABELS: dict[str, str] = {
     "kserve": "KServe (RHOAI / OpenShift)",
     "vllm": "vLLM (direct)",
     "maas": "Model-as-a-Service",
+    "trustyai": "TrustyAI Guardrails (RHOAI)",
     "mock": "Mock (development only)",
 }
 
@@ -132,7 +133,7 @@ def _backend_options() -> list[BackendOption]:
     Order matters — the UI renders rows in this order. Real backends
     first, ``mock`` last so it's visually separated from the production
     choices."""
-    ordered = ["ollama", "kserve", "maas", "vllm", "mock"]
+    ordered = ["ollama", "kserve", "maas", "trustyai", "vllm", "mock"]
     options: list[BackendOption] = []
     for bt in ordered:
         options.append(

@@ -220,6 +220,17 @@ def test_ubuntu_routes_through_debian_dispatch():
     cs = _cs(OS_RELEASE_UBUNTU_2204)
     assert cs.package_list.startswith("dpkg-query")
     assert "ufw" in cs.firewall_inspect
+    # Ubuntu is a supported target — confirm the shared probes resolve to
+    # the modern (header-less ss) forms, not the RHEL 7 legacy path.
+    assert cs.listening_ports == "ss -tulnH"
+    assert "systemctl list-units" in cs.services_running
+
+
+def test_debian_routes_through_debian_dispatch():
+    cs = _cs(OS_RELEASE_DEBIAN_12)
+    assert cs.package_list.startswith("dpkg-query")
+    assert "ufw" in cs.firewall_inspect
+    assert cs.listening_ports == "ss -tulnH"
 
 
 def test_unknown_os_falls_back_to_modern_defaults():
@@ -762,7 +773,7 @@ def test_run_strips_utf16_bom_and_crlf():
             # UTF-16 LE BOM + "ok\r\n"
             return None, _StubStdoutBytes(b"\xff\xfeo\x00k\x00\r\x00\n\x00"), _StubStdoutBytes(b"")
 
-    out = collector._run(_Client(), "any-command")
+    out = collector._run(_Client(), "hostname -f || hostname")
     assert out == "ok\n"
 
 
@@ -775,7 +786,7 @@ def test_run_strips_utf8_bom():
         def exec_command(self, cmd, timeout=0):
             return None, _StubStdoutBytes(b"\xef\xbb\xbfhello\r\n"), _StubStdoutBytes(b"")
 
-    assert collector._run(_Client(), "any") == "hello\n"
+    assert collector._run(_Client(), "uname -r") == "hello\n"
 
 
 def test_run_json_returns_none_on_garbage():
@@ -787,4 +798,4 @@ def test_run_json_returns_none_on_garbage():
         def exec_command(self, cmd, timeout=0):
             return None, _StubStdoutBytes(b"not valid json\r\n"), _StubStdoutBytes(b"")
 
-    assert collector._run_json(_Client(), "any") is None
+    assert collector._run_json(_Client(), "ip -o -4 addr show") is None

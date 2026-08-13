@@ -153,7 +153,7 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
   perimeter (LiteLLM proxy, OpenRouter behind a corporate egress
   gateway, hosted vLLM behind a reverse-proxy). For classified /
   air-gapped sites the operator simply does not configure `maas`.
-- **LLM backends — five types, runtime-switchable selection.**
+- **LLM backends — six types, runtime-switchable selection.**
   CONNECTION CONFIG is deploy-time (Helm values / env). The ACTIVE
   backend is a DB-backed runtime setting on `app_settings.active_llm_backend`,
   changeable from the Settings UI without a redeploy. The
@@ -176,6 +176,17 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
     includes `/v1`. See `deploy/README.md` for the
     `oc create secret … && helm install --set existingSecret=…`
     recipe.
+  - **trustyai** — TrustyAI Guardrails Orchestrator (RHOAI). Proxies an
+    OpenAI-compatible model through the orchestrator's
+    `/api/v2/chat/completions-detection` endpoint with a
+    `detectors:{input,output}` block (default input detector:
+    `prompt_injection`). On a clean call the answer is the standard
+    `choices[0].message.content` so existing parsers are unchanged; when a
+    detector fires the 200 body carries a `warnings` array and the backend
+    raises `LLMGuardrailError` (see the guardrail surfacing rule below). API
+    key is OPTIONAL (an in-cluster orchestrator may be unauthenticated),
+    sourced from `LLM_TRUSTYAI_API_KEY`; same no-leak redaction as `maas`.
+    See `app.core.llm.trustyai_backend`.
   - **mock** — dev/test infrastructure. The default for pytest and
     the local `podman-compose` stack. Visible in the Settings UI's
     backend selector but visibly badged "DEV ONLY" — not a
@@ -198,6 +209,38 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
   clears the banner symmetrically. The wave annotation `method`
   field is `"mechanical_fallback_auth"` (not `"mechanical_fallback"`)
   so audit logs distinguish the two paths.
+- **LLM guardrail surfacing (asymmetric, same shape as auth).** When the
+  `trustyai` backend's detector flags a prompt/response it raises
+  `LLMGuardrailError` (subclass of `LLMBackendError` — MUST be caught
+  BEFORE the generic `except LLMBackendError`). Treated like an auth
+  failure: the flow completes via mechanical fallback / a manual-review
+  verdict (never a 5xx because a detector fired), AND writes
+  `last_llm_error` for the operator banner. The `method` field is
+  `"mechanical_fallback_guardrail"`; the structured `detections` are
+  persisted on the `InferenceLog` row (below).
+- **Full inference capture (TrustyAI prerequisite).** `LLMUsage` is lean
+  telemetry (tokens/latency). The `InferenceLog` model
+  (`app.core.llm.inference_log.record_inference`) captures the actual input
+  messages, raw output, `method`, and any guardrail `detections` per call —
+  written from the orchestrator layer (validation has a session;
+  wave-annotation/planner are DB-free and thread the capture out to the
+  pipeline caller). Read-only at `GET /api/inference-logs` (+ `/stats`).
+- **Production-server safeguards (the agent SSHes into prod).**
+  - SSH commands are a fixed read-only set; `app.core.ssh_guard.assert_read_only`
+    gates EVERY command at the single `SSHCollector._run` choke point
+    (fail-closed) — defense-in-depth so a future change can't introduce a
+    mutating command. Every command (and blocks) is recorded as a
+    `CommandAudit` row (`GET /api/command-audits`).
+  - Global kill-switch `app_settings.ssh_operations_enabled` (Settings UI) —
+    when off, `POST` baseline/validate return 503.
+  - Authorization gate: a wave targeting production-environment VMs OR a
+    CUI+ classified source vCenter requires `authorized_by` +
+    `authorization_reason` (422 otherwise), persisted on the run row.
+  - `GET /api/plans/{id}/waves/{n}/preview` is a dry run — lists the exact
+    hosts + read-only commands that would run, without connecting.
+  - Blast-radius: `ssh_max_concurrency_per_vcenter` + a per-vCenter circuit
+    breaker (`ssh_circuit_breaker_threshold`) in
+    `app.core.collection.orchestrator.run_collection_batch`.
 - **Two backend resolvers, different jobs.**
   `app.core.llm.factory.get_llm_backend(cfg)` reads the env var —
   used by the migration seed step and by tests that pin a specific

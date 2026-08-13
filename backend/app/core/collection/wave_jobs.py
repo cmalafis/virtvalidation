@@ -92,6 +92,7 @@ def build_targets(db: Session, vm_ids: list[int]) -> list[VMTarget]:
                 host=host,
                 port=vm.ssh_port or 22,
                 username=vm.ssh_user or "virtvalidate",
+                vcenter_id=vm.source_vcenter_id,
             )
         )
     return targets
@@ -99,6 +100,40 @@ def build_targets(db: Session, vm_ids: list[int]) -> list[VMTarget]:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _persist_command_audits(
+    db: Session,
+    *,
+    result: CollectionResult,
+    run_type: str,
+    run_id: int,
+    host: str,
+) -> None:
+    """Write one CommandAudit row per command the collector ran on this VM.
+
+    Best-effort: a failure to persist the audit trail must not abort the
+    run's progress, so callers invoke this inside the on_complete callback
+    whose own exceptions are already swallowed by the orchestrator.
+    """
+    from app.models.command_audit import CommandAudit
+
+    for rec in result.command_log or []:
+        db.add(
+            CommandAudit(
+                vm_id=result.vm_id,
+                host=host or "",
+                run_type=run_type,
+                run_id=run_id,
+                command=rec.get("command", ""),
+                exit_status=rec.get("exit_status"),
+                stdout_byte_count=int(rec.get("stdout_byte_count") or 0),
+                stdout_sha256=rec.get("stdout_sha256"),
+                stdout_truncated=rec.get("stdout_truncated"),
+                duration_ms=int(rec.get("duration_ms") or 0),
+                blocked=bool(rec.get("blocked")),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +186,7 @@ def run_baseline_task(baseline_run_id: int) -> None:
         baselines_by_vm = {b.vm_id: b for b in baselines}
         vm_ids = [b.vm_id for b in baselines]
         targets = build_targets(db, vm_ids)
+        host_by_vm = {t.vm_id: t.host for t in targets}
 
         engine = CollectionEngine(
             paramiko_key=paramiko_key,
@@ -187,6 +223,13 @@ def run_baseline_task(baseline_run_id: int) -> None:
                 row.failure_category = result.failure_category
                 row.failure_detail = result.failure_detail
                 run.failed_vms = (run.failed_vms or 0) + 1
+            _persist_command_audits(
+                db,
+                result=result,
+                run_type="baseline",
+                run_id=run.id,
+                host=host_by_vm.get(result.vm_id, ""),
+            )
             run.progress_message = (
                 f"{run.captured_vms}/{run.total_vms} captured, " f"{run.failed_vms} failed"
             )
@@ -198,6 +241,8 @@ def run_baseline_task(baseline_run_id: int) -> None:
                     targets=targets,
                     engine=engine,
                     max_concurrency=app_config.ssh_max_concurrency,
+                    max_concurrency_per_vcenter=app_config.ssh_max_concurrency_per_vcenter,
+                    circuit_breaker_threshold=app_config.ssh_circuit_breaker_threshold,
                     on_vm_complete=on_complete,
                 )
             )
@@ -307,6 +352,7 @@ def run_validation_task(validation_run_id: int) -> None:
 
         vm_ids = [v.vm_id for v in validation_rows]
         targets = build_targets(db, vm_ids)
+        host_by_vm = {t.vm_id: t.host for t in targets}
 
         engine = CollectionEngine(
             paramiko_key=paramiko_key,
@@ -369,6 +415,13 @@ def run_validation_task(validation_run_id: int) -> None:
                 ):
                     row.host_key_changed = True
 
+            _persist_command_audits(
+                db,
+                result=result,
+                run_type="validation",
+                run_id=run.id,
+                host=host_by_vm.get(result.vm_id, ""),
+            )
             row.validated_at = _utcnow()
             total_done = run.passed_vms + run.warned_vms + run.failed_vms + run.unreachable_vms
             run.progress_message = (
@@ -384,6 +437,8 @@ def run_validation_task(validation_run_id: int) -> None:
                     targets=targets,
                     engine=engine,
                     max_concurrency=app_config.ssh_max_concurrency,
+                    max_concurrency_per_vcenter=app_config.ssh_max_concurrency_per_vcenter,
+                    circuit_breaker_threshold=app_config.ssh_circuit_breaker_threshold,
                     on_vm_complete=on_complete,
                 )
             )

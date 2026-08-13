@@ -86,6 +86,11 @@ class ValidationRun(Base):
         Integer, default=0, server_default="0", nullable=False
     )
     progress_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # Operator authorization for running against production / classified hosts
+    # (mirrors BaselineRun) — the audit answer to "who authorized validating
+    # these production servers, and why?".
+    authorized_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    authorization_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

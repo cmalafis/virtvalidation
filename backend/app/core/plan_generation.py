@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from app.core import db as _db_module
 from app.core.audit import record_audit
+from app.core.llm.inference_log import record_inference
 from app.core.vm_lifecycle import transition_to_available_from_failed_plan
 from app.models.plan import MigrationPlan
 from app.models.target import ResourceMapping
@@ -201,6 +202,26 @@ def run_simple_plan_generation(
         plan.progress_percent = 100
         plan.completed_at = datetime.now(timezone.utc)
         db.commit()
+
+        # Full inference capture — one InferenceLog row per wave's Stage-6
+        # annotation call (the async annotator is DB-free, so we persist here
+        # where the session is in scope). Records the prompt, raw response and
+        # the fallback method taken so operators can audit the agent's wave
+        # reasoning and TrustyAI can explain it.
+        for aw in pipeline_result.waves:
+            record_inference(
+                db,
+                operation="wave_annotation",
+                backend_type=aw.inference_backend_type
+                or getattr(backend, "backend_type", "unknown"),
+                model=aw.inference_model or "",
+                method=aw.method,
+                input_messages=aw.inference_messages,
+                output_text=aw.inference_response,
+                latency_ms=aw.inference_latency_ms,
+                resource_type="plan",
+                resource_id=plan.id,
+            )
 
         method_counts: dict[str, int] = {}
         for m in pipeline_result.method_per_wave.values():

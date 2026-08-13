@@ -196,9 +196,13 @@ def test_bulk_validation_tier3_invokes_llm_and_caches(client, db_session, monkey
     }
     call_count = 0
 
-    def _fake_validate(self, baseline, current_state, vm_role, max_retries=1):
+    def _fake_validate(self, baseline, current_state, vm_role, max_retries=1, capture=None):
         nonlocal call_count
         call_count += 1
+        if capture is not None:
+            capture.update(
+                messages=[{"role": "user", "content": "stub"}], raw_response="{}", method="llm"
+            )
         return {
             **canned,
             "diff": validation_mod.compute_diff(baseline, current_state)

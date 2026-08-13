@@ -16,6 +16,16 @@ class Settings(BaseSettings):
     # Tunable per-deployment if larger VM fleets or smaller appliance pods
     # change the trade-off.
     ssh_max_concurrency: int = 25
+    # Blast-radius cap: max simultaneous SSH sessions to a SINGLE source
+    # vCenter, regardless of the global ceiling. Stops one vCenter's VMs from
+    # consuming the whole pool and hammering one environment while others
+    # starve. Mirrors the per-vCenter limit in bulk_capture.
+    ssh_max_concurrency_per_vcenter: int = 10
+    # Circuit breaker: after this many CONSECUTIVE connection failures
+    # (unreachable / timeout / auth) to hosts in one vCenter, abort the
+    # remaining targets in that vCenter instead of hammering a down or
+    # mis-keyed environment. 0 disables the breaker.
+    ssh_circuit_breaker_threshold: int = 5
     # Per-command timeout for a single SSH command inside the collector.
     # Hung commands (the classic "ssh into a dying VM and the shell stalls")
     # are the most common reason a per-VM collection wedges; this caps how
@@ -170,6 +180,31 @@ class Settings(BaseSettings):
     # but the network leg is the dominant cost, not the model.
     llm_maas_timeout_seconds: int = 60
     llm_maas_verify_ssl: bool = True
+
+    # ----- TrustyAI Guardrails Orchestrator backend (RHOAI) -----
+    # Routes inference through the in-cluster GuardrailsOrchestrator, which
+    # runs input/output detectors (prompt-injection, hap, etc.) in front of
+    # an OpenAI-compatible model. The base URL is the orchestrator gateway
+    # WITHOUT a trailing path; the backend appends
+    # ``/api/v2/chat/completions-detection``.
+    #
+    # Auth follows the HTTPS + API-key recipe — the key is mounted from a
+    # Kubernetes Secret as ``LLM_TRUSTYAI_API_KEY`` (never in values.yaml,
+    # never logged, never in an error/response). Same redaction invariants as
+    # the MaaS backend.
+    #
+    # ``llm_trustyai_input_detectors`` / ``llm_trustyai_output_detectors`` are
+    # comma-separated detector names (e.g. ``prompt_injection,hap``) sent in
+    # the request's ``detectors`` block. Empty means "no detectors on that
+    # side" — at least one input detector is expected for the
+    # prompt-injection use case.
+    llm_trustyai_base_url: str | None = None
+    llm_trustyai_model: str | None = None
+    llm_trustyai_api_key: str | None = None
+    llm_trustyai_input_detectors: str = "prompt_injection"
+    llm_trustyai_output_detectors: str = ""
+    llm_trustyai_timeout_seconds: int = 60
+    llm_trustyai_verify_ssl: bool = True
 
     # MTV / Forklift defaults used when generating migration plan YAML.
     # The source/destination Provider resources are expected to already exist
