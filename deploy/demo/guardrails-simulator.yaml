@@ -1,0 +1,74 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guardrails-simulator
+  labels:
+    app: guardrails-simulator
+    virtvalidate.io/simulated: "true"
+  annotations:
+    virtvalidate.io/disclaimer: >-
+      SIMULATED TrustyAI Guardrails Orchestrator. Protocol-faithful stand-in
+      with a heuristic detector. This is NOT RHOAI TrustyAI.
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guardrails-simulator
+  template:
+    metadata:
+      labels:
+        app: guardrails-simulator
+        virtvalidate.io/simulated: "true"
+    spec:
+      containers:
+        - name: sim
+          image: registry.access.redhat.com/ubi9/python-312:latest
+          command: ["python3", "/opt/sim/guardrails_sim.py"]
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: UPSTREAM_BASE_URL
+              value: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
+            - name: UPSTREAM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: virtvalidate-maas
+                  key: api-key
+          volumeMounts:
+            - name: code
+              mountPath: /opt/sim
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: code
+          configMap:
+            name: guardrails-simulator-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guardrails-simulator
+  labels:
+    app: guardrails-simulator
+spec:
+  selector:
+    app: guardrails-simulator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
