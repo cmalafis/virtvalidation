@@ -40,6 +40,7 @@ import { Table, Tbody, Td, Th, Thead, Tr } from "@patternfly/react-table";
 
 import StatusLabel from "../../common/StatusLabel";
 import { fetchJSON } from "../../utils/fetchJSON";
+import { asArray } from "../../utils/asArray";
 
 const POLL_MS = 3000;
 const TERMINAL = new Set(["completed", "failed", "partial"]);
@@ -224,8 +225,7 @@ export default function WaveRunPanel({ planId, waveNumber }) {
       if (p.status === "fulfilled") setPreview(p.value);
       else setPreviewError(p.reason);
       if (k.status === "fulfilled") {
-        const val = k.value;
-        setSshKeys(Array.isArray(val) ? val : (val?.items ?? []));
+        setSshKeys(asArray(k.value));
       }
       setLoading(false);
     });

@@ -43,6 +43,7 @@ import {
   NoResultsEmptyState,
 } from "../common/EmptyStates";
 import { fetchJSON } from "../utils/fetchJSON";
+import { asArray } from "../utils/asArray";
 
 // Explicit widths: without them the sort carets steal enough room from
 // the flexible columns that "Environment" renders as "Enviro...".
@@ -210,7 +211,7 @@ export default function InventoryPage() {
     setLoading(true);
     try {
       const data = await fetchJSON(`/api/vms?${queryKey}`);
-      setItems(data?.items ?? []);
+      setItems(asArray(data));
       setTotal(data?.total ?? 0);
       setError(null);
     } catch (e) {

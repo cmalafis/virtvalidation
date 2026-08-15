@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint src --max-warnings=0",
     "audit": "npm audit --audit-level=high",
-    "docs:architecture": "cd .. && python3 scripts/generate_architecture_docs.py"
+    "docs:architecture": "cd .. && python3 scripts/generate_architecture_docs.py",
+    "test": "vitest run"
   },
   "dependencies": {
     "@patternfly/patternfly": "^6.6.1",
@@ -24,12 +25,16 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
     "@vitejs/plugin-react": "^4.3.4",
     "eslint": "^9.9.1",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.0.0",
     "eslint-plugin-security": "^3.0.1",
     "globals": "^15.9.0",
-    "vite": "^6.4.2"
+    "jsdom": "^30.0.1",
+    "vite": "^6.4.2",
+    "vitest": "^4.1.10"
   }
 }

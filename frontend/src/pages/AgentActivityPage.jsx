@@ -32,6 +32,7 @@ import PageFrame from "../common/PageFrame";
 import StatusLabel from "../common/StatusLabel";
 import { ErrorEmptyState, GuidedEmptyState } from "../common/EmptyStates";
 import { fetchJSON } from "../utils/fetchJSON";
+import { asArray } from "../utils/asArray";
 
 // How each inference `method` should read to an operator.
 const METHOD_META = {
@@ -68,7 +69,7 @@ function useLog(endpoint) {
       });
       const data = await fetchJSON(`${endpoint}?${qs}`);
       setState({
-        items: data?.items ?? [],
+        items: asArray(data),
         total: data?.total ?? 0,
         loading: false,
         error: null,

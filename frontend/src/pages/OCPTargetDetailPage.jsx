@@ -41,6 +41,7 @@ import PageFrame from "../common/PageFrame";
 import ConfirmModal from "../common/ConfirmModal";
 import { ErrorEmptyState, GuidedEmptyState } from "../common/EmptyStates";
 import { fetchJSON } from "../utils/fetchJSON";
+import { asArray } from "../utils/asArray";
 
 // StorageAccessMode has member names that differ from their values
 // (rwo = "ReadWriteOnce"). The API emits and accepts the VALUE, so these
@@ -276,7 +277,7 @@ function CatalogTab({ catalog, targetId }) {
     setLoading(true);
     try {
       const data = await fetchJSON(`/api/ocp-targets/${targetId}/${catalog.path}?limit=500`);
-      setRows(Array.isArray(data) ? data : (data?.items ?? []));
+      setRows(asArray(data));
       setError(null);
     } catch (e) {
       setError(e);

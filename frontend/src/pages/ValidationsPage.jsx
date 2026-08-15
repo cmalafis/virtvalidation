@@ -32,6 +32,7 @@ import {
   NO_VALIDATIONS,
 } from "../common/EmptyStates";
 import { fetchJSON } from "../utils/fetchJSON";
+import { asArray } from "../utils/asArray";
 
 // VM.status values that mean the VM has been through validation.
 const VALIDATED_STATUSES = ["validated", "failed"];
@@ -57,7 +58,7 @@ export default function ValidationsPage() {
       if (listRes.status === "rejected") throw listRes.reason;
 
       setStats(statsRes.status === "fulfilled" ? statsRes.value : null);
-      setItems(listRes.value?.items ?? []);
+      setItems(asArray(listRes.value));
       setTotal(listRes.value?.total ?? 0);
       setError(null);
     } catch (e) {

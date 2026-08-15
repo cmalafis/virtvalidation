@@ -44,6 +44,7 @@ import ConfirmModal from "../common/ConfirmModal";
 import FindingCard from "../common/FindingCard";
 import { ErrorEmptyState } from "../common/EmptyStates";
 import { fetchJSON } from "../utils/fetchJSON";
+import { asArray } from "../utils/asArray";
 
 const POLL_MS = 2000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -104,10 +105,10 @@ export default function VMDetailPage() {
       const val = (r) => (r.status === "fulfilled" ? r.value : null);
       setData({
         vm: vm.value,
-        snapshots: val(snapshots) ?? [],
+        snapshots: asArray(val(snapshots)),
         profile: val(profile),
         validation: val(validation)?.validation ?? null,
-        audit: (val(audit) ?? []).filter((a) => String(a?.resource_id) === String(id)),
+        audit: asArray(val(audit)).filter((a) => String(a?.resource_id) === String(id)),
       });
       setError(null);
     } catch (e) {

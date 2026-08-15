@@ -41,6 +41,7 @@ import PageFrame from "../common/PageFrame";
 import StatusLabel from "../common/StatusLabel";
 import { GuidedEmptyState, NoResultsEmptyState } from "../common/EmptyStates";
 import { fetchJSON } from "../utils/fetchJSON";
+import { asArray } from "../utils/asArray";
 
 const MAX_VMS = 250;
 const PAGE_SIZE = 20;
@@ -119,7 +120,7 @@ export default function PlanWizardPage() {
       });
       if (search) qs.set("search", search);
       const data = await fetchJSON(`/api/vms?${qs}`);
-      setVms(data?.items ?? []);
+      setVms(asArray(data));
       setTotal(data?.total ?? 0);
     } catch {
       setVms([]);

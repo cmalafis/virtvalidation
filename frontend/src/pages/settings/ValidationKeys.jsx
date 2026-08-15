@@ -34,6 +34,7 @@ import StatusLabel from "../../common/StatusLabel";
 import ConfirmModal from "../../common/ConfirmModal";
 import { ErrorEmptyState, GuidedEmptyState } from "../../common/EmptyStates";
 import { fetchJSON } from "../../utils/fetchJSON";
+import { asArray } from "../../utils/asArray";
 
 function CreateKeyModal({ isOpen, plans, fipsMode, onClose, onCreated }) {
   const [name, setName] = useState("");
@@ -199,7 +200,7 @@ export default function ValidationKeys({ fipsMode }) {
       ]);
       if (k.status === "rejected") throw k.reason;
       const kv = k.value;
-      setKeys(Array.isArray(kv) ? kv : (kv?.items ?? []));
+      setKeys(asArray(kv));
       setPlans(p.status === "fulfilled" && Array.isArray(p.value) ? p.value : []);
       setError(null);
     } catch (e) {
