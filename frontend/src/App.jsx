@@ -1,7 +1,10 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import AppLayout from "./layout/AppLayout";
+import AgentActivityPage from "./pages/AgentActivityPage";
 import AuditLogPage from "./pages/AuditLogPage";
+import DesignReviewDetailPage from "./pages/DesignReviewDetailPage";
+import DesignReviewNewPage from "./pages/DesignReviewNewPage";
 import DesignReviewsPage from "./pages/DesignReviewsPage";
 import InventoryPage from "./pages/InventoryPage";
 import OCPTargetsPage from "./pages/OCPTargetsPage";
@@ -11,10 +14,7 @@ import ReportsPage from "./pages/ReportsPage";
 import VCenterSourcesPage from "./pages/VCenterSourcesPage";
 import ValidationsPage from "./pages/ValidationsPage";
 
-import AgentActivity from "./components/AgentActivity";
 import BulkOperations from "./components/BulkOperations";
-import NetworkReviewDetail from "./components/NetworkReviewDetail";
-import NetworkReviewNew from "./components/NetworkReviewNew";
 import OCPTargetDetail from "./components/OCPTargetDetail";
 import PlanView from "./components/PlanView";
 import PlanWizard from "./components/PlanWizard";
@@ -22,8 +22,6 @@ import ReportView from "./components/ReportView";
 import ResourceMappings, { ResourceMappingDetail } from "./components/ResourceMappings";
 import RVToolsUpload from "./components/RVToolsUpload";
 import Settings from "./components/Settings";
-import StorageReviewDetail from "./components/StorageReviewDetail";
-import StorageReviewNew from "./components/StorageReviewNew";
 import VMDetail from "./components/VMDetail";
 
 export default function App() {
@@ -41,10 +39,10 @@ export default function App() {
           <Route path="vms/:id" element={<VMDetail />} />
           <Route path="design-reviews" element={<DesignReviewsPage />} />
           <Route path="rvtools/upload" element={<RVToolsUpload />} />
-          <Route path="design-reviews/network/new" element={<NetworkReviewNew />} />
-          <Route path="design-reviews/storage/new" element={<StorageReviewNew />} />
-          <Route path="design-reviews/storage/:id" element={<StorageReviewDetail />} />
-          <Route path="design-reviews/:id" element={<NetworkReviewDetail />} />
+          <Route path="design-reviews/network/new" element={<DesignReviewNewPage kind="network" />} />
+          <Route path="design-reviews/storage/new" element={<DesignReviewNewPage kind="storage" />} />
+          <Route path="design-reviews/storage/:id" element={<DesignReviewDetailPage kind="storage" />} />
+          <Route path="design-reviews/:id" element={<DesignReviewDetailPage kind="network" />} />
 
           {/* Migrate */}
           <Route path="plans" element={<PlansPage />} />
@@ -65,7 +63,7 @@ export default function App() {
           <Route path="mappings/:id" element={<ResourceMappingDetail />} />
 
           {/* Administration */}
-          <Route path="agent-activity" element={<AgentActivity />} />
+          <Route path="agent-activity" element={<AgentActivityPage />} />
           <Route path="audit" element={<AuditLogPage />} />
           <Route path="settings" element={<Settings />} />
 
