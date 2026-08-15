@@ -165,28 +165,28 @@ function stubFetchError() {
 // ---------------------------------------------------------------------
 
 const PAGES = [
-  ["OverviewPage", <OverviewPage />, "/"],
-  ["InventoryPage", <InventoryPage />, "/inventory"],
-  ["VMDetailPage", <VMDetailPage />, "/vms/1"],
-  ["ValidationsPage", <ValidationsPage />, "/validations"],
-  ["PlansPage", <PlansPage />, "/plans"],
-  ["PlanDetailPage", <PlanDetailPage />, "/plans/1"],
-  ["PlanWizardPage", <PlanWizardPage />, "/plans/new"],
-  ["ReportsPage", <ReportsPage />, "/reports"],
-  ["ReportViewPage", <ReportViewPage />, "/reports/executive-summary"],
-  ["DesignReviewsPage", <DesignReviewsPage />, "/design-reviews"],
-  ["DesignReviewNewPage", <DesignReviewNewPage kind="network" />, "/design-reviews/network/new"],
-  ["DesignReviewDetailPage", <DesignReviewDetailPage kind="network" />, "/design-reviews/1"],
-  ["VCenterSourcesPage", <VCenterSourcesPage />, "/sources/vcenters"],
-  ["OCPTargetsPage", <OCPTargetsPage />, "/sources/targets"],
-  ["OCPTargetDetailPage", <OCPTargetDetailPage />, "/sources/targets/1"],
-  ["ResourceMappingsPage", <ResourceMappingsPage />, "/mappings"],
-  ["ResourceMappingDetailPage", <ResourceMappingDetailPage />, "/mappings/1"],
-  ["RVToolsUploadPage", <RVToolsUploadPage />, "/rvtools/upload"],
-  ["BulkOperationsPage", <BulkOperationsPage />, "/operations"],
-  ["AgentActivityPage", <AgentActivityPage />, "/agent-activity"],
-  ["AuditLogPage", <AuditLogPage />, "/audit"],
-  ["SettingsPage", <SettingsPage />, "/settings"],
+  ["OverviewPage", () => <OverviewPage />, "/"],
+  ["InventoryPage", () => <InventoryPage />, "/inventory"],
+  ["VMDetailPage", () => <VMDetailPage />, "/vms/1"],
+  ["ValidationsPage", () => <ValidationsPage />, "/validations"],
+  ["PlansPage", () => <PlansPage />, "/plans"],
+  ["PlanDetailPage", () => <PlanDetailPage />, "/plans/1"],
+  ["PlanWizardPage", () => <PlanWizardPage />, "/plans/new"],
+  ["ReportsPage", () => <ReportsPage />, "/reports"],
+  ["ReportViewPage", () => <ReportViewPage />, "/reports/executive-summary"],
+  ["DesignReviewsPage", () => <DesignReviewsPage />, "/design-reviews"],
+  ["DesignReviewNewPage", () => <DesignReviewNewPage kind="network" />, "/design-reviews/network/new"],
+  ["DesignReviewDetailPage", () => <DesignReviewDetailPage kind="network" />, "/design-reviews/1"],
+  ["VCenterSourcesPage", () => <VCenterSourcesPage />, "/sources/vcenters"],
+  ["OCPTargetsPage", () => <OCPTargetsPage />, "/sources/targets"],
+  ["OCPTargetDetailPage", () => <OCPTargetDetailPage />, "/sources/targets/1"],
+  ["ResourceMappingsPage", () => <ResourceMappingsPage />, "/mappings"],
+  ["ResourceMappingDetailPage", () => <ResourceMappingDetailPage />, "/mappings/1"],
+  ["RVToolsUploadPage", () => <RVToolsUploadPage />, "/rvtools/upload"],
+  ["BulkOperationsPage", () => <BulkOperationsPage />, "/operations"],
+  ["AgentActivityPage", () => <AgentActivityPage />, "/agent-activity"],
+  ["AuditLogPage", () => <AuditLogPage />, "/audit"],
+  ["SettingsPage", () => <SettingsPage />, "/settings"],
 ];
 
 // Route params have to resolve, so each page is mounted under a matching
@@ -199,12 +199,15 @@ const ROUTE_PATTERNS = [
   "/audit", "/settings",
 ];
 
-function renderAt(element, path) {
+// `makeElement` is a factory rather than a stored JSX element: an array
+// of elements trips react/jsx-key even though these are never rendered as
+// a list.
+function renderAt(makeElement, path) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         {ROUTE_PATTERNS.map((pattern) => (
-          <Route key={pattern} path={pattern} element={element} />
+          <Route key={pattern} path={pattern} element={makeElement()} />
         ))}
       </Routes>
     </MemoryRouter>,
@@ -236,22 +239,22 @@ describe("pages mount", () => {
     vi.restoreAllMocks();
   });
 
-  describe.each(PAGES)("%s", (name, element, path) => {
+  describe.each(PAGES)("%s", (name, makeElement, path) => {
     it("mounts with populated data", async () => {
       stubFetch(POPULATED);
-      renderAt(element, path);
+      renderAt(makeElement, path);
       await expectMounted();
     });
 
     it("mounts with empty/missing fields", async () => {
       stubFetch(EMPTY);
-      renderAt(element, path);
+      renderAt(makeElement, path);
       await expectMounted();
     });
 
     it("mounts when every request fails", async () => {
       stubFetchError();
-      renderAt(element, path);
+      renderAt(makeElement, path);
       await expectMounted();
     });
   });
