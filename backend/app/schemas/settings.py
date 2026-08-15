@@ -19,6 +19,11 @@ class AppSettingsRead(BaseModel):
     # scheduler isn't running (tests, freshly booted process, etc.).
     # The dashboard formats this as "Next collection: in 3h 42m".
     next_run_at: datetime | None = None
+    # Deploy-time config (``Settings.max_vms_per_plan``), not a DB column —
+    # surfaced here so the plan wizard can gate selection at the value the
+    # API will actually enforce. Hardcoding it in the frontend previously
+    # capped operators at 250 while the backend accepted 1000.
+    max_vms_per_plan: int = 1000
 
 
 class AppSettingsUpdate(BaseModel):

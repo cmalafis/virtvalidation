@@ -6,9 +6,10 @@
 // named in plan_pipeline._PIPELINE_STAGE_TO_STATUS and the LLM annotation
 // step is slow enough that a bare spinner reads as stuck.
 //
-// The selection cap (settings.max_vms_per_plan, default 250) is enforced
+// The selection cap (settings.max_vms_per_plan, default 1000) is enforced
 // in the UI as well as the API, so the operator finds out before waiting
-// on a 422.
+// on a 422. It is READ from GET /api/settings rather than hardcoded —
+// getting that wrong silently caps capacity.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -43,7 +44,11 @@ import { GuidedEmptyState, NoResultsEmptyState } from "../common/EmptyStates";
 import { fetchJSON } from "../utils/fetchJSON";
 import { asArray } from "../utils/asArray";
 
-const MAX_VMS = 250;
+// Fallback only. The real cap is deploy-time config
+// (Settings.max_vms_per_plan) and is read from GET /api/settings — a
+// hardcoded value here previously gated operators at 250 while the API
+// happily accepted 1000.
+const MAX_VMS_FALLBACK = 1000;
 const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 300;
 const POLL_MS = 2000;
@@ -76,6 +81,7 @@ export default function PlanWizardPage() {
   const navigate = useNavigate();
 
   const [name, setName] = useState("");
+  const [maxVms, setMaxVms] = useState(MAX_VMS_FALLBACK);
   const [mappings, setMappings] = useState([]);
   const [mappingIds, setMappingIds] = useState(() => new Set());
   const [mappingsLoading, setMappingsLoading] = useState(true);
@@ -91,6 +97,17 @@ export default function PlanWizardPage() {
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState(null);
+
+  // The cap is deploy-time config, so read it rather than assume it.
+  useEffect(() => {
+    fetchJSON("/api/settings")
+      .then((cfg) => {
+        if (Number.isFinite(cfg?.max_vms_per_plan)) setMaxVms(cfg.max_vms_per_plan);
+      })
+      .catch(() => {
+        /* Fallback already applied; a missing cap shouldn't block planning. */
+      });
+  }, []);
 
   useEffect(() => {
     fetchJSON("/api/mappings")
@@ -138,7 +155,7 @@ export default function PlanWizardPage() {
     setSelected((prev) => {
       const next = new Map(prev);
       if (on) {
-        if (next.size >= MAX_VMS && !next.has(vm.id)) return prev;
+        if (next.size >= maxVms && !next.has(vm.id)) return prev;
         next.set(vm.id, vm);
       } else {
         next.delete(vm.id);
@@ -155,7 +172,7 @@ export default function PlanWizardPage() {
       return next;
     });
 
-  const atCap = selected.size >= MAX_VMS;
+  const atCap = selected.size >= maxVms;
   const canGenerate = name.trim().length > 0 && selected.size > 0 && !generating;
 
   const submit = async () => {
@@ -215,7 +232,7 @@ export default function PlanWizardPage() {
         <Alert
           variant="warning"
           isInline
-          title={`Selection cap reached (${MAX_VMS} VMs)`}
+          title={`Selection cap reached (${maxVms} VMs)`}
           className="pf-v6-u-mb-md"
         >
           Narrow the filters or split this into multiple plans. One huge plan
@@ -233,7 +250,7 @@ export default function PlanWizardPage() {
       />
 
       <Content component="p" className="pf-v6-u-color-200 pf-v6-u-mb-sm">
-        {`${selected.size} selected of a ${MAX_VMS} maximum. Only VMs not already committed to a plan are listed.`}
+        {`${selected.size} selected of a ${maxVms} maximum. Only VMs not already committed to a plan are listed.`}
       </Content>
 
       <Pagination

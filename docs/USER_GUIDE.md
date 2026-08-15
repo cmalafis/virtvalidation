@@ -225,8 +225,10 @@ See [DESIGN_REVIEW.md](DESIGN_REVIEW.md).
 Three steps: name it, choose the resource mappings that cover the estate,
 select the VMs. Only VMs not already committed to another plan appear.
 
-The cap is 250 VMs per plan. That's deliberate — one enormous plan is
-harder to review and to sequence than several scoped ones.
+The cap is 1,000 VMs per plan (`max_vms_per_plan`, adjustable at deploy
+time). Well before that ceiling it's worth splitting anyway — one enormous
+plan is harder to review and to sequence than several scoped ones, and the
+wizard shows how many you've selected as you go.
 
 Generation runs a pipeline and reports which stage it's on. Most stages
 are deterministic and take under a second; the per-wave rationale step

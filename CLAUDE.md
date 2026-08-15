@@ -585,10 +585,16 @@ Stages 0-5 + 7 are pure Python and run in well under 1s for 250 VMs.
 Stage 6 wall-clock is dominated by the slowest single LLM call,
 not their sum, because of `asyncio.gather`.
 
-Selection cap: `settings.max_vms_per_plan` (default 250). `POST
+Selection cap: `settings.max_vms_per_plan` (default **1000**). `POST
 /api/plans` returns 422 above the cap so the operator narrows
 filters or splits into multiple plans rather than running one
 huge black-box plan.
+
+The cap is surfaced on `GET /api/settings` as `max_vms_per_plan` and
+the plan wizard READS it. Do not hardcode it in the frontend — this
+doc said 250 for months after `6e48f29` raised it, and a UI that
+trusted that number silently capped operators at a quarter of
+capacity.
 
 When adding a new pipeline stage, extend
 `plan_pipeline._PIPELINE_STAGE_TO_STATUS` so the Plan row's
