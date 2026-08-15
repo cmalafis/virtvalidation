@@ -2500,412 +2500,370 @@ Exports / inner components:
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/AgentActivity.jsx</code></strong> — <em>Frontend component</em> · Agent Activity — the operator&#x27;s &quot;what is the agent actually doing?&quot; surface.</summary>
-
-API calls:
-- `/api/command-audits?{id}`
-- `/api/inference-logs/stats`
-- `/api/inference-logs?{id}`
+<details><summary><strong><code>frontend/src/common/ConfirmModal.jsx</code></strong> — <em>Frontend component</em> · Shared confirmation dialog.</summary>
 
 Exports / inner components:
-- **`Pager`** (component)
-- **`pagerBtn`** (helper)
-- **`Badge`** (component)
-- **`CommandAuditTable`** (component)
-- **`InferenceLogTable`** (component)
-- **`AgentActivity`** (component)
+- **`ConfirmModal`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/BulkOperations.jsx</code></strong> — <em>Frontend component</em> · Bulk operations page — selection-driven capture + validation.</summary>
+<details><summary><strong><code>frontend/src/common/EmptyStates.jsx</code></strong> — <em>Frontend component</em> · Guided empty states.</summary>
+
+Exports / inner components:
+- **`GuidedEmptyState`** (component)
+- **`NoResultsEmptyState`** (component)
+- **`ErrorEmptyState`** (component)
+- **`LoadingEmptyState`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/common/FindingCard.jsx</code></strong> — <em>Frontend component</em> · A single design-review finding.</summary>
+
+Exports / inner components:
+- **`EvidenceBlock`** (component)
+- **`FindingCard`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/common/PageFrame.jsx</code></strong> — <em>Frontend component</em> · Standard page chrome: breadcrumb, title, description, actions.</summary>
+
+Exports / inner components:
+- **`PageFrame`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/common/StatusLabel.jsx</code></strong> — <em>Frontend component</em> · Shared status / severity / lifecycle labels.</summary>
+
+Exports / inner components:
+- **`humanize`** (helper)
+- **`StatusLabel`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/layout/AppLayout.jsx</code></strong> — <em>Frontend component</em> · The application shell.</summary>
+
+Exports / inner components:
+- **`AppLayout`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/layout/AppMasthead.jsx</code></strong> — <em>Frontend component</em> · Application masthead.</summary>
+
+API calls:
+- `/api/health/full`
+
+Exports / inner components:
+- **`ThemeToggle`** (component)
+- **`BackendStatus`** (component)
+- **`AppMasthead`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/layout/AppNav.jsx</code></strong> — <em>Frontend component</em> · Primary navigation.</summary>
+
+Exports / inner components:
+- **`isPrefixMatch`** (helper)
+- **`matches`** (helper)
+- **`AppNav`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/AgentActivityPage.jsx</code></strong> — <em>Frontend component</em> · Agent activity — what the appliance actually did.</summary>
+
+Exports / inner components:
+- **`methodLabel`** (helper)
+- **`useLog`** (hook)
+- **`LogPagination`** (component)
+- **`CommandsTab`** (component)
+- **`InferenceTab`** (component)
+- **`AgentActivityPage`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/AuditLogPage.jsx</code></strong> — <em>Frontend component</em> · Audit log.</summary>
+
+API calls:
+- `/api/audit?{id}`
+
+Exports / inner components:
+- **`SingleSelect`** (component)
+- **`AuditLogPage`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/BulkOperationsPage.jsx</code></strong> — <em>Frontend component</em> · Bulk operations — capture baselines or validate across a selection.</summary>
 
 API calls:
 - `/api/sources/vcenters`
 - `/api/validations/preview-tiers`
-- `/api/vms?limit=1000`
+- `/api/vms/facets`
 
 Exports / inner components:
-- **`BulkOperations`** (component)
-- **`FiltersPanel`** (component)
-- **`TierPreviewCard`** (component)
-- **`TaskStatusCard`** (component)
-- **`Field`** (component)
-- **`Shell`** (component)
+- **`ScopeForm`** (component)
+- **`OperationTab`** (component)
+- **`BulkOperationsPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/InventoryTable.jsx</code></strong> — <em>Frontend component</em> · Paginated inventory table for the dashboard&#x27;s inventory tab.</summary>
+<details><summary><strong><code>frontend/src/pages/DesignReviewDetailPage.jsx</code></strong> — <em>Frontend component</em> · Design review detail — one component for both kinds.</summary>
+
+Exports / inner components:
+- **`DesignReviewDetailPage`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/DesignReviewNewPage.jsx</code></strong> — <em>Frontend component</em> · New design review — one component for both kinds.</summary>
+
+Exports / inner components:
+- **`FileField`** (component)
+- **`DesignReviewNewPage`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/DesignReviewsPage.jsx</code></strong> — <em>Frontend component</em> · Design reviews — network and storage, in one index.</summary>
+
+Exports / inner components:
+- **`DesignReviewsPage`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/InventoryPage.jsx</code></strong> — <em>Frontend component</em> · Virtual Machines — the primary working surface.</summary>
 
 API calls:
-- `/api/ocp-targets/{id}/namespaces?limit=500`
-- `/api/sources/targets`
-- `/api/vms/all?{id}`
-- `/api/vms/bulk-set-target-cluster`
-- `/api/vms/bulk-set-target-namespace`
 - `/api/vms/facets?{id}`
-- `/api/vms/{id}`
+- `/api/vms/{id}/capture`
 - `/api/vms?{id}`
 
 Exports / inner components:
-- **`StatusPill`** (component)
-- **`LifecyclePill`** (component)
-- **`fmt`** (helper)
-- **`TargetClusterCell`** (component)
-- **`TargetClusterPopover`** (component)
-- **`TargetNamespaceCell`** (component)
-- **`TargetNamespacePopover`** (component)
-- **`TargetNetworksCell`** (component)
-- **`BulkActionBar`** (component)
-- **`formatTimestamp`** (helper)
-- **`readStateFromUrl`** (helper)
-- **`writeStateToUrl`** (helper)
-- **`buildQueryString`** (helper)
-- **`DeleteAllModal`** (component)
-- **`FacetDropdown`** (component)
-- **`InventoryTable`** (component)
+- **`readState`** (helper)
+- **`buildQuery`** (helper)
+- **`FacetSelect`** (component)
+- **`InventoryPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/NetworkReviewDetail.jsx</code></strong> — <em>Frontend component</em> · Per-review detail page. Renders the full report view + lets operators</summary>
+<details><summary><strong><code>frontend/src/pages/OCPTargetDetailPage.jsx</code></strong> — <em>Frontend component</em> · Target cluster catalogs — networks, storage classes, namespaces.</summary>
 
 API calls:
-- `/api/network-reviews/{id}`
-- `/api/network-reviews/{id}/analyze`
-- `/api/network-reviews/{id}/findings/{id}`
-
-Exports / inner components:
-- **`NetworkReviewDetail`** (component)
-- **`FindingCard`** (component)
-- **`ConfidenceTag`** (component)
-- **`EvidenceBlock`** (component)
-- **`SourceProposedBlocks`** (component)
-- **`ConfidenceLimitations`** (component)
-- **`StatusPill`** (component)
-- **`Caveats`** (component)
-- **`H2`** (component)
-- **`Err`** (component)
-- **`Shell`** (component)
-- **`Styles`** (component)
-
-</details>
-
-<details><summary><strong><code>frontend/src/components/NetworkReviewNew.jsx</code></strong> — <em>Frontend component</em> · New Network Design Review wizard. Single-page form: name → notes upload</summary>
-
-API calls:
-- `/api/network-reviews`
-- `/api/network-reviews/{id}/analyze`
-
-Exports / inner components:
-- **`NetworkReviewNew`** (component)
-- **`Section`** (component)
-- **`Field`** (component)
-- **`FileLoader`** (component)
-- **`Notice`** (component)
-- **`Styles`** (component)
-
-</details>
-
-<details><summary><strong><code>frontend/src/components/OCPTargetDetail.jsx</code></strong> — <em>Frontend component</em> · OCP target detail page. Two operator-driven catalogs hang off the</summary>
-
-API calls:
-- `/api/ocp-targets/{id}/namespaces/{id}`
-- `/api/ocp-targets/{id}/namespaces?limit=500`
-- `/api/ocp-targets/{id}/networks`
-- `/api/ocp-targets/{id}/networks/{id}`
-- `/api/ocp-targets/{id}/storage-classes`
-- `/api/ocp-targets/{id}/storage-classes/{id}`
+- `/api/ocp-targets/{id}/{id}/{id}`
+- `/api/ocp-targets/{id}/{id}?limit=500`
 - `/api/sources/targets/{id}`
 
 Exports / inner components:
-- **`OCPTargetDetail`** (component)
-- **`NetworksTab`** (component)
-- **`StorageTab`** (component)
-- **`NetworkModal`** (component)
-- **`StorageModal`** (component)
-- **`NamespacesTab`** (component)
-- **`NamespaceModal`** (component)
-- **`Tab`** (component)
-- **`Empty`** (component)
-- **`Pill`** (component)
-- **`Field`** (component)
-- **`ErrorBlock`** (component)
-- **`Shell`** (component)
+- **`EntityModal`** (component)
+- **`CatalogTab`** (component)
+- **`OCPTargetDetailPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/OCPTargets.jsx</code></strong> — <em>Frontend component</em> · OCP target cluster registry. Operators register the cluster they&#x27;re</summary>
+<details><summary><strong><code>frontend/src/pages/OCPTargetsPage.jsx</code></strong> — <em>Frontend component</em> · OpenShift target clusters.</summary>
 
 API calls:
 - `/api/sources/targets`
 - `/api/sources/targets/{id}`
 
 Exports / inner components:
-- **`OCPTargets`** (component)
-- **`Row`** (component)
-- **`CreateModal`** (component)
-- **`Empty`** (component)
-- **`Pill`** (component)
-- **`Field`** (component)
-- **`ErrorBlock`** (component)
-- **`Shell`** (component)
+- **`toPayload`** (helper)
+- **`TargetModal`** (component)
+- **`OCPTargetsPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/PlanView.jsx</code></strong> — <em>Frontend component</em> · Strategy-driven plan detail page. Surfaces the LLM&#x27;s rationale +</summary>
+<details><summary><strong><code>frontend/src/pages/OverviewPage.jsx</code></strong> — <em>Frontend component</em> · Overview — the landing page.</summary>
+
+API calls:
+- `/api/health/full`
+- `/api/mappings`
+- `/api/settings/llm`
+- `/api/sources/targets`
+- `/api/sources/vcenters`
+- `/api/vms/stats`
+
+Exports / inner components:
+- **`StatTile`** (component)
+- **`NextStepCard`** (component)
+- **`SystemCard`** (component)
+- **`OverviewPage`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/PlanDetailPage.jsx</code></strong> — <em>Frontend component</em> · Migration plan detail — the waves and how to run them.</summary>
 
 API calls:
 - `/api/plans/{id}`
-- `/api/plans/{id}/chunks`
-- `/api/plans/{id}/waves/{id}/move-vm`
-- `/api/vms?limit=500`
+- `/api/plans/{id}/mark-succeeded`
+- `/api/plans/{id}/waves/{id}/mtv-yaml`
 
 Exports / inner components:
-- **`PlanView`** (component)
-- **`ChunkCard`** (component)
+- **`methodLabel`** (helper)
+- **`riskColor`** (helper)
 - **`WaveCard`** (component)
-- **`MoveVMPicker`** (component)
-- **`Section`** (component)
-- **`Shell`** (component)
+- **`PlanDetailPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/PlanWizard.jsx</code></strong> — <em>Frontend component</em> · Per-VM plan creation page. Two steps:</summary>
+<details><summary><strong><code>frontend/src/pages/PlanWizardPage.jsx</code></strong> — <em>Frontend component</em> · Generate a migration plan.</summary>
 
 API calls:
 - `/api/mappings`
 - `/api/plans`
 - `/api/plans/{id}`
-- `/api/vms/facets?{id}`
 - `/api/vms?{id}`
 
 Exports / inner components:
-- **`PlanWizard`** (component)
-- **`StepBar`** (component)
-- **`MappingMultiSelect`** (component)
-- **`FilterBar`** (component)
-- **`FacetDropdown`** (component)
-- **`Toggle`** (component)
-- **`NarrowingPanel`** (component)
-- **`SelectionCounter`** (component)
-- **`VMTable`** (component)
-- **`Pager`** (component)
-- **`ProgressBar`** (component)
-- **`Step`** (component)
-- **`Shell`** (component)
+- **`stageLabel`** (helper)
+- **`stagePercent`** (helper)
+- **`PlanWizardPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/RVToolsUpload.jsx</code></strong> — <em>Frontend component</em> · Top-level RVTools upload — auto-detects vCenter per VM, matches to</summary>
+<details><summary><strong><code>frontend/src/pages/PlansPage.jsx</code></strong> — <em>Frontend component</em> · Migration plans — the index.</summary>
+
+API calls:
+- `/api/plans?limit=100`
+
+Exports / inner components:
+- **`stageProgress`** (helper)
+- **`humanize`** (helper)
+- **`PlanStatus`** (component)
+- **`PlansPage`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/RVToolsUploadPage.jsx</code></strong> — <em>Frontend component</em> · Import inventory from an RVTools export.</summary>
 
 API calls:
 - `/api/rvtools/upload-multi-vcenter`
 - `/api/sources/vcenters`
-- `/api/sources/vcenters/auto-match`
 
 Exports / inner components:
-- **`RVToolsUpload`** (component)
-- **`ImportErrorBanner`** (component)
-- **`PickStage`** (component)
-- **`ParseStatsCard`** (component)
-- **`ConfirmStage`** (component)
-- **`DoneStage`** (component)
-- **`Shell`** (component)
+- **`RVToolsUploadPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/ReportView.jsx</code></strong> — <em>Frontend component</em> · Inline report viewer. Mirrors the dashboard aesthetic exactly so users</summary>
+<details><summary><strong><code>frontend/src/pages/ReportViewPage.jsx</code></strong> — <em>Frontend component</em> · Report viewer.</summary>
 
 Exports / inner components:
-- **`ReportView`** (component)
-- **`ExecutiveSummaryView`** (component)
-- **`ValidationListView`** (component)
-- **`ValidationCard`** (component)
-- **`WavePlanView`** (component)
-- **`BaselineSnapshotView`** (component)
-- **`SectionTitle`** (component)
-- **`SubLabel`** (component)
-- **`Stat`** (component)
-- **`Pill`** (component)
-- **`Loader`** (component)
-- **`Err`** (component)
-- **`ReportStyles`** (component)
+- **`PrintStyles`** (component)
+- **`Section`** (component)
+- **`ReportViewPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/ResourceMappings.jsx</code></strong> — <em>Frontend component</em> · Resource-mapping editor. Operators map source vSphere networks /</summary>
+<details><summary><strong><code>frontend/src/pages/ReportsPage.jsx</code></strong> — <em>Frontend component</em> · Reports — the index of available reports.</summary>
+
+Exports / inner components:
+- **`ReportsPage`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/ResourceMappingDetailPage.jsx</code></strong> — <em>Frontend component</em> · Resource mapping detail — the row-by-row editor.</summary>
+
+API calls:
+- `/api/mappings/{id}`
+- `/api/mappings/{id}/preflight`
+- `/api/mappings/{id}/{id}`
+- `/api/ocp-targets/{id}/networks?limit=500`
+- `/api/ocp-targets/{id}/storage-classes?limit=500`
+
+Exports / inner components:
+- **`ConfidenceCell`** (component)
+- **`ResourceMappingDetailPage`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/ResourceMappingsPage.jsx</code></strong> — <em>Frontend component</em> · Resource mappings — the index.</summary>
 
 API calls:
 - `/api/mappings`
 - `/api/mappings/{id}`
-- `/api/mappings/{id}/preflight`
-- `/api/mappings/{id}/suggest-network`
-- `/api/mappings/{id}/suggest-storage`
-- `/api/ocp-targets/{id}/networks`
-- `/api/ocp-targets/{id}/storage-classes`
-- `/api/ocp-targets/{id}/{id}`
-- `/api/ocp-targets/{id}/{id}/{id}`
 - `/api/sources/targets`
-- `/api/sources/targets/{id}`
 - `/api/sources/vcenters`
-- `/api/vms?source_vcenter_id={id}&limit=1000`
 
 Exports / inner components:
-- **`ResourceMappings`** (component)
-- **`ConfirmDeleteModal`** (component)
 - **`CreateModal`** (component)
-- **`normaliseNamespaceStrategy`** (helper)
-- **`ResourceMappingDetail`** (component)
-- **`TargetEntityManagerModal`** (component)
-- **`InlineCreateNetworkModal`** (component)
-- **`InlineCreateStorageClassModal`** (component)
-- **`EmptyCatalogHint`** (component)
-- **`NamespaceStrategySection`** (component)
-- **`StatusDot`** (component)
-- **`PreflightPanel`** (component)
-- **`Section`** (component)
-- **`RowGrid`** (component)
-- **`ConfidencePill`** (component)
-- **`Empty`** (component)
-- **`Pill`** (component)
-- **`Field`** (component)
-- **`ErrorBlock`** (component)
-- **`Shell`** (component)
+- **`ResourceMappingsPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/Settings.jsx</code></strong> — <em>Frontend component</em></summary>
+<details><summary><strong><code>frontend/src/pages/SettingsPage.jsx</code></strong> — <em>Frontend component</em> · Settings.</summary>
 
 API calls:
-- `/api/health/llm`
-- `/api/health/postgres`
 - `/api/settings`
 - `/api/settings/llm`
 - `/api/settings/llm/test-connection`
 - `/api/system/fips-status`
-- `/api/system/ollama-models`
 - `/api/system/ssh-key`
 - `/api/system/ssh-key/generate`
 - `/api/system/ssh-key/rotate`
 
 Exports / inner components:
-- **`NextRunIndicator`** (component)
-- **`ConfirmModal`** (component)
-- **`EnrollmentInstructions`** (component)
-- **`SSHKeyViewerWithFIPS`** (component)
-- **`ValidationKeysWithFIPS`** (component)
-- **`SSHKeyViewer`** (component)
-- **`ConnectionStatus`** (component)
-- **`FIPSCompliancePanel`** (component)
-- **`LLMBackendPanel`** (component)
-- **`ConfigurationForm`** (component)
-- **`Settings`** (component)
-- **`Spinner`** (component)
-- **`Shimmer`** (component)
-- **`Section`** (component)
-- **`StatusDot`** (component)
-- **`SecondaryButton`** (component)
-- **`PrimaryButton`** (component)
-- **`Row`** (component)
-- **`Pill`** (component)
+- **`GeneralTab`** (component)
+- **`LLMTab`** (component)
+- **`ComplianceTab`** (component)
+- **`SettingsPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/StorageReviewDetail.jsx</code></strong> — <em>Frontend component</em> · Per-review detail page. Renders the full report view + lets operators</summary>
-
-API calls:
-- `/api/storage-reviews/{id}`
-- `/api/storage-reviews/{id}/analyze`
-- `/api/storage-reviews/{id}/findings/{id}`
-
-Exports / inner components:
-- **`StorageReviewDetail`** (component)
-- **`FindingCard`** (component)
-- **`ConfidenceTag`** (component)
-- **`EvidenceBlock`** (component)
-- **`SourceProposedBlocks`** (component)
-- **`ConfidenceLimitations`** (component)
-- **`StatusPill`** (component)
-- **`Caveats`** (component)
-- **`H2`** (component)
-- **`Err`** (component)
-- **`Shell`** (component)
-- **`Styles`** (component)
-
-</details>
-
-<details><summary><strong><code>frontend/src/components/StorageReviewNew.jsx</code></strong> — <em>Frontend component</em> · New Storage Design Review wizard. Sister page to NetworkReviewNew —</summary>
-
-API calls:
-- `/api/storage-reviews`
-- `/api/storage-reviews/{id}/analyze`
-
-Exports / inner components:
-- **`StorageReviewNew`** (component)
-- **`FileUpload`** (component)
-- **`Section`** (component)
-- **`Shell`** (component)
-
-</details>
-
-<details><summary><strong><code>frontend/src/components/VCenterSources.jsx</code></strong> — <em>Frontend component</em> · Scale-aware vCenter source registry. List + create + edit + delete.</summary>
+<details><summary><strong><code>frontend/src/pages/VCenterSourcesPage.jsx</code></strong> — <em>Frontend component</em> · vCenter sources — the first step in the workflow.</summary>
 
 API calls:
 - `/api/sources/vcenters`
 - `/api/sources/vcenters/{id}`
-- `/api/sources/vcenters/{id}/categorize`
-- `/api/sources/vcenters/{id}/categorize/{id}`
-- `/api/sources/vcenters/{id}/rvtools/import`
-- `/api/sources/vcenters/{id}/rvtools/import/{id}`
-- `/api/sources/vcenters/{id}/rvtools/preview`
 
 Exports / inner components:
-- **`VCenterSources`** (component)
-- **`Row`** (component)
-- **`CreateModal`** (component)
-- **`UploadRVToolsModal`** (component)
-- **`DeltaSummaryGrid`** (component)
-- **`DoneSummary`** (component)
-- **`Empty`** (component)
-- **`Pill`** (component)
-- **`Field`** (component)
-- **`ErrorBlock`** (component)
-- **`Shell`** (component)
+- **`toPayload`** (helper)
+- **`VCenterModal`** (component)
+- **`VCenterSourcesPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/VMDetail.jsx</code></strong> — <em>Frontend component</em> · Per-VM detail page — everything operators want to see about a VM in one</summary>
+<details><summary><strong><code>frontend/src/pages/VMDetailPage.jsx</code></strong> — <em>Frontend component</em> · Single VM detail.</summary>
 
 API calls:
 - `/api/audit?resource_type=vm&limit=50`
-- `/api/plans?limit=20`
 - `/api/vms/{id}`
 - `/api/vms/{id}/baseline/profile`
-- `/api/vms/{id}/capture`
-- `/api/vms/{id}/capture/{id}`
 - `/api/vms/{id}/snapshots`
-- `/api/vms/{id}/validate`
-- `/api/vms/{id}/validate/{id}`
 - `/api/vms/{id}/validation/latest`
+- `/api/vms/{id}/{id}`
+- `/api/vms/{id}/{id}/{id}`
 
 Exports / inner components:
-- **`classifyCaptureError`** (helper)
-- **`VMDetailBody`** (component)
-- **`Shell`** (component)
-- **`Section`** (component)
-- **`Field`** (component)
-- **`Stat`** (component)
-- **`Subtitle`** (component)
-- **`Banner`** (component)
-- **`Error`** (component)
-- **`ValidationProgress`** (component)
-- **`Finding`** (component)
-- **`Evidence`** (component)
-- **`OSBadge`** (component)
-- **`VMDetail`** (component)
+- **`fmt`** (helper)
+- **`Rows`** (component)
+- **`VMDetailPage`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/ValidationKeysSection.jsx</code></strong> — <em>Frontend component</em> · Multi-key SSH catalog UI for the wave-scoped baseline + validation flow.</summary>
+<details><summary><strong><code>frontend/src/pages/ValidationsPage.jsx</code></strong> — <em>Frontend component</em> · Validations.</summary>
+
+API calls:
+- `/api/vms/stats`
+- `/api/vms?{id}`
+
+Exports / inner components:
+- **`ValidationsPage`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/plan/WaveRunPanel.jsx</code></strong> — <em>Frontend component</em> · Per-wave execution: dry-run preview, baseline, validate.</summary>
+
+API calls:
+- `/api/plans/{id}/waves/{id}/preview`
+- `/api/plans/{id}/waves/{id}/{id}`
+- `/api/ssh-keys?status=active&limit=200`
+- `/api/{id}/{id}`
+
+Exports / inner components:
+- **`runCounts`** (helper)
+- **`RunProgress`** (component)
+- **`RunModal`** (component)
+- **`WaveRunPanel`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/settings/ValidationKeys.jsx</code></strong> — <em>Frontend component</em> · Per-wave SSH key catalog.</summary>
 
 API calls:
 - `/api/plans?limit=200`
@@ -2914,104 +2872,30 @@ API calls:
 - `/api/ssh-keys?limit=200`
 
 Exports / inner components:
-- **`ValidationKeysSection`** (component)
-- **`KeyRow`** (component)
-- **`PostCreatePanel`** (component)
 - **`CreateKeyModal`** (component)
-- **`FieldLabel`** (component)
-- **`btnPrimary`** (helper)
-- **`btnGhost`** (helper)
-- **`btnSecondaryStyle`** (helper)
+- **`ValidationKeys`** (component)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/VirtValidate.jsx</code></strong> — <em>Frontend component</em> · Design Review status + severity colors. Module-level so the dashboard</summary>
-
-API calls:
-- `/api/audit?{id}`
-- `/api/network-reviews`
-- `/api/plans/{id}/waves/{id}/mtv-yaml`
-- `/api/plans?limit=1`
-- `/api/snapshots/capture-all`
-- `/api/sources/vcenters`
-- `/api/storage-reviews`
-- `/api/templates/csv`
-- `/api/validations/run-all`
-- `/api/vms`
-- `/api/vms/bulk`
-- `/api/vms/stats`
-- `/api/vms/{id}`
-- `/api/vms/{id}/baseline/profile`
-- `/api/vms/{id}/capture`
-- `/api/vms/{id}/capture/{id}`
-- `/api/vms/{id}/validate`
-- `/api/vms/{id}/validate/{id}`
-- `/api/vms/{id}/validation/latest`
-- `/api/vms?limit=1000&sort_by=name`
+<details><summary><strong><code>frontend/src/test/pages.test.jsx</code></strong> — <em>Frontend component</em> · Smoke tests: every page mounts against empty data, an API error, and a</summary>
 
 Exports / inner components:
-- **`NetworkReviewStatusPill`** (component)
-- **`mapVM`** (helper)
-- **`fetchJSON`** (helper)
-- **`FindingCard`** (component)
-- **`OSBadge`** (component)
-- **`WaveMTVDownload`** (component)
-- **`Modal`** (component)
-- **`CSVTemplateDownload`** (component)
-- **`CSVColumnDocs`** (component)
-- **`AccordionSection`** (component)
-- **`ManualTab`** (component)
-- **`BulkTab`** (component)
-- **`EnrollVMsModal`** (component)
-- **`DeleteVMModal`** (component)
-- **`BulkDeleteVMsModal`** (component)
-- **`VirtValidate`** (component)
-- **`RevertToVmwareModal`** (component)
-- **`MakeAvailableModal`** (component)
-- **`StatusBadge`** (component)
-- **`SeverityTag`** (component)
-- **`Metric`** (component)
-- **`Shimmer`** (component)
-- **`SkeletonRow`** (component)
-- **`TableSkeleton`** (component)
-- **`Spinner`** (component)
-- **`PrimaryButton`** (component)
-- **`SecondaryButton`** (component)
-- **`EmptyState`** (component)
-- **`ErrorState`** (component)
-- **`Notice`** (component)
-- **`FormField`** (component)
-- **`PreviewTable`** (component)
-- **`TabButton`** (component)
+- **`stubFetch`** (helper)
+- **`stubFetchError`** (helper)
+- **`renderAt`** (helper)
+- **`expectMounted`** (helper)
 
 </details>
 
-<details><summary><strong><code>frontend/src/components/WaveRunsPanel.jsx</code></strong> — <em>Frontend component</em> · Wave-scoped baseline + validation actions, embedded inside a WaveCard.</summary>
-
-API calls:
-- `/api/baseline-runs/{id}`
-- `/api/baseline-runs/{id}/retry-failed`
-- `/api/plans/{id}/waves/{id}/baseline`
-- `/api/plans/{id}/waves/{id}/preview`
-- `/api/plans/{id}/waves/{id}/revoke-validation-key`
-- `/api/plans/{id}/waves/{id}/validate`
-- `/api/ssh-keys?status=active&limit=200`
-- `/api/validation-runs/{id}`
+<details><summary><strong><code>frontend/src/theme.js</code></strong> — <em>Frontend component</em> · Theme handling for the PatternFly 6 shell.</summary>
 
 Exports / inner components:
-- **`AuthLine`** (component)
-- **`WaveRunsPanel`** (component)
-- **`BaselineProgressCard`** (component)
-- **`ValidationProgressCard`** (component)
-- **`ValidationRow`** (component)
-- **`VerdictPill`** (component)
-- **`ProgressBar`** (component)
-- **`KeyPickerModal`** (component)
-- **`RevokeKeyModal`** (component)
-- **`ModalShell`** (component)
-- **`btnPrimary`** (helper)
-- **`btnGhost`** (helper)
-- **`btnSecondaryStyle`** (helper)
+- **`prefersDark`** (helper)
+- **`getStoredTheme`** (helper)
+- **`resolveTheme`** (helper)
+- **`applyTheme`** (helper)
+- **`initTheme`** (helper)
+- **`subscribeToSystemTheme`** (helper)
 
 </details>
 
@@ -3020,6 +2904,13 @@ Exports / inner components:
 Exports / inner components:
 - **`formatApiErrorDetail`** (helper)
 - **`throwForResponse`** (helper)
+
+</details>
+
+<details><summary><strong><code>frontend/src/utils/asArray.js</code></strong> — <em>Frontend component</em> · Coerce an API result into an array.</summary>
+
+Exports / inner components:
+- **`asArray`** (helper)
 
 </details>
 

@@ -88,15 +88,23 @@ That's it. Everything runs locally. No data leaves your machine.
 
 ### First Run
 
-1. **Generate SSH key** — Settings → SSH Public Key → key auto-generates on first load
-2. **Distribute key to VMs** — copy the public key into `~/.ssh/authorized_keys` on each VM you want to monitor (see [docs/SSH_SETUP.md](docs/SSH_SETUP.md))
-3. **Enroll your VMs** — Add VMs button → Manual, CSV, or RVTools XLSX upload
-4. **Watch the baseline build** — automatic SSH collection runs twice daily by default
-5. **Plan your migration** — Migration Plan tab → Generate Plan → Download MTV YAML
-6. **Migrate and validate** — apply the YAML with MTV, click Mark Wave Complete, get your report
+The Overview page tracks these steps and links to whichever one is next.
+
+1. **Generate the SSH key** — Settings → Compliance → Generate key, then add the public key to `~/.ssh/authorized_keys` on each VM (see [docs/SSH_SETUP.md](docs/SSH_SETUP.md))
+2. **Pick an inference backend** — Settings → Inference → Test connection
+3. **Register a vCenter source** — Configure → vCenter Sources
+4. **Register an OpenShift target** — Configure → OCP Targets, then fill in its networks, storage classes and namespaces
+5. **Import inventory** — Discover → Virtual Machines → Import VMs (RVTools XLSX, CSV, or manual)
+6. **Map resources** — Configure → Resource Mappings, then run preflight
+7. **Capture baselines** — over a few days, so normal variation isn't mistaken for migration damage
+8. **Generate a plan** — Migrate → Migration Plans → Generate plan → download the MTV YAML
+9. **Migrate and validate** — apply the YAML with Forklift/MTV, then validate the wave and read the report
+
+**[Full user guide →](docs/USER_GUIDE.md)**
 
 ## Documentation
 
+- [**User Guide**](docs/USER_GUIDE.md) — end-to-end, from empty appliance to validated wave
 - [**Product Map**](docs/product-map.html) — what the product does (feature catalog, roadmap)
 - [**Architecture Diagram**](docs/architecture-diagram.html) — how it's built (interactive module + component map, regenerated from source)
 - [**Architecture Reference**](docs/ARCHITECTURE.md) — markdown view of the same data

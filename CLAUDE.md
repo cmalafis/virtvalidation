@@ -133,7 +133,7 @@ Local appliance that validates VMs migrated from VMware to OpenShift
 Virtualization using SSH + local LLM reasoning. Air-gapped by design.
 
 ## Stack
-- Frontend: React 18 + Tailwind + Vite
+- Frontend: React 18 + PatternFly 6 + Vite
 - Backend: Python 3.12 + FastAPI
 - LLM: Ollama + Llama 3 8B (local, never calls external APIs)
 - DB: PostgreSQL 16
@@ -434,6 +434,56 @@ Before declaring "I rewrote X":
    the bundle's hash changed or that a new string is present in the
    minified output. Bundle changes don't prove the new code is on
    the operator's screen.
+
+## Frontend structure + UI conventions (PatternFly 6)
+
+The UI was rebuilt on PatternFly 6 in August 2026. The previous
+inline-styled dark theme is gone; `frontend/src/components/` no longer
+exists.
+
+```
+frontend/src/
+├── index.css      PF base + addons — the ONLY stylesheet
+├── theme.js       light/dark/system; dark = `pf-v6-theme-dark` on <html>
+├── layout/        AppLayout (Page+Masthead+Sidebar+Outlet), AppNav,
+│                  AppMasthead, RouteErrorBoundary
+├── common/        PageFrame, StatusLabel, FindingCard, ConfirmModal,
+│                  EmptyStates, toast
+├── pages/         one file per route; sub-dirs for page-local pieces
+├── utils/         fetchJSON, apiError, asArray, parseRVTools
+└── test/          smoke suite (`npm run test`)
+```
+
+Rules for new UI:
+
+- **Use PatternFly components. Do not write inline `style={{}}` layout.**
+  A one-off `style` for a token reference is fine; re-implementing a
+  Button, Modal, Table or EmptyState is not.
+- **v5 examples do not compile.** PF6 changed the ones you'll reach for
+  most: `Modal` is composable (`ModalHeader`/`ModalBody`/`ModalFooter`,
+  not `title`/`actions`), `EmptyState` takes `titleText`/`icon` directly
+  (`EmptyStateHeader` is gone), and `Masthead` has `MastheadLogo`.
+  Check the installed `.d.ts` before trusting a snippet.
+- **Colors come from PF tokens** (`var(--pf-t--global--...)`), never hex
+  literals — the app has a dark theme and hex literals don't follow it.
+- **No web fonts from the Internet.** PF bundles Red Hat Display/Text/Mono
+  locally. The pre-PF UI `@import`ed fonts.googleapis.com from every
+  component, which is an outbound request from the operator's browser in
+  an air-gapped product. Don't reintroduce that.
+- **Route new pages under the `AppLayout` layout route** in `App.jsx` so
+  they get the masthead, sidebar and error boundary. Add the nav entry in
+  `layout/AppNav.jsx`.
+- **`asArray()` at every fetch→list-state boundary.** `?? []` guards null
+  and undefined but not a wrong-typed response, and these endpoints return
+  bare lists, `{items,...}` envelopes, and degraded objects.
+- **Stay in `.jsx`/`.js`, avoid top-level `React.memo`/`forwardRef`, and
+  keep `fetchJSON("/api/…")` calls inline.**
+  `scripts/generate_architecture_docs.py` parses the frontend by regex,
+  not AST: it globs only `.jsx`/`.js`, matches `const Name = (`, and finds
+  API calls only in literal strings. TypeScript or a centralized URL
+  module would silently empty the generated docs.
+- **`npm run test`** runs the smoke suite: every page must mount against
+  populated data, missing fields, and a failing API.
 
 ## Deployment template edits (Helm + Containerfiles)
 
