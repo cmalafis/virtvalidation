@@ -43,7 +43,20 @@ export default function PageFrame({
                   key={`${crumb.label}-${i}`}
                   isActive={isLast}
                   {...(crumb.to && !isLast
-                    ? { render: (props) => <Link to={crumb.to} {...props} /> }
+                    ? {
+                        render: ({ ariaCurrent, className, ...rest }) => (
+                          // PF hands the render callback a camelCase
+                          // `ariaCurrent`. React only maps the hyphenated
+                          // form, so passing it through unchanged logs
+                          // "Invalid ARIA attribute" on every breadcrumb.
+                          <Link
+                            to={crumb.to}
+                            className={className}
+                            aria-current={ariaCurrent}
+                            {...rest}
+                          />
+                        ),
+                      }
                     : {})}
                 >
                   {crumb.label}

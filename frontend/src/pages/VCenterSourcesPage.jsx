@@ -371,7 +371,7 @@ export default function VCenterSourcesPage() {
               <Th width={10}>Status</Th>
               <Th width={10}>VMs</Th>
               <Th width={15}>Site</Th>
-              <Td screenReaderText="Actions" />
+              <Th screenReaderText="Actions" />
             </Tr>
           </Thead>
           <Tbody>{body()}</Tbody>

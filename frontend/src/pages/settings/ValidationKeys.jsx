@@ -250,7 +250,7 @@ export default function ValidationKeys({ fipsMode }) {
               <Th width={15}>Algorithm</Th>
               <Th width={30}>Fingerprint</Th>
               <Th width={15}>Created</Th>
-              <Td screenReaderText="Actions" />
+              <Th screenReaderText="Actions" />
             </Tr>
           </Thead>
           <Tbody>

@@ -335,7 +335,7 @@ function CatalogTab({ catalog, targetId }) {
                   {c.label}
                 </Th>
               ))}
-              <Td screenReaderText="Actions" />
+              <Th screenReaderText="Actions" />
             </Tr>
           </Thead>
           <Tbody>

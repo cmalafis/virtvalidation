@@ -341,7 +341,7 @@ export default function OCPTargetsPage() {
               <Th width={15}>Classification</Th>
               <Th width={10}>Version</Th>
               <Th width={10}>Status</Th>
-              <Td screenReaderText="Actions" />
+              <Th screenReaderText="Actions" />
             </Tr>
           </Thead>
           <Tbody>{body()}</Tbody>

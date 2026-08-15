@@ -258,7 +258,7 @@ export default function ResourceMappingsPage() {
               <Th width={10}>Networks</Th>
               <Th width={10}>Storage</Th>
               <Th width={15}>Status</Th>
-              <Td screenReaderText="Actions" />
+              <Th screenReaderText="Actions" />
             </Tr>
           </Thead>
           <Tbody>{body()}</Tbody>
