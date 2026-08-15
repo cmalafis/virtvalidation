@@ -18,3 +18,11 @@ body,
 #root {
   height: 100%;
 }
+
+/* PatternFly's dark theme underlines anchors so links stay
+ * distinguishable without relying on color alone. That's right for body
+ * copy, but the masthead logo is a brand, not a link — the OpenShift
+ * console never hits this because its logo is an image, not text. */
+.pf-v6-c-masthead__logo {
+  text-decoration: none;
+}

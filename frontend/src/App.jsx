@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import AppLayout from "./layout/AppLayout";
+import OverviewPage from "./pages/OverviewPage";
 
 import AgentActivity from "./components/AgentActivity";
 import BulkOperations from "./components/BulkOperations";
@@ -28,7 +29,17 @@ export default function App() {
             sidebar are present everywhere. Before this, navigation existed
             only on "/" and each page hand-rolled its own back-link. */}
         <Route element={<AppLayout />}>
-          <Route index element={<VirtValidate />} />
+          <Route index element={<OverviewPage />} />
+
+          {/* Discover — the old dashboard's six useState tabs are being
+              split into real routes. Until each is converted, the legacy
+              dashboard still serves them. */}
+          <Route path="inventory" element={<VirtValidate />} />
+          <Route path="validations" element={<VirtValidate />} />
+          <Route path="plans" element={<VirtValidate />} />
+          <Route path="reports" element={<VirtValidate />} />
+          <Route path="design-reviews" element={<VirtValidate />} />
+          <Route path="audit" element={<VirtValidate />} />
 
           {/* Discover */}
           <Route path="vms/:id" element={<VMDetail />} />
