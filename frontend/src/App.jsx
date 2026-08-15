@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import AppLayout from "./layout/AppLayout";
+import InventoryPage from "./pages/InventoryPage";
 import OverviewPage from "./pages/OverviewPage";
 
 import AgentActivity from "./components/AgentActivity";
@@ -34,7 +35,7 @@ export default function App() {
           {/* Discover — the old dashboard's six useState tabs are being
               split into real routes. Until each is converted, the legacy
               dashboard still serves them. */}
-          <Route path="inventory" element={<VirtValidate />} />
+          <Route path="inventory" element={<InventoryPage />} />
           <Route path="validations" element={<VirtValidate />} />
           <Route path="plans" element={<VirtValidate />} />
           <Route path="reports" element={<VirtValidate />} />
