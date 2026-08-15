@@ -12,6 +12,10 @@
     "docs:architecture": "cd .. && python3 scripts/generate_architecture_docs.py"
   },
   "dependencies": {
+    "@patternfly/patternfly": "^6.6.1",
+    "@patternfly/react-core": "^6.6.1",
+    "@patternfly/react-icons": "^6.6.1",
+    "@patternfly/react-table": "^6.6.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-hot-toast": "^2.4.1",
@@ -21,14 +25,11 @@
   "devDependencies": {
     "@eslint/js": "^9.9.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "autoprefixer": "^10.4.0",
     "eslint": "^9.9.1",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.0.0",
     "eslint-plugin-security": "^3.0.1",
     "globals": "^15.9.0",
-    "postcss": "^8.4.0",
-    "tailwindcss": "^3.4.0",
     "vite": "^6.4.2"
   }
 }

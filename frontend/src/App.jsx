@@ -1,5 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
+import AppLayout from "./layout/AppLayout";
+
 import AgentActivity from "./components/AgentActivity";
 import BulkOperations from "./components/BulkOperations";
 import NetworkReviewDetail from "./components/NetworkReviewDetail";
@@ -22,30 +24,51 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<VirtValidate />} />
-        <Route path="/vms/:id" element={<VMDetail />} />
-        <Route path="/reports/:type" element={<ReportView />} />
-        {/* Network design review — unprefixed path kept for back-compat
-            with existing bookmarks. Storage lives at the prefixed path. */}
-        <Route path="/design-reviews/new" element={<NetworkReviewNew />} />
-        <Route path="/design-reviews/network/new" element={<NetworkReviewNew />} />
-        <Route path="/design-reviews/storage/new" element={<StorageReviewNew />} />
-        <Route path="/design-reviews/storage/:id" element={<StorageReviewDetail />} />
-        <Route path="/design-reviews/:id" element={<NetworkReviewDetail />} />
-        <Route path="/plans/new" element={<PlanWizard />} />
-        <Route path="/plans/:id" element={<PlanView />} />
-        <Route path="/sources/vcenters" element={<VCenterSources />} />
-        <Route path="/sources/targets" element={<OCPTargets />} />
-        <Route path="/sources/targets/:id" element={<OCPTargetDetail />} />
-        <Route path="/mappings" element={<ResourceMappings />} />
-        <Route path="/mappings/:id" element={<ResourceMappingDetail />} />
-        <Route path="/operations" element={<BulkOperations />} />
-        <Route path="/capture-baselines" element={<BulkOperations />} />
-        <Route path="/validate-batch" element={<BulkOperations />} />
-        <Route path="/rvtools/upload" element={<RVToolsUpload />} />
-        <Route path="/agent-activity" element={<AgentActivity />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* Every page is a child of the layout route, so the masthead and
+            sidebar are present everywhere. Before this, navigation existed
+            only on "/" and each page hand-rolled its own back-link. */}
+        <Route element={<AppLayout />}>
+          <Route index element={<VirtValidate />} />
+
+          {/* Discover */}
+          <Route path="vms/:id" element={<VMDetail />} />
+          <Route path="rvtools/upload" element={<RVToolsUpload />} />
+          <Route path="design-reviews/network/new" element={<NetworkReviewNew />} />
+          <Route path="design-reviews/storage/new" element={<StorageReviewNew />} />
+          <Route path="design-reviews/storage/:id" element={<StorageReviewDetail />} />
+          <Route path="design-reviews/:id" element={<NetworkReviewDetail />} />
+
+          {/* Migrate */}
+          <Route path="plans/new" element={<PlanWizard />} />
+          <Route path="plans/:id" element={<PlanView />} />
+          <Route path="operations" element={<BulkOperations />} />
+
+          {/* Verify */}
+          <Route path="reports/:type" element={<ReportView />} />
+
+          {/* Configure */}
+          <Route path="sources/vcenters" element={<VCenterSources />} />
+          <Route path="sources/targets" element={<OCPTargets />} />
+          <Route path="sources/targets/:id" element={<OCPTargetDetail />} />
+          <Route path="mappings" element={<ResourceMappings />} />
+          <Route path="mappings/:id" element={<ResourceMappingDetail />} />
+
+          {/* Administration */}
+          <Route path="agent-activity" element={<AgentActivity />} />
+          <Route path="settings" element={<Settings />} />
+
+          {/* Back-compat: paths that shipped earlier and may be
+              bookmarked. Kept as redirects rather than duplicate routes
+              so there is exactly one canonical URL per screen. */}
+          <Route
+            path="design-reviews/new"
+            element={<Navigate to="/design-reviews/network/new" replace />}
+          />
+          <Route path="capture-baselines" element={<Navigate to="/operations" replace />} />
+          <Route path="validate-batch" element={<Navigate to="/operations" replace />} />
+
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   );
