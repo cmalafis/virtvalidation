@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  Alert,
   Bullseye,
   ExpandableSection,
   Label,
@@ -234,6 +235,8 @@ function InferenceTab() {
 
     return log.items.map((row) => {
       const detections = row?.detections ?? null;
+      const hasDetections = Boolean(detections) && Object.keys(detections).length > 0;
+      const isGuardrail = String(row?.method ?? "").includes("guardrail");
       return (
         <Tr key={row.id}>
           <Td dataLabel="Time">
@@ -250,7 +253,7 @@ function InferenceTab() {
           <Td dataLabel="Latency">{row?.latency_ms != null ? `${row.latency_ms} ms` : "—"}</Td>
           <Td dataLabel="Detail">
             <ExpandableSection toggleText="View" isIndented>
-              {detections && Object.keys(detections).length > 0 && (
+              {hasDetections ? (
                 <>
                   <Content component="p" className="pf-v6-u-font-weight-bold">
                     Guardrail detections
@@ -262,6 +265,23 @@ function InferenceTab() {
                     {JSON.stringify(detections, null, 2)}
                   </pre>
                 </>
+              ) : (
+                isGuardrail && (
+                  // A guardrail fallback with no persisted detections
+                  // would otherwise expand to a bare "(empty)", which
+                  // reads as a UI bug rather than missing evidence.
+                  <Alert
+                    variant="warning"
+                    isInline
+                    isPlain
+                    title="No detection payload was recorded for this call"
+                    className="pf-v6-u-mb-md"
+                  >
+                    A detector blocked this call, but the structured
+                    detections were not persisted on the log row. The
+                    orchestrator response is the only evidence.
+                  </Alert>
+                )
               )}
               <Content component="p" className="pf-v6-u-font-weight-bold">
                 Output
@@ -270,7 +290,10 @@ function InferenceTab() {
                 className="pf-v6-u-font-size-sm"
                 style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}
               >
-                {row?.output_text || "(empty)"}
+                {row?.output_text ||
+                  (isGuardrail
+                    ? "No output — the call was blocked before the model answered."
+                    : "(empty)")}
               </pre>
             </ExpandableSection>
           </Td>
