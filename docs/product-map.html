@@ -2,871 +2,1056 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VirtValidate — Product Map</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap');
+  /* ---- Tokens: complete light palette on bare :root -----------------
+     Same three-block theming contract as docs/sandbox-analysis.html and
+     docs/demo-walkthrough.html. No web fonts: this product claims
+     air-gapped operation, so the page must not fetch anything. -------- */
+  :root {
+    --ground:      #EDEFF2;
+    --surface:     #FFFFFF;
+    --surface-2:   #F4F6F8;
+    --rule:        #D3D8DF;
+    --rule-hard:   #B3BBC6;
+    --ink:         #151A21;
+    --ink-2:       #39414E;
+    --muted:       #5F6875;
+
+    --accent:      #A6120D;   /* Red Hat red, darkened for text contrast */
+    --accent-soft: #FBEAE9;
+    --accent-rule: #E4B4B1;
+
+    --shipped:     #1F6B3B;
+    --shipped-bg:  #E4F2E8;
+    --partial:     #7A4E00;
+    --partial-bg:  #FAF0DC;
+    --planned:     #14496B;
+    --planned-bg:  #E2EEF6;
+    --future:      #4C3A78;
+    --future-bg:   #EDE9F6;
+    --idea:        #5F6875;
+    --idea-bg:     #EDEFF2;
+
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #16181C;
+      --surface:     #1E2126;
+      --surface-2:   #262A30;
+      --rule:        #343941;
+      --rule-hard:   #4A515B;
+      --ink:         #EDEFF2;
+      --ink-2:       #C3C9D2;
+      --muted:       #949BA6;
+
+      --accent:      #F09A95;
+      --accent-soft: #3A1E1C;
+      --accent-rule: #5E302D;
+
+      --shipped:     #7BC99A;
+      --shipped-bg:  #1B2E22;
+      --partial:     #E0B770;
+      --partial-bg:  #322817;
+      --planned:     #8FC2E4;
+      --planned-bg:  #172833;
+      --future:      #B7A6E0;
+      --future-bg:   #262040;
+      --idea:        #949BA6;
+      --idea-bg:     #262A30;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #16181C;
+    --surface:     #1E2126;
+    --surface-2:   #262A30;
+    --rule:        #343941;
+    --rule-hard:   #4A515B;
+    --ink:         #EDEFF2;
+    --ink-2:       #C3C9D2;
+    --muted:       #949BA6;
+
+    --accent:      #F09A95;
+    --accent-soft: #3A1E1C;
+    --accent-rule: #5E302D;
+
+    --shipped:     #7BC99A;
+    --shipped-bg:  #1B2E22;
+    --partial:     #E0B770;
+    --partial-bg:  #322817;
+    --planned:     #8FC2E4;
+    --planned-bg:  #172833;
+    --future:      #B7A6E0;
+    --future-bg:   #262040;
+    --idea:        #949BA6;
+    --idea-bg:     #262A30;
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { scroll-behavior: smooth; }
   body {
-    background: #07070f;
-    color: #e0e0f0;
-    font-family: 'Barlow', sans-serif;
-    font-size: 15px;
-    line-height: 1.6;
-    min-height: 100vh;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
   }
 
-  /* Layout */
-  .container { max-width: 1280px; margin: 0 auto; padding: 32px; }
-  .nav { position: sticky; top: 0; background: rgba(7,7,15,0.95); backdrop-filter: blur(8px); border-bottom: 1px solid #1a1a2e; z-index: 100; padding: 16px 32px; }
-  .nav-inner { max-width: 1280px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 32px; }
-  .nav-logo { display: flex; align-items: center; gap: 14px; }
-  .nav-logo-icon { width: 28px; height: 28px; border: 1px solid #4488ff66; display: flex; align-items: center; justify-content: center; }
-  .nav-logo-tri { width: 10px; height: 10px; background: #4488ff; clip-path: polygon(50% 0%, 100% 100%, 0% 100%); }
-  .nav-title { font-size: 16px; font-weight: 700; color: #ffffff; letter-spacing: 0.08em; }
-  .nav-subtitle { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #8888aa; letter-spacing: 0.08em; margin-top: 2px; }
-  .nav-links { display: flex; gap: 8px; flex-wrap: wrap; }
-  .nav-link { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #aaaacc; text-decoration: none; padding: 6px 12px; border: 1px solid transparent; border-radius: 2px; letter-spacing: 0.08em; }
-  .nav-link:hover { color: #4488ff; border-color: #4488ff44; }
+  /* ---- Layout ------------------------------------------------------ */
+  .container { max-width: 1180px; margin: 0 auto; padding: 0 28px 72px; }
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
+    padding: 13px 28px;
+  }
+  .nav-inner { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 28px; flex-wrap: wrap; }
+  .nav-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+  .nav-subtitle { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .nav-links { display: flex; gap: 3px; flex-wrap: wrap; }
+  .nav-link {
+    font-size: 12.5px; color: var(--ink-2); text-decoration: none;
+    padding: 5px 10px; border-radius: 6px;
+  }
+  .nav-link:hover { color: var(--accent); background: var(--surface-2); }
+  .nav-link.strong { color: var(--accent); font-weight: 600; }
 
-  /* Hero */
-  .hero { padding: 72px 0 48px; border-bottom: 1px solid #1a1a2e; }
-  .hero-eyebrow { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: #8888aa; letter-spacing: 0.2em; margin-bottom: 16px; }
-  .hero-title { font-size: 56px; font-weight: 700; color: #ffffff; letter-spacing: -0.01em; line-height: 1.1; margin-bottom: 20px; }
-  .hero-subtitle { font-size: 20px; color: #ccccdd; line-height: 1.5; max-width: 800px; margin-bottom: 32px; }
-  .hero-meta { display: flex; gap: 24px; flex-wrap: wrap; align-items: center; }
-  .hero-tag { font-family: 'Share Tech Mono', monospace; font-size: 11px; padding: 6px 12px; border-radius: 2px; letter-spacing: 0.1em; }
-  .tag-status { background: rgba(0,255,136,0.1); color: #00ff88; border: 1px solid #00ff8866; }
-  .tag-version { background: rgba(68,136,255,0.1); color: #4488ff; border: 1px solid #4488ff66; }
-  .tag-license { background: rgba(170,102,255,0.1); color: #aa66ff; border: 1px solid #aa66ff66; }
+  section { padding: 52px 0 8px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.13em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 11px;
+  }
+  h1 { font-size: 40px; line-height: 1.16; letter-spacing: -0.022em; font-weight: 700; }
+  h2 { font-size: 26px; line-height: 1.25; letter-spacing: -0.015em; font-weight: 700; margin-bottom: 10px; }
+  h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  p  { color: var(--ink-2); }
+  a  { color: var(--accent); }
+  code { font-family: var(--mono); font-size: 0.9em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 
-  /* Section headers */
-  .section { padding: 56px 0; border-bottom: 1px solid #1a1a2e; }
-  .section-eyebrow { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: #4488ff; letter-spacing: 0.2em; margin-bottom: 12px; }
-  .section-title { font-size: 32px; font-weight: 700; color: #ffffff; margin-bottom: 12px; letter-spacing: -0.005em; }
-  .section-desc { font-size: 16px; color: #aaaacc; max-width: 800px; line-height: 1.6; margin-bottom: 40px; }
+  .lede { font-size: 18px; line-height: 1.6; max-width: 74ch; margin-top: 14px; }
+  .section-note { color: var(--muted); font-size: 14px; max-width: 78ch; margin-bottom: 22px; }
 
-  /* Architecture diagram */
-  .arch-grid { display: grid; grid-template-columns: 1fr 32px 1fr 32px 1fr; gap: 0; }
-  .zone { border: 1px solid #1a1a2e; background: #0a0a18; padding: 24px; }
-  .zone-label { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #4488ff; letter-spacing: 0.15em; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid #1a1a2e; }
-  .zone-box { border: 1px solid #1a1a2e; background: rgba(255,255,255,0.02); padding: 14px 16px; margin-bottom: 10px; }
-  .zone-box-title { font-size: 14px; font-weight: 600; color: #ffffff; margin-bottom: 4px; }
-  .zone-box-sub { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #aaaacc; line-height: 1.6; }
-  .zone-box.blue { border-color: #4488ff44; background: rgba(68,136,255,0.05); }
-  .zone-box.green { border-color: #00ff8844; background: rgba(0,255,136,0.05); }
-  .zone-box.orange { border-color: #ffaa0044; background: rgba(255,170,0,0.05); }
-  .zone-box.purple { border-color: #aa66ff44; background: rgba(170,102,255,0.05); }
-  .zone-box.red { border-color: #ff335544; background: rgba(255,51,85,0.05); }
-  .arrow { display: flex; align-items: center; justify-content: center; flex-direction: column; padding-top: 80px; gap: 6px; }
-  .arrow-label { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #8888aa; writing-mode: vertical-rl; letter-spacing: 0.12em; }
-  .arrow-line { width: 1px; height: 40px; background: linear-gradient(180deg, #2a2a44, #4488ff); }
-  .arrow-head { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid #4488ff; }
+  .card {
+    background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 10px; padding: 17px 18px;
+  }
 
-  /* Workflow */
-  .workflow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
-  .step { background: #0a0a18; border: 1px solid #1a1a2e; padding: 18px; position: relative; }
-  .step::after { content: '→'; position: absolute; right: -14px; top: 50%; transform: translateY(-50%); color: #4488ff66; font-size: 18px; z-index: 10; }
-  .step:last-child::after { display: none; }
-  .step-num { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #4488ff; margin-bottom: 8px; letter-spacing: 0.1em; }
-  .step-title { font-size: 14px; font-weight: 600; color: #ffffff; margin-bottom: 6px; }
-  .step-desc { font-size: 12px; color: #aaaacc; line-height: 1.5; }
+  /* ---- Hero -------------------------------------------------------- */
+  .hero { padding-top: 60px; }
+  .hero-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 22px; }
+  .tag {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em;
+    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--rule-hard); color: var(--ink-2);
+  }
+  .tag.accent { background: var(--accent-soft); border-color: var(--accent-rule); color: var(--accent); }
 
-  /* Feature matrix */
-  .feature-section { margin-bottom: 40px; }
-  .feature-section-title { font-size: 18px; font-weight: 700; color: #ffffff; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #1a1a2e; }
+  /* ---- Stats ------------------------------------------------------- */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 34px; }
+  .stat { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 18px; }
+  .stat-num { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
+  .stat-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+  .stat-sub { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+
+  /* ---- Architecture ------------------------------------------------ */
+  .arch { display: grid; grid-template-columns: 1fr 28px 1fr 28px 1fr; gap: 12px; align-items: stretch; }
+  .zone { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; }
+  .zone-title { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+  .zone-box { background: var(--surface-2); border: 1px solid var(--rule); border-left: 3px solid var(--rule-hard); border-radius: 6px; padding: 11px 12px; margin-bottom: 9px; }
+  .zone-box:last-child { margin-bottom: 0; }
+  .zone-box.accent { border-left-color: var(--accent); }
+  .zone-box.ok { border-left-color: var(--shipped); }
+  .zone-box-name { font-weight: 650; font-size: 13.5px; }
+  .zone-box-desc { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .arrow { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 18px; }
+
+  /* ---- Workflow ---------------------------------------------------- */
+  .workflow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .step { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 15px; position: relative; }
+  .step-num { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: 0.08em; }
+  .step-title { font-weight: 700; font-size: 14.5px; margin: 5px 0 5px; }
+  .step-desc { font-size: 13px; color: var(--muted); }
+
+  /* ---- Feature catalog --------------------------------------------- */
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 26px; font-size: 12.5px; color: var(--muted); }
+  .legend-item { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
+  .dot.shipped { background: var(--shipped); }
+  .dot.partial { background: var(--partial); }
+  .dot.planned { background: var(--planned); }
+  .dot.future  { background: var(--future); }
+  .dot.idea    { background: var(--idea); }
+
+  .feature-section { margin-bottom: 34px; }
+  .feature-section-title {
+    font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--ink); padding-bottom: 8px; margin-bottom: 14px; border-bottom: 1px solid var(--rule);
+  }
   .feature-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-  .feature { border: 1px solid #1a1a2e; background: #0a0a18; padding: 18px; transition: all 0.2s; }
-  .feature.shipped { border-left: 3px solid #00ff88; }
-  .feature.planned { border-left: 3px solid #4488ff; }
-  .feature.future { border-left: 3px solid #aa66ff; }
-  .feature.idea { border-left: 3px solid #555577; }
-  .feature-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 12px; }
-  .feature-name { font-size: 14px; font-weight: 600; color: #ffffff; }
-  .feature-status { font-family: 'Share Tech Mono', monospace; font-size: 10px; padding: 3px 8px; border-radius: 2px; letter-spacing: 0.1em; flex-shrink: 0; }
-  .status-shipped { background: rgba(0,255,136,0.12); color: #00ff88; border: 1px solid #00ff8844; }
-  .status-planned { background: rgba(68,136,255,0.12); color: #4488ff; border: 1px solid #4488ff44; }
-  .status-future { background: rgba(170,102,255,0.12); color: #aa66ff; border: 1px solid #aa66ff44; }
-  .status-idea { background: rgba(85,85,119,0.12); color: #aaaacc; border: 1px solid #55557744; }
-  .feature-desc { font-size: 13px; color: #aaaacc; line-height: 1.5; }
-  .feature-meta { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #888899; margin-top: 8px; letter-spacing: 0.08em; }
+  .feature {
+    background: var(--surface); border: 1px solid var(--rule);
+    border-left: 3px solid var(--rule-hard); border-radius: 8px; padding: 14px 15px;
+  }
+  .feature.shipped { border-left-color: var(--shipped); }
+  .feature.partial { border-left-color: var(--partial); }
+  .feature.planned { border-left-color: var(--planned); }
+  .feature.future  { border-left-color: var(--future); }
+  .feature.idea    { border-left-color: var(--idea); }
 
-  /* Stats / numbers */
-  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-  .stat { border: 1px solid #1a1a2e; background: #0a0a18; padding: 24px; text-align: center; }
-  .stat-num { font-size: 36px; font-weight: 700; color: #4488ff; line-height: 1; margin-bottom: 6px; }
-  .stat-label { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #aaaacc; letter-spacing: 0.15em; }
+  .feature-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
+  .feature-name { font-weight: 650; font-size: 14px; }
+  .feature-desc { font-size: 13px; color: var(--muted); }
+  .feature-status {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.07em;
+    padding: 3px 8px; border-radius: 999px; white-space: nowrap; flex-shrink: 0;
+  }
+  .status-shipped { background: var(--shipped-bg); color: var(--shipped); }
+  .status-partial { background: var(--partial-bg); color: var(--partial); }
+  .status-planned { background: var(--planned-bg); color: var(--planned); }
+  .status-future  { background: var(--future-bg);  color: var(--future); }
+  .status-idea    { background: var(--idea-bg);    color: var(--idea); }
 
-  /* Tech stack */
+  /* Caveat line — what is deliberately NOT claimed. */
+  .feature-caveat {
+    font-size: 12.5px; color: var(--partial); background: var(--partial-bg);
+    border-radius: 6px; padding: 7px 9px; margin-top: 9px;
+  }
+  .feature-caveat b { font-weight: 700; }
+
+  /* ---- Tech stack -------------------------------------------------- */
   .tech-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-  .tech { border: 1px solid #1a1a2e; background: #0a0a18; padding: 18px; }
-  .tech-layer { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #4488ff; letter-spacing: 0.15em; margin-bottom: 10px; }
-  .tech-name { font-size: 16px; font-weight: 700; color: #ffffff; margin-bottom: 8px; }
-  .tech-desc { font-size: 12px; color: #aaaacc; line-height: 1.5; }
+  .tech { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 15px; }
+  .tech-label { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+  .tech-name { font-weight: 700; font-size: 14.5px; margin: 5px 0 4px; }
+  .tech-desc { font-size: 12.5px; color: var(--muted); }
 
-  /* Roadmap timeline */
-  .timeline { position: relative; padding-left: 32px; }
-  .timeline::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: #1a1a2e; }
-  .milestone { position: relative; margin-bottom: 32px; padding: 20px 24px; border: 1px solid #1a1a2e; background: #0a0a18; }
-  .milestone::before { content: ''; position: absolute; left: -32px; top: 22px; width: 16px; height: 16px; border-radius: 50%; background: #07070f; border: 2px solid #4488ff; }
-  .milestone.done::before { background: #00ff88; border-color: #00ff88; box-shadow: 0 0 8px #00ff8866; }
-  .milestone.current::before { background: #4488ff; border-color: #4488ff; box-shadow: 0 0 12px #4488ff88; animation: pulse 2s infinite; }
-  .milestone.future::before { background: #07070f; border-color: #aa66ff; }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
-  .milestone-version { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: #4488ff; letter-spacing: 0.1em; margin-bottom: 4px; }
-  .milestone-title { font-size: 18px; font-weight: 700; color: #ffffff; margin-bottom: 8px; }
-  .milestone-desc { font-size: 14px; color: #aaaacc; margin-bottom: 12px; }
-  .milestone-features { display: flex; flex-wrap: wrap; gap: 6px; }
-  .milestone-feature { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: #aaaacc; background: rgba(255,255,255,0.04); border: 1px solid #1a1a2e; padding: 3px 8px; border-radius: 2px; }
+  /* ---- Roadmap ----------------------------------------------------- */
+  .timeline { position: relative; padding-left: 26px; }
+  .timeline::before { content: ''; position: absolute; left: 6px; top: 6px; bottom: 6px; width: 2px; background: var(--rule); }
+  .milestone { position: relative; margin-bottom: 24px; }
+  .milestone::before {
+    content: ''; position: absolute; left: -24px; top: 5px; width: 10px; height: 10px;
+    border-radius: 999px; background: var(--surface); border: 2px solid var(--rule-hard);
+  }
+  .milestone.done::before { background: var(--shipped); border-color: var(--shipped); }
+  .milestone.current::before { background: var(--accent); border-color: var(--accent); }
+  .milestone-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .milestone-ver { font-family: var(--mono); font-size: 12.5px; font-weight: 700; }
+  .milestone-tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.07em; padding: 2px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+  .milestone.done .milestone-tag { background: var(--shipped-bg); color: var(--shipped); }
+  .milestone.current .milestone-tag { background: var(--accent-soft); color: var(--accent); }
+  .milestone-title { font-weight: 650; margin: 3px 0 8px; }
+  .milestone-features { display: flex; gap: 6px; flex-wrap: wrap; }
+  .mf { font-size: 12px; color: var(--ink-2); background: var(--surface); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 10px; }
 
-  /* Idea capture */
-  .idea-box { border: 1px dashed #4488ff66; background: rgba(68,136,255,0.04); padding: 24px; margin-top: 24px; }
-  .idea-title { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: #4488ff; letter-spacing: 0.15em; margin-bottom: 12px; }
-  .idea-desc { font-size: 14px; color: #aaaacc; line-height: 1.6; }
-  .idea-desc code { background: rgba(255,255,255,0.06); padding: 2px 6px; font-family: 'Share Tech Mono', monospace; font-size: 12px; border-radius: 2px; color: #ffffff; }
+  /* ---- Callout / ideas --------------------------------------------- */
+  .callout { background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 8px; padding: 16px 18px; }
+  .callout h3 { margin-bottom: 8px; }
+  .callout ol, .callout ul { margin: 8px 0 0 20px; color: var(--ink-2); font-size: 14px; }
+  .callout li { margin-bottom: 4px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
-  /* Footer */
-  .footer { padding: 32px 0; text-align: center; }
-  .footer-text { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #8888aa; letter-spacing: 0.15em; }
-  .footer-link { color: #4488ff; text-decoration: none; }
+  .footer { border-top: 1px solid var(--rule); margin-top: 46px; padding: 22px 0 8px; color: var(--muted); font-size: 13px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 
-  /* Legend */
-  .legend { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #aaaacc; }
-  .legend-dot { width: 12px; height: 12px; border-radius: 2px; }
-  .legend-dot.shipped { background: #00ff88; }
-  .legend-dot.planned { background: #4488ff; }
-  .legend-dot.future { background: #aa66ff; }
-  .legend-dot.idea { background: #555577; }
-
-  /* Responsive */
-  @media (max-width: 900px) {
-    .arch-grid, .workflow, .feature-grid, .tech-grid, .stats-grid { grid-template-columns: 1fr; }
+  @media (max-width: 960px) {
+    .stats, .arch, .workflow, .feature-grid, .tech-grid, .two-col { grid-template-columns: 1fr; }
     .arrow { display: none; }
-    .step::after { display: none; }
-    .hero-title { font-size: 36px; }
-    .nav-inner { flex-direction: column; align-items: flex-start; }
+    h1 { font-size: 31px; }
   }
 </style>
 </head>
 <body>
 
-<!-- Sticky Nav -->
 <nav class="nav">
   <div class="nav-inner">
-    <div class="nav-logo">
-      <div class="nav-logo-icon"><div class="nav-logo-tri"></div></div>
-      <div>
-        <div class="nav-title">VIRTVALIDATE</div>
-        <div class="nav-subtitle">PRODUCT MAP · v0.1.0-alpha</div>
-      </div>
+    <div>
+      <div class="nav-title">VirtValidate</div>
+      <div class="nav-subtitle">Product map · updated 2026-08-15</div>
     </div>
     <div class="nav-links">
-      <a class="nav-link" href="#overview">OVERVIEW</a>
-      <a class="nav-link" href="#architecture">ARCHITECTURE</a>
-      <a class="nav-link" href="#workflow">WORKFLOW</a>
-      <a class="nav-link" href="#features">FEATURES</a>
-      <a class="nav-link" href="#stack">TECH STACK</a>
-      <a class="nav-link" href="#roadmap">ROADMAP</a>
-      <a class="nav-link" href="#ideas">IDEAS</a>
-      <a class="nav-link" href="architecture-diagram.html">CODE MAP →</a>
+      <a class="nav-link" href="#overview">Overview</a>
+      <a class="nav-link" href="#architecture">Architecture</a>
+      <a class="nav-link" href="#workflow">Workflow</a>
+      <a class="nav-link" href="#features">Features</a>
+      <a class="nav-link" href="#stack">Stack</a>
+      <a class="nav-link" href="#roadmap">Roadmap</a>
+      <a class="nav-link" href="#ideas">Ideas</a>
+      <a class="nav-link strong" href="architecture-diagram.html">Code map →</a>
     </div>
   </div>
 </nav>
 
-<!-- Hero -->
-<section class="container hero" id="overview">
-  <div class="hero-eyebrow">VM MIGRATION VALIDATION PLATFORM · OPEN SOURCE</div>
-  <h1 class="hero-title">Validate every VM migration<br>with local AI.</h1>
-  <p class="hero-subtitle">VirtValidate captures pre-migration baselines from VMware, generates intelligent migration waves with MTV-ready YAML, and validates post-migration state on OpenShift Virtualization — all running air-gapped with local Llama 3 inference. Built for federal, defense, and regulated environments where data cannot leave the network.</p>
-  <div class="hero-meta">
-    <span class="hero-tag tag-status">● ACTIVE DEVELOPMENT</span>
-    <span class="hero-tag tag-version">v0.1.0-alpha</span>
-    <span class="hero-tag tag-license">APACHE 2.0</span>
+<div class="container">
+
+  <!-- ============================ HERO ============================ -->
+  <section class="hero" id="overview">
+    <div class="eyebrow">VM migration validation platform · open source</div>
+    <h1>Prove the migration<br>actually worked.</h1>
+    <p class="lede">
+      VirtValidate records what your VMs looked like on VMware, plans the
+      migration into dependency-ordered waves with MTV-ready YAML, then
+      checks that each VM still looks right on OpenShift Virtualization.
+      It runs fully air-gapped with local inference — or against a governed
+      model endpoint inside your own perimeter when you have one. Built for
+      federal, defense and regulated environments.
+    </p>
+    <div class="hero-tags">
+      <span class="tag accent">Active development</span>
+      <span class="tag">Pre-1.0</span>
+      <span class="tag">Apache 2.0</span>
+      <span class="tag">Air-gap capable</span>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-num">148</div>
+        <div class="stat-label">API endpoints</div>
+        <div class="stat-sub">Across 20 route modules</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">6</div>
+        <div class="stat-label">LLM backends</div>
+        <div class="stat-sub">Switchable at runtime, no redeploy</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">13</div>
+        <div class="stat-label">Console screens</div>
+        <div class="stat-sub">Grouped by migration stage</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">1,233</div>
+        <div class="stat-label">Automated tests</div>
+        <div class="stat-sub">1,167 backend · 66 frontend</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== ARCHITECTURE ======================== -->
+  <section id="architecture">
+    <div class="eyebrow">System architecture</div>
+    <h2>How it all fits together</h2>
+    <p class="section-note">
+      One appliance, reached over SSH in both directions. It never
+      authenticates to your OpenShift cluster — you declare what the target
+      looks like and VirtValidate emits manifests against that description.
+    </p>
+
+    <div class="arch">
+      <div class="zone">
+        <div class="zone-title">Source — VMware</div>
+        <div class="zone-box">
+          <div class="zone-box-name">vSphere VMs</div>
+          <div class="zone-box-desc">Reached over SSH with a per-wave key. Read-only commands only.</div>
+        </div>
+        <div class="zone-box">
+          <div class="zone-box-name">Baseline collector</div>
+          <div class="zone-box-desc">Scheduled capture over a 3–7 day window, so normal variation is distinguishable from migration damage.</div>
+        </div>
+        <div class="zone-box">
+          <div class="zone-box-name">RVTools / CSV inventory</div>
+          <div class="zone-box-desc">Multi-vCenter exports routed per row to the right registered source.</div>
+        </div>
+      </div>
+
+      <div class="arrow">→</div>
+
+      <div class="zone">
+        <div class="zone-title">VirtValidate appliance</div>
+        <div class="zone-box accent">
+          <div class="zone-box-name">Web console</div>
+          <div class="zone-box-desc">PatternFly 6. Overview · Configure · Discover · Migrate · Verify · Administration.</div>
+        </div>
+        <div class="zone-box accent">
+          <div class="zone-box-name">FastAPI backend</div>
+          <div class="zone-box-desc">Inventory, SSH collection, deterministic diff engine, plan pipeline, MTV emitter, reports.</div>
+        </div>
+        <div class="zone-box">
+          <div class="zone-box-name">PostgreSQL</div>
+          <div class="zone-box-desc">VMs, baselines, plans, runs, and three append-only audit streams.</div>
+        </div>
+        <div class="zone-box ok">
+          <div class="zone-box-name">Pluggable inference</div>
+          <div class="zone-box-desc">Ollama, KServe, MaaS or TrustyAI Guardrails — selected at runtime from the Settings page.</div>
+        </div>
+      </div>
+
+      <div class="arrow">→</div>
+
+      <div class="zone">
+        <div class="zone-title">Target — OpenShift Virt</div>
+        <div class="zone-box">
+          <div class="zone-box-name">Declared target catalogs</div>
+          <div class="zone-box-desc">Clusters, namespaces, NADs and StorageClasses you describe. No cluster credentials are stored.</div>
+        </div>
+        <div class="zone-box">
+          <div class="zone-box-name">MTV / Forklift YAML</div>
+          <div class="zone-box-desc">Per-wave Plan, NetworkMap and StorageMap. You apply it; VirtValidate does not migrate.</div>
+        </div>
+        <div class="zone-box">
+          <div class="zone-box-name">Post-migration validation</div>
+          <div class="zone-box-desc">Six-dimension diff against the baseline, with a per-VM verdict and an exportable report.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================== WORKFLOW ========================== -->
+  <section id="workflow">
+    <div class="eyebrow">End-to-end workflow</div>
+    <h2>The migration validation lifecycle</h2>
+    <p class="section-note">
+      The console's navigation is ordered to match this sequence, and the
+      Overview page tracks which setup steps are done.
+    </p>
+
+    <div class="workflow">
+      <div class="step">
+        <div class="step-num">01</div>
+        <div class="step-title">Configure</div>
+        <div class="step-desc">Register vCenter sources and OpenShift targets, describe the target's networks, storage classes and namespaces, then map vSphere resources onto them and run preflight.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <div class="step-title">Discover</div>
+        <div class="step-desc">Import inventory from RVTools or CSV, label environments, and optionally run a network or storage design review against your proposed OCP design.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <div class="step-title">Baseline &amp; plan</div>
+        <div class="step-desc">Capture baselines over several days, then generate a plan: deterministic partitioning and wave packing, with the LLM writing per-wave rationale. Export the MTV YAML.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">04</div>
+        <div class="step-title">Run &amp; verify</div>
+        <div class="step-desc">Dry-run a wave to see the exact commands, capture its baseline, migrate with Forklift, then validate and read the report. Close out and revoke the wave's key.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== FEATURE CATALOG ======================= -->
+  <section id="features">
+    <div class="eyebrow">Feature catalog</div>
+    <h2>Every capability, organized</h2>
+    <p class="section-note">
+      Status reflects what is in the code today, not what is intended.
+      Anything partially built says so explicitly — a catalog that is behind
+      is recoverable; one that overclaims is not.
+    </p>
+
+    <div class="legend">
+      <span class="legend-item"><span class="dot shipped"></span> Shipped</span>
+      <span class="legend-item"><span class="dot partial"></span> Partial — usable, with a stated limit</span>
+      <span class="legend-item"><span class="dot planned"></span> Planned</span>
+      <span class="legend-item"><span class="dot future"></span> Future</span>
+      <span class="legend-item"><span class="dot idea"></span> Idea</span>
+    </div>
+
+    <!-- ---------- Sources & targets ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Sources &amp; targets</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">vCenter source registry</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Register each vCenter with its classification level. Plans never span vCenters, so a source is also a plan partition boundary — and CUI-and-above drives the production authorization gate.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">OpenShift target catalogs</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Declare each target cluster plus its networks, storage classes and namespaces, with referential protection on delete. The appliance stores no cluster credentials and never connects.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Resource mappings</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Translate vSphere port groups and datastores into NADs and StorageClasses, per vCenter-to-cluster pair. Plan generation resolves every VM through a mapping.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">AI mapping suggestions</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">The model proposes matches between source resources and your declared catalogs, each with a confidence and a rationale. Suggestions populate the form; nothing is written until you save.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Mapping preflight</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Read-only readiness check reporting unmapped sources and anything mapped to a target that is not in the cluster's catalog — before a plan fails on it.</div>
+        </div>
+        <div class="feature planned">
+          <div class="feature-header"><div class="feature-name">vCenter API discovery</div><span class="feature-status status-planned">Planned</span></div>
+          <div class="feature-desc">Connect to the vCenter API to enumerate VMs directly, removing the RVTools/CSV step. Today a source is a declarative record; there is no vCenter client.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- Inventory ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Inventory</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">RVTools multi-vCenter import</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">One export can span several vCenters. Each detected hostname is routed to a registered source, and rows that route nowhere are skipped and counted rather than guessed at.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">CSV and manual enrollment</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Parsed in the browser; only the parsed rows reach the appliance. A downloadable template documents every column.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Paginated inventory at fleet scale</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Server-side paging, sorting, faceted filtering and bulk actions. Page, sort and filters live in the URL, so a filtered view is shareable.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">VM lifecycle states</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Server-enforced available → planned → migrated → rolled back → available, tied to plan lifecycle. Illegal transitions are refused and every change is audited.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Environment auto-detection</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Derives production/dev/DR from custom attributes, folder, cluster and name, through a signal cascade that returns "unknown" rather than guessing. Feeds the authorization gate.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Per-VM target overrides</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Bulk set or clear target cluster and namespace on any selection, overriding what the mapping would otherwise resolve.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- Baseline collection ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Baseline collection</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">SSH state capture</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Services, listening ports, mounts, cron, kernel and OS, network config — collected with a fixed, read-only command set over Ed25519 keys.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Multi-day scheduling</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Automatic collection on a configurable cadence across a 3–7 day window, so a nightly job or a weekly restart is not mistaken for migration damage.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Wave-scoped baseline runs</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Capture the baseline for one plan wave as a tracked run, with per-VM progress, incremental persistence and retry of just the failed hosts.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Windows and Linux collection</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">PowerShell for Windows Server and shell for RHEL, Ubuntu and Debian, with the command set chosen per OS family and shown in the dry run.</div>
+        </div>
+        <div class="feature partial">
+          <div class="feature-header"><div class="feature-name">Probe coverage</div><span class="feature-status status-partial">Partial</span></div>
+          <div class="feature-desc">The first-pass probe catalog is versioned so a baseline records which probes produced it.</div>
+          <div class="feature-caveat"><b>Not yet captured:</b> uptime and load, memory, disk usage and time sync are declared in the catalog but disabled, so they are absent from baselines and from the diff.</div>
+        </div>
+        <div class="feature future">
+          <div class="feature-header"><div class="feature-name">Agent-based collection</div><span class="feature-status status-future">Future</span></div>
+          <div class="feature-desc">An optional agent for estates where inbound SSH to every VM is not acceptable.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- Migration planning ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Migration planning</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Deterministic wave planner</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">An eight-stage pipeline. Seven stages are pure Python — partitioning, HA anti-affinity splitting, wave packing, concurrency analysis, YAML emission. Structure is never decided by a model.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Per-wave AI rationale</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">The one LLM stage: a description, risk score and notable concerns for each wave. Every wave records whether the text came from the model, a retry, or the deterministic fallback.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">HA-aware wave packing</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">At most ten VMs per wave and at most two members of the same HA family, so a cluster never loses quorum to a single wave.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Parallel-safe wave grouping</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Waves are graph-coloured so two waves sharing a concurrency group can run at the same time — different vCenters and disjoint HA families.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">MTV / Forklift YAML</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Per-wave Plan, NetworkMap and StorageMap, downloadable per wave or as a whole-plan bundle. Generation refuses rather than emitting placeholder names.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Plan dry runs</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Preview how a selection fans out into partitions, and preview the mechanical grouping, before committing. Neither writes anything or calls the model.</div>
+        </div>
+        <div class="feature partial">
+          <div class="feature-header"><div class="feature-name">Planning strategies</div><span class="feature-status status-partial">Partial</span></div>
+          <div class="feature-desc">Save named planning intents — grouping preference, wave size target, risk appetite, production handling, application atomicity.</div>
+          <div class="feature-caveat"><b>Stored, not yet applied:</b> strategies persist and are returned by the API, but no strategy field currently steers plan generation.</div>
+        </div>
+        <div class="feature planned">
+          <div class="feature-header"><div class="feature-name">Manual wave editing</div><span class="feature-status status-planned">Planned</span></div>
+          <div class="feature-desc">Move VMs between waves in the UI when an operator knows something the estate data does not say.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- Validation ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Validation</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Six-dimension state diff</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Services, ports, mounts, cron, kernel/OS and network compared structurally between baseline and post-migration state. Deterministic — no model involved in the comparison.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">AI verdict and remediation</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">The model explains what changed and whether it matters, producing a per-VM verdict with findings, evidence and suggested remediation.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Wave-scoped validation runs</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Validate a whole wave as a tracked run with per-VM verdicts. Refused unless that wave has a completed baseline, because otherwise there is nothing to compare against.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Tiered bulk validation</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Select by stacking scope axes rather than ticking rows, with a cost preview before running — the most expensive operation in the product.</div>
+        </div>
+        <div class="feature partial">
+          <div class="feature-header"><div class="feature-name">Scheduled re-validation</div><span class="feature-status status-partial">Partial</span></div>
+          <div class="feature-desc">Save a named validation scope and fire it on demand to catch post-cutover drift.</div>
+          <div class="feature-caveat"><b>Not yet automatic:</b> saved scopes are not registered with the scheduler, so recurrence does not fire on its own today.</div>
+        </div>
+        <div class="feature planned">
+          <div class="feature-header"><div class="feature-name">Ansible remediation playbooks</div><span class="feature-status status-planned">Planned</span></div>
+          <div class="feature-desc">Turn findings into a reviewable playbook rather than a list of manual steps.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- Governance & auditability ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Governance &amp; auditability</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Read-only command guard</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Every command the collector runs passes a fail-closed allowlist at a single choke point, with mutating subcommands denied by name. A future change cannot quietly introduce a write.</div>
+          <div class="feature-caveat"><b>Scope:</b> this covers the collector. SSH key revocation writes <code>authorized_keys</code> over SFTP on a separate path that does not pass the guard, the audit or the kill-switch.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">SSH command audit</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Every command is recorded with host, exit status, duration, output size and checksum — including commands the guard refused, which are the interesting ones.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Dry-run wave preview</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Lists the exact hosts and the exact commands a run would issue, and makes zero connections to produce it. Offered before the run buttons, not after.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Global SSH kill-switch</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">One switch stops all baseline and validation activity immediately; the endpoints refuse while it is off, and the console disables the actions rather than letting you discover it as an error.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Production authorization gate</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">A wave touching production VMs or a CUI-and-above source cannot run without a named authorizer and a written reason, both recorded permanently on the run.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Blast-radius limits</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Per-vCenter concurrency caps plus a circuit breaker that stops contacting a vCenter after consecutive connection failures instead of hammering it.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Full inference capture</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Every model call recorded append-only with its input messages, raw output, latency and the method that produced the result — so an LLM answer is distinguishable from a fallback after the fact.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Mutation audit log</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Every state change with timestamp, actor, resource and structured detail, filterable by action and resource type.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- Inference ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Inference</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Runtime backend switching</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">The active backend is a stored setting, changed from the console without a redeploy. Connection details come from the deployment; the picker reports which backends are configured and names the missing variables for those that are not.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Local inference — Ollama</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">The default for a standalone air-gapped appliance. Nothing leaves the box.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">In-cluster inference — KServe</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">OpenShift AI InferenceService over the OpenAI-compatible API, authenticating with the pod's service-account token and re-reading it so rotation is handled.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Governed endpoint — Model-as-a-Service</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">An explicit operator opt-in for sites with a governed model endpoint inside their perimeter. The API key comes from a Kubernetes Secret and is never logged, echoed in an error, or returned by the API.</div>
+        </div>
+        <div class="feature partial">
+          <div class="feature-header"><div class="feature-name">TrustyAI Guardrails</div><span class="feature-status status-partial">Partial</span></div>
+          <div class="feature-desc">Proxies a model through the RHOAI Guardrails Orchestrator with input and output detectors. When a detector fires the flow completes on the deterministic fallback — never a server error — and the operator gets a persistent banner plus a labelled entry in the inference log.</div>
+          <div class="feature-caveat"><b>Two limits:</b> there is no first-class Helm block yet (configure it through <code>extraEnv</code>), and detection payloads are persisted only on the per-VM validation path, not on plan annotation.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Graceful degradation</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Every model feature validates its output, retries with corrective feedback, then falls back to deterministic logic. A bad model day produces a less nuanced result, never an error page.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Auth-failure surfacing</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">A rejected key falls back like any other failure but also raises a persistent banner, because otherwise the only symptom is annotation quality quietly getting worse.</div>
+        </div>
+        <div class="feature future">
+          <div class="feature-header"><div class="feature-name">Direct vLLM backend</div><span class="feature-status status-future">Future</span></div>
+          <div class="feature-desc">Talk to a vLLM server directly rather than through KServe or a proxy.</div>
+          <div class="feature-caveat"><b>Not implemented:</b> the settings are exposed so a later deployment needs no config migration, but the backend raises "not implemented" on every call. It should not be selected.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- Design review ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Design review</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Network design review</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Gap analysis between the source estate's networking and your proposed OCP design — NADs, UDN/CUDN, policies. Coverage gaps, mismatches and missing resources, each with severity, evidence and confidence.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Storage design review</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">The same analysis for storage classes and access modes — including whether live migration is possible with the access modes you have chosen.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Finding triage</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Accept or dismiss each finding and work the open list down, with the source and proposed evidence attached to every one.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Stated analysis scope</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">A clean review reports what it actually compared, so "no findings" is not mistaken for a clean bill of health when the inputs were thin.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- Reporting ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Reporting</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Five live reports</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Executive summary, full validation, failed and degraded, wave plan, and pre-migration baseline snapshot — generated from live data each time they are opened.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Print / PDF export</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Every report has a print stylesheet that drops the app chrome and flattens to ink on paper, in either theme.</div>
+        </div>
+        <div class="feature partial">
+          <div class="feature-header"><div class="feature-name">Wave results in reports</div><span class="feature-status status-partial">Partial</span></div>
+          <div class="feature-desc">Wave-scoped runs record per-VM verdicts and a structured diff, visible on the wave itself.</div>
+          <div class="feature-caveat"><b>Known gap:</b> the report endpoints read the per-VM validation history only, so wave-run results do not yet reach the executive summary or the PDF. A wave failure can under-report there.</div>
+        </div>
+        <div class="feature planned">
+          <div class="feature-header"><div class="feature-name">CSV findings export</div><span class="feature-status status-planned">Planned</span></div>
+          <div class="feature-desc">Machine-readable findings for ingestion into ServiceNow, Jira or a GRC tool.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- Security & compliance ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Security &amp; compliance</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Air-gapped operation</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">With the local backend selected, no runtime traffic leaves the network — including the console, which bundles its own fonts and assets. The governed-endpoint backends exist for sites that want them and are opt-in.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Per-wave SSH key catalog</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Scoped, disposable keys rather than one permanent key with standing access: create for a wave, distribute with the generated Ansible playbook, revoke when validated. Private keys never leave the appliance and are never returned by the API.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">FIPS 140-3 mode</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Detects the host's actual FIPS posture and reports configured, detected and effective separately — so "configured but not active", the classic misconfiguration, is visible rather than assumed.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Hardened container images</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">A minimal, signed, near-zero-CVE image variant alongside the standard UBI 9 build, selected by one Helm value. Both are Red Hat bases, which is what keeps the FIPS supply chain coherent.</div>
+        </div>
+        <div class="feature partial">
+          <div class="feature-header"><div class="feature-name">SSH host-key policy</div><span class="feature-status status-partial">Partial</span></div>
+          <div class="feature-desc">Trust-on-first-use by default, with a strict mode for sites that distribute host keys out of band.</div>
+          <div class="feature-caveat"><b>Not yet enforced everywhere:</b> the strict setting is not threaded into the wave-scoped collection path, so it does not take effect there.</div>
+        </div>
+        <div class="feature planned">
+          <div class="feature-header"><div class="feature-name">Encrypted keys at rest</div><span class="feature-status status-planned">Planned</span></div>
+          <div class="feature-desc">Envelope-encrypt stored private keys rather than relying on filesystem permissions alone.</div>
+        </div>
+        <div class="feature future">
+          <div class="feature-header"><div class="feature-name">External secret stores</div><span class="feature-status status-future">Future</span></div>
+          <div class="feature-desc">HashiCorp Vault and HSM/TPM-backed key storage for sites that require keys never touch local disk.</div>
+        </div>
+        <div class="feature future">
+          <div class="feature-header"><div class="feature-name">CAC / PIV authentication</div><span class="feature-status status-future">Future</span></div>
+          <div class="feature-desc">Smart-card login. Today the authorizer recorded on a run is a caller-supplied assertion, not an authenticated identity.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- Platform & operations ---------- -->
+    <div class="feature-section">
+      <div class="feature-section-title">Platform &amp; operations</div>
+      <div class="feature-grid">
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">PatternFly console</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Thirteen screens grouped by migration stage, so the navigation itself teaches the workflow. Light by default with a dark mode, matching the OpenShift web console.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Helm chart for OpenShift</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Deploy to a cluster with the image variant, LLM backend and Postgres source all selectable by value.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Podman appliance deployment</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Rootless Podman for development and systemd Quadlet units for a standalone production appliance.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Migrations applied at startup</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Schema is versioned and applied on boot, with the migration posture reported in the health endpoint so a half-upgraded deployment is visible.</div>
+        </div>
+        <div class="feature shipped">
+          <div class="feature-header"><div class="feature-name">Health and readiness surface</div><span class="feature-status status-shipped">Shipped</span></div>
+          <div class="feature-desc">Database, inference, schema and FIPS posture in one call, surfaced in the console masthead and on the Overview page.</div>
+        </div>
+        <div class="feature future">
+          <div class="feature-header"><div class="feature-name">Multi-tenancy and RBAC</div><span class="feature-status status-future">Future</span></div>
+          <div class="feature-desc">Scoped access per team or program. The appliance is currently single-tenant with no authentication layer.</div>
+        </div>
+        <div class="feature future">
+          <div class="feature-header"><div class="feature-name">Notification integrations</div><span class="feature-status status-future">Future</span></div>
+          <div class="feature-desc">Push wave completion and validation failures into email, Slack or ServiceNow.</div>
+        </div>
+        <div class="feature idea">
+          <div class="feature-header"><div class="feature-name">High availability</div><span class="feature-status status-idea">Idea</span></div>
+          <div class="feature-desc">Multiple appliance replicas behind a shared database for sites that cannot tolerate a maintenance window.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ STACK =========================== -->
+  <section id="stack">
+    <div class="eyebrow">Technology stack</div>
+    <h2>Built on proven open source</h2>
+    <div class="tech-grid">
+      <div class="tech">
+        <div class="tech-label">Frontend</div>
+        <div class="tech-name">React 18 + PatternFly 6</div>
+        <div class="tech-desc">Red Hat's design system, so the console reads like the OpenShift tooling beside it. Fonts and assets are bundled, not fetched.</div>
+      </div>
+      <div class="tech">
+        <div class="tech-label">Backend</div>
+        <div class="tech-name">Python 3.12 + FastAPI</div>
+        <div class="tech-desc">Typed request and response models, generated OpenAPI, async background work for long-running runs.</div>
+      </div>
+      <div class="tech">
+        <div class="tech-label">Database</div>
+        <div class="tech-name">PostgreSQL 16</div>
+        <div class="tech-desc">Alembic-versioned schema applied at startup, with no implicit table creation.</div>
+      </div>
+      <div class="tech">
+        <div class="tech-label">Inference</div>
+        <div class="tech-name">Pluggable, OpenAI-compatible</div>
+        <div class="tech-desc">Ollama, KServe, a governed MaaS endpoint, or TrustyAI Guardrails — chosen at runtime rather than baked into the deployment.</div>
+      </div>
+      <div class="tech">
+        <div class="tech-label">SSH engine</div>
+        <div class="tech-name">Paramiko + Ed25519</div>
+        <div class="tech-desc">Read-only command set behind a fail-closed guard, with every command recorded.</div>
+      </div>
+      <div class="tech">
+        <div class="tech-label">Scheduler</div>
+        <div class="tech-name">APScheduler</div>
+        <div class="tech-desc">Drives recurring baseline collection on the configured cadence.</div>
+      </div>
+      <div class="tech">
+        <div class="tech-label">Containers</div>
+        <div class="tech-name">Podman + UBI 9</div>
+        <div class="tech-desc">Rootless, digest-pinned Red Hat bases, with a hardened variant and Quadlet units for production.</div>
+      </div>
+      <div class="tech">
+        <div class="tech-label">Migration</div>
+        <div class="tech-name">MTV / Forklift</div>
+        <div class="tech-desc">VirtValidate generates the manifests; Forklift performs the migration. The two stay decoupled deliberately.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================== ROADMAP ========================== -->
+  <section id="roadmap">
+    <div class="eyebrow">Release roadmap</div>
+    <h2>Where we've been, where we're going</h2>
+    <p class="section-note">
+      Milestones are grouped by what the release actually delivered, not by
+      version number theatre. Everything under "shipped" is in the code
+      today.
+    </p>
+
+    <div class="timeline">
+      <div class="milestone done">
+        <div class="milestone-head">
+          <span class="milestone-ver">Foundation</span>
+          <span class="milestone-tag">Shipped</span>
+        </div>
+        <div class="milestone-title">Capture, plan, validate, report</div>
+        <div class="milestone-features">
+          <span class="mf">VM enrollment</span><span class="mf">Multi-day baselines</span>
+          <span class="mf">Wave planner</span><span class="mf">MTV YAML</span>
+          <span class="mf">Validation engine</span><span class="mf">Reports</span>
+          <span class="mf">Audit log</span>
+        </div>
+      </div>
+
+      <div class="milestone done">
+        <div class="milestone-head">
+          <span class="milestone-ver">Multi-cluster &amp; planner rearchitecture</span>
+          <span class="milestone-tag">Shipped</span>
+        </div>
+        <div class="milestone-title">Real estates, not single-target demos</div>
+        <div class="milestone-features">
+          <span class="mf">OCP target catalogs</span><span class="mf">Resource mappings</span>
+          <span class="mf">AI suggest + preflight</span><span class="mf">Deterministic 8-stage pipeline</span>
+          <span class="mf">VM lifecycle states</span><span class="mf">Environment detection</span>
+          <span class="mf">RVTools multi-vCenter</span>
+        </div>
+      </div>
+
+      <div class="milestone done">
+        <div class="milestone-head">
+          <span class="milestone-ver">Federal readiness</span>
+          <span class="milestone-tag">Shipped</span>
+        </div>
+        <div class="milestone-title">Safe to point at production</div>
+        <div class="milestone-features">
+          <span class="mf">Read-only command guard</span><span class="mf">Command audit</span>
+          <span class="mf">Kill-switch</span><span class="mf">Authorization gate</span>
+          <span class="mf">Dry-run preview</span><span class="mf">Wave-scoped runs</span>
+          <span class="mf">Per-wave key catalog</span><span class="mf">FIPS 140-3</span>
+          <span class="mf">Hardened images</span><span class="mf">Helm chart</span>
+        </div>
+      </div>
+
+      <div class="milestone done">
+        <div class="milestone-head">
+          <span class="milestone-ver">Inference flexibility</span>
+          <span class="milestone-tag">Shipped</span>
+        </div>
+        <div class="milestone-title">Run the model wherever policy allows</div>
+        <div class="milestone-features">
+          <span class="mf">Runtime backend switching</span><span class="mf">KServe</span>
+          <span class="mf">Governed MaaS</span><span class="mf">TrustyAI Guardrails</span>
+          <span class="mf">Full inference capture</span><span class="mf">Auth-failure banner</span>
+        </div>
+      </div>
+
+      <div class="milestone done">
+        <div class="milestone-head">
+          <span class="milestone-ver">Console rebuild</span>
+          <span class="milestone-tag">Shipped</span>
+        </div>
+        <div class="milestone-title">A Red Hat product, not a prototype</div>
+        <div class="milestone-features">
+          <span class="mf">PatternFly 6</span><span class="mf">Workflow-ordered navigation</span>
+          <span class="mf">Light + dark themes</span><span class="mf">Guided empty states</span>
+          <span class="mf">End-to-end user guide</span>
+        </div>
+      </div>
+
+      <div class="milestone current">
+        <div class="milestone-head">
+          <span class="milestone-ver">Closing the stated gaps</span>
+          <span class="milestone-tag">In progress</span>
+        </div>
+        <div class="milestone-title">Finish what is marked partial above</div>
+        <div class="milestone-features">
+          <span class="mf">Wave results into reports</span><span class="mf">Scheduler fires saved scopes</span>
+          <span class="mf">Strategies steer planning</span><span class="mf">Guard covers key revocation</span>
+          <span class="mf">Strict host-key on wave path</span><span class="mf">Remaining probes</span>
+          <span class="mf">TrustyAI Helm values</span>
+        </div>
+      </div>
+
+      <div class="milestone">
+        <div class="milestone-head">
+          <span class="milestone-ver">Discovery &amp; remediation</span>
+          <span class="milestone-tag">Next</span>
+        </div>
+        <div class="milestone-title">Less manual input, more automatic output</div>
+        <div class="milestone-features">
+          <span class="mf">vCenter API discovery</span><span class="mf">Manual wave editing</span>
+          <span class="mf">Ansible remediation</span><span class="mf">CSV findings export</span>
+          <span class="mf">Encrypted keys at rest</span>
+        </div>
+      </div>
+
+      <div class="milestone">
+        <div class="milestone-head">
+          <span class="milestone-ver">Enterprise</span>
+          <span class="milestone-tag">Later</span>
+        </div>
+        <div class="milestone-title">Multi-team and multi-program</div>
+        <div class="milestone-features">
+          <span class="mf">Multi-tenancy + RBAC</span><span class="mf">Notifications</span>
+          <span class="mf">Direct vLLM backend</span><span class="mf">Agent-based collection</span>
+          <span class="mf">Custom report templates</span>
+        </div>
+      </div>
+
+      <div class="milestone">
+        <div class="milestone-head">
+          <span class="milestone-ver">Classified environments</span>
+          <span class="milestone-tag">Later</span>
+        </div>
+        <div class="milestone-title">Where the key must never touch disk</div>
+        <div class="milestone-features">
+          <span class="mf">Vault integration</span><span class="mf">HSM / TPM storage</span>
+          <span class="mf">CAC / PIV auth</span><span class="mf">Per-environment key separation</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ IDEAS =========================== -->
+  <section id="ideas">
+    <div class="eyebrow">Idea capture</div>
+    <h2>How to add new ideas to this map</h2>
+
+    <div class="two-col">
+      <div class="callout">
+        <h3>Capture workflow</h3>
+        <ol>
+          <li>Open a GitHub issue with the <code>roadmap</code> label.</li>
+          <li>Say what problem it solves for an operator, not what it builds.</li>
+          <li>Add it here as an <b>Idea</b> card in the closest section.</li>
+          <li>Promote it — idea → planned → partial → shipped — as the code lands.</li>
+          <li>When it ships, move it into a roadmap milestone.</li>
+        </ol>
+      </div>
+      <div class="callout">
+        <h3>Keeping this page honest</h3>
+        <ul>
+          <li>Status means what is in the code, not what is intended.</li>
+          <li>If something half-works, mark it <b>Partial</b> and say what the limit is.</li>
+          <li>Every number in the stats row must be countable from the repo.</li>
+          <li>Re-check this page whenever a feature PR merges — it drifted three months once.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:14px">
+      <h3>Backlog</h3>
+      <ul>
+        <li>Drift detection — re-baseline on a cadence and alert on unexplained change</li>
+        <li>Compliance scanning integration (OpenSCAP / STIG) alongside the state diff</li>
+        <li>Migration time estimation from observed wave durations</li>
+        <li>Diff visualization — before/after as a graph rather than a list</li>
+        <li>Snapshot deduplication for long baseline windows at fleet scale</li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="footer">
+    <div>VirtValidate · Apache 2.0 · <a href="https://github.com/cmalafis/virtvalidation">github.com/cmalafis/virtvalidation</a></div>
+    <div>Hand-maintained. Last updated 2026-08-15. See <a href="architecture-diagram.html">the code map</a> for how it is built.</div>
   </div>
-</section>
 
-<!-- Stats -->
-<section class="container section">
-  <div class="section-eyebrow">PROJECT AT A GLANCE</div>
-  <div class="stats-grid">
-    <div class="stat"><div class="stat-num">5</div><div class="stat-label">DASHBOARD TABS</div></div>
-    <div class="stat"><div class="stat-num">25+</div><div class="stat-label">API ENDPOINTS</div></div>
-    <div class="stat"><div class="stat-num">100%</div><div class="stat-label">AIR-GAPPED</div></div>
-    <div class="stat"><div class="stat-num">0</div><div class="stat-label">EXTERNAL CALLS</div></div>
-  </div>
-</section>
-
-<!-- Architecture -->
-<section class="container section" id="architecture">
-  <div class="section-eyebrow">SYSTEM ARCHITECTURE</div>
-  <h2 class="section-title">How it all fits together</h2>
-  <p class="section-desc">VirtValidate runs as a self-contained Podman appliance inside the customer environment. It SSHes into source VMs to capture baselines, then validates target VMs after migration. All AI inference happens locally — no data ever leaves the customer network.</p>
-
-  <div class="arch-grid">
-    <div class="zone">
-      <div class="zone-label">SOURCE — VMWARE</div>
-      <div class="zone-box blue">
-        <div class="zone-box-title">vSphere VMs</div>
-        <div class="zone-box-sub">Pre-migration workloads<br>SSH accessible via virtvalidate service account<br>Ed25519 key auth only</div>
-      </div>
-      <div class="zone-box blue">
-        <div class="zone-box-title">Multi-Day Baseline Collector</div>
-        <div class="zone-box-sub">Scheduled SSH collection 2x daily<br>3-7 day baseline window<br>Captures services, network, storage, cron, perf</div>
-      </div>
-      <div class="zone-box orange">
-        <div class="zone-box-title">RVTools / CSV Inventory</div>
-        <div class="zone-box-sub">VM enrollment with network and storage mapping data<br>Used for migration wave planning</div>
-      </div>
-    </div>
-
-    <div class="arrow">
-      <div class="arrow-label">SSH BASELINE</div>
-      <div class="arrow-line"></div>
-      <div class="arrow-head"></div>
-    </div>
-
-    <div class="zone">
-      <div class="zone-label">VIRTVALIDATE APPLIANCE</div>
-      <div class="zone-box green">
-        <div class="zone-box-title">React Dashboard :3000</div>
-        <div class="zone-box-sub">Validation, Migration Plans, Inventory, Reports, Audit Log, Settings</div>
-      </div>
-      <div class="zone-box green">
-        <div class="zone-box-title">FastAPI Backend :8000</div>
-        <div class="zone-box-sub">VM inventory, SSH collection engine, validation engine, migration planner, MTV YAML generator, report generator</div>
-      </div>
-      <div class="zone-box green">
-        <div class="zone-box-title">PostgreSQL :5432</div>
-        <div class="zone-box-sub">VMs, baselines, plans, validation runs, audit trail, platform transitions</div>
-      </div>
-      <div class="zone-box purple">
-        <div class="zone-box-title">Ollama + Llama 3 8B :11434</div>
-        <div class="zone-box-sub">Local inference — air-gapped<br>VM role inference, dependency reasoning, plain-English report generation</div>
-      </div>
-    </div>
-
-    <div class="arrow">
-      <div class="arrow-label">SSH VALIDATE</div>
-      <div class="arrow-line"></div>
-      <div class="arrow-head"></div>
-    </div>
-
-    <div class="zone">
-      <div class="zone-label">TARGET — OPENSHIFT VIRT</div>
-      <div class="zone-box red">
-        <div class="zone-box-title">KubeVirt VMs</div>
-        <div class="zone-box-sub">Post-migration workloads<br>Same hostnames and IPs as source<br>Different platform underneath</div>
-      </div>
-      <div class="zone-box red">
-        <div class="zone-box-title">Post-Migration Collector</div>
-        <div class="zone-box-sub">Same collection script as baseline<br>State diffed against pre-migration profile<br>Delta sent to LLM</div>
-      </div>
-      <div class="zone-box orange">
-        <div class="zone-box-title">Validation Verdict + Report</div>
-        <div class="zone-box-sub">Healthy / Degraded / Failed per VM<br>Plain-English wave reports<br>PDF export for CISO briefings</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- Workflow -->
-<section class="container section" id="workflow">
-  <div class="section-eyebrow">END-TO-END WORKFLOW</div>
-  <h2 class="section-title">The migration validation lifecycle</h2>
-  <p class="section-desc">Five distinct phases from initial enrollment through final validation. Each phase produces an artifact the next phase depends on.</p>
-
-  <div class="workflow">
-    <div class="step">
-      <div class="step-num">PHASE 01</div>
-      <div class="step-title">Enroll VMs</div>
-      <div class="step-desc">Add VMs via manual entry, CSV, or RVTools. Distribute SSH public key. Tag with current platform (VMware).</div>
-    </div>
-    <div class="step">
-      <div class="step-num">PHASE 02</div>
-      <div class="step-title">Build Baseline</div>
-      <div class="step-desc">Scheduler SSHes in twice daily for 3-7 days. Captures services, ports, mounts, cron, network, performance.</div>
-    </div>
-    <div class="step">
-      <div class="step-num">PHASE 03</div>
-      <div class="step-title">Plan Migration</div>
-      <div class="step-desc">LLM groups VMs into waves by network, storage, and dependency constraints. Generates MTV-ready YAML.</div>
-    </div>
-    <div class="step">
-      <div class="step-num">PHASE 04</div>
-      <div class="step-title">Migrate Wave</div>
-      <div class="step-desc">User applies MTV plan or runs preferred migration tool. Marks wave complete in VirtValidate when done.</div>
-    </div>
-    <div class="step">
-      <div class="step-num">PHASE 05</div>
-      <div class="step-title">Validate + Report</div>
-      <div class="step-desc">Auto-validates against baseline. LLM generates per-VM verdict and CISO-ready wave report with PDF export.</div>
-    </div>
-  </div>
-</section>
-
-<!-- Feature Matrix -->
-<section class="container section" id="features">
-  <div class="section-eyebrow">FEATURE CATALOG</div>
-  <h2 class="section-title">Every capability, organized</h2>
-  <p class="section-desc">Comprehensive view of every feature shipped, planned, or under consideration. Use this to verify your product vision is captured and to track what comes next.</p>
-
-  <div class="legend">
-    <div class="legend-item"><div class="legend-dot shipped"></div>Shipped in v0.1.0-alpha</div>
-    <div class="legend-item"><div class="legend-dot planned"></div>Planned for next release</div>
-    <div class="legend-item"><div class="legend-dot future"></div>Future release</div>
-    <div class="legend-item"><div class="legend-dot idea"></div>Idea / under consideration</div>
-  </div>
-
-  <!-- VM Inventory -->
-  <div class="feature-section">
-    <div class="feature-section-title">VM Inventory & Enrollment</div>
-    <div class="feature-grid">
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Manual VM Enrollment</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Add individual VMs via dashboard form with hostname, IP, SSH credentials, role, platform.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">CSV Bulk Upload</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Bulk enrollment via CSV with downloadable template including network/storage mapping fields.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">RVTools XLSX Import</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Parse RVTools exports directly. Pulls hostname, IP, role inference from existing tab structure.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Network & Storage Mapping</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Track vSphere networks, datastores, and target OCP namespace, StorageClass, NetworkAttachmentDefinition per VM.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Platform Transition Tracking</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">VMs tagged as VMware or OCP-Virt. Transitions logged in audit trail with timestamp.</div>
-      </div>
-      <div class="feature planned">
-        <div class="feature-header">
-          <div class="feature-name">vCenter Direct Discovery</div>
-          <div class="feature-status status-planned">PLANNED</div>
-        </div>
-        <div class="feature-desc">Connect to vCenter API to auto-discover VMs without manual enrollment or RVTools dependency.</div>
-        <div class="feature-meta">REQUESTED · area: backend</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Baseline Collection -->
-  <div class="feature-section">
-    <div class="feature-section-title">Baseline Collection</div>
-    <div class="feature-grid">
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">SSH-Based State Capture</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Paramiko-based SSH collection of services, network, storage, cron, processes, config hashes.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Multi-Day Scheduling</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">APScheduler runs collection twice daily (configurable) over 3-7 days to capture variance and patterns.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Snapshot Versioning</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Every snapshot stored with timestamp and platform tag. Full history retained per VM.</div>
-      </div>
-      <div class="feature planned">
-        <div class="feature-header">
-          <div class="feature-name">Application-Aware Probes</div>
-          <div class="feature-status status-planned">PLANNED</div>
-        </div>
-        <div class="feature-desc">LLM-driven targeted checks based on detected apps (PostgreSQL pg_isready, Apache vhost count, etc.).</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">Agent-Based Collection</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">Optional lightweight agent for environments where SSH is restricted. Pushes state to VirtValidate.</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">Windows VM Support</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">WinRM-based collection for Windows workloads. Currently Linux/UNIX only.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Migration Planning -->
-  <div class="feature-section">
-    <div class="feature-section-title">Migration Planning</div>
-    <div class="feature-grid">
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">AI Wave Generator</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">LLM groups VMs into ordered migration waves based on dependencies, networks, storage, and risk profile.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">MTV YAML Generation</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Per-wave Plan, NetworkMap, StorageMap YAML output ready for oc apply with MTV/Forklift.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Mark Wave Complete</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">One-click marking of migrated waves. Auto-triggers validation runs for all VMs in the wave.</div>
-      </div>
-      <div class="feature planned">
-        <div class="feature-header">
-          <div class="feature-name">Manual Wave Editing</div>
-          <div class="feature-status status-planned">PLANNED</div>
-        </div>
-        <div class="feature-desc">Drag-and-drop VMs between waves. Override LLM grouping for environment-specific knowledge.</div>
-      </div>
-      <div class="feature planned">
-        <div class="feature-header">
-          <div class="feature-name">Risk Scoring per VM</div>
-          <div class="feature-status status-planned">PLANNED</div>
-        </div>
-        <div class="feature-desc">Numeric risk score based on OS age, kernel modules, custom configs, baseline complexity.</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">MTV CRD Watcher</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">Watch Forklift Migration CRDs to auto-detect wave completion. Optional, off by default.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Network Design Review</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Local-LLM gap analysis between VMware source networking and a proposed OCP-Virt design (CUDN / NAD / NetworkPolicy / Multus). Coverage gaps, config mismatches, missing resources, positive confirmations — each with severity, evidence quotes, and confidence level.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Validation Engine -->
-  <div class="feature-section">
-    <div class="feature-section-title">Validation Engine</div>
-    <div class="feature-grid">
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Pre/Post State Diff</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Structured diff between baseline profile and post-migration snapshot across all collected dimensions.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">LLM-Powered Verdict</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Llama 3 reasons over diff and produces Healthy/Degraded/Failed verdict with severity-tagged findings.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Remediation Steps</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Per-finding plain-English remediation instructions generated by LLM, ready to execute.</div>
-      </div>
-      <div class="feature planned">
-        <div class="feature-header">
-          <div class="feature-name">Ansible Playbook Generation</div>
-          <div class="feature-status status-planned">PLANNED</div>
-        </div>
-        <div class="feature-desc">Auto-generate Ansible playbooks per finding for review/execution in customer's own Ansible environment.</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">Auto-Remediation (opt-in)</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">With explicit per-finding approval, execute generated playbooks against target VMs. Audit logged, dry-run available.</div>
-      </div>
-      <div class="feature idea">
-        <div class="feature-header">
-          <div class="feature-name">Rollback Recommendations</div>
-          <div class="feature-status status-idea">IDEA</div>
-        </div>
-        <div class="feature-desc">For failed validations, suggest whether to remediate vs rollback to VMware source. Decision support.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Reporting -->
-  <div class="feature-section">
-    <div class="feature-section-title">Reporting & Export</div>
-    <div class="feature-grid">
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Wave Reports (HTML)</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Per-wave executive summary, statistics, per-VM findings, recommendations.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">PDF Export</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">CISO-ready PDF wave reports via WeasyPrint. Includes branding, statistics, full findings.</div>
-      </div>
-      <div class="feature planned">
-        <div class="feature-header">
-          <div class="feature-name">CSV Findings Export</div>
-          <div class="feature-status status-planned">PLANNED</div>
-        </div>
-        <div class="feature-desc">Export all findings across waves as CSV for ticketing system import (ServiceNow, Jira).</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">Custom Report Templates</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">Customer-branded report templates with logo and color customization.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Security & Compliance -->
-  <div class="feature-section">
-    <div class="feature-section-title">Security & Compliance</div>
-    <div class="feature-grid">
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Air-Gapped Operation</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Zero external API calls at runtime. All AI inference local via Ollama. Network egress can be blocked.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Ed25519 SSH Keys</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Modern key algorithm. Generated inside container, never exported. Restricted sudo on target VMs.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Audit Log</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Every API call logged with timestamp, actor, action, resource. Filterable in dashboard.</div>
-      </div>
-      <div class="feature planned">
-        <div class="feature-header">
-          <div class="feature-name">Encrypted Key at Rest</div>
-          <div class="feature-status status-planned">PLANNED</div>
-        </div>
-        <div class="feature-desc">SSH private key encrypted with passphrase derived from running secret. Compromise of file alone insufficient.</div>
-      </div>
-      <div class="feature planned">
-        <div class="feature-header">
-          <div class="feature-name">SSH Connection Audit</div>
-          <div class="feature-status status-planned">PLANNED</div>
-        </div>
-        <div class="feature-desc">Log every SSH connection: target VM, action, success/failure, duration, command count.</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">HashiCorp Vault Integration</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">Replace static SSH keys with short-lived Vault-issued SSH certificates. Auto-rotation, instant revocation.</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">HSM/TPM Key Storage</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">Hardware-backed SSH key storage via PKCS#11 (TPM 2.0, Thales HSM, AWS CloudHSM, YubiHSM2).</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">Per-Environment Key Separation</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">Separate SSH keypairs per environment (dev/staging/prod or per customer site). Compromise containment.</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">CAC/PIV Authentication</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">Keycloak integration with smart card auth for federal Zero Trust compliance.</div>
-      </div>
-      <div class="feature idea">
-        <div class="feature-header">
-          <div class="feature-name">FIPS 140-3 Mode</div>
-          <div class="feature-status status-idea">IDEA</div>
-        </div>
-        <div class="feature-desc">Run with FIPS-validated cryptographic modules for federal classified environments.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Platform & Operations -->
-  <div class="feature-section">
-    <div class="feature-section-title">Platform & Operations</div>
-    <div class="feature-grid">
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Podman-Native Deployment</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Rootless containers via podman-compose. No Docker daemon required. RHEL/Fedora native.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Quadlet Systemd Units</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">Production deployment via systemd Quadlet units. No compose process to babysit.</div>
-      </div>
-      <div class="feature shipped">
-        <div class="feature-header">
-          <div class="feature-name">Settings Page</div>
-          <div class="feature-status status-shipped">SHIPPED</div>
-        </div>
-        <div class="feature-desc">SSH key management, model selection, schedule config, connection status, all in one UI.</div>
-      </div>
-      <div class="feature planned">
-        <div class="feature-header">
-          <div class="feature-name">Helm Chart for OpenShift</div>
-          <div class="feature-status status-planned">PLANNED</div>
-        </div>
-        <div class="feature-desc">Deploy VirtValidate as native OCP workloads via Helm. GPU node support, Routes, PVCs.</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">vLLM Inference Backend</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">Replace Ollama with vLLM for higher throughput, concurrent requests, larger models (70B).</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">Multi-Tenancy / RBAC</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">User accounts, roles (admin/operator/viewer), org isolation, OIDC/SSO integration.</div>
-      </div>
-      <div class="feature future">
-        <div class="feature-header">
-          <div class="feature-name">Notification Integrations</div>
-          <div class="feature-status status-future">FUTURE</div>
-        </div>
-        <div class="feature-desc">Slack webhooks, email, generic outbound webhooks for SIEM integration.</div>
-      </div>
-      <div class="feature idea">
-        <div class="feature-header">
-          <div class="feature-name">High Availability Mode</div>
-          <div class="feature-status status-idea">IDEA</div>
-        </div>
-        <div class="feature-desc">Multi-replica deployment with PostgreSQL HA for large-scale federal deployments.</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- Tech Stack -->
-<section class="container section" id="stack">
-  <div class="section-eyebrow">TECHNOLOGY STACK</div>
-  <h2 class="section-title">Built on proven open source</h2>
-  <p class="section-desc">Every component is open source and freely available. No proprietary dependencies. No vendor lock-in.</p>
-
-  <div class="tech-grid">
-    <div class="tech">
-      <div class="tech-layer">FRONTEND</div>
-      <div class="tech-name">React 18 + Vite</div>
-      <div class="tech-desc">Single-page application with Tailwind, served by nginx. WCAG AA compliant.</div>
-    </div>
-    <div class="tech">
-      <div class="tech-layer">BACKEND</div>
-      <div class="tech-name">Python 3.12 + FastAPI</div>
-      <div class="tech-desc">Async API, SQLAlchemy ORM, Pydantic validation, OpenAPI auto-docs.</div>
-    </div>
-    <div class="tech">
-      <div class="tech-layer">DATABASE</div>
-      <div class="tech-name">PostgreSQL 16</div>
-      <div class="tech-desc">Relational data, JSONB for flexible snapshots, full audit trail.</div>
-    </div>
-    <div class="tech">
-      <div class="tech-layer">AI INFERENCE</div>
-      <div class="tech-name">Ollama + Llama 3 8B</div>
-      <div class="tech-desc">Local model serving. Air-gapped. vLLM upgrade path for scale.</div>
-    </div>
-    <div class="tech">
-      <div class="tech-layer">SSH ENGINE</div>
-      <div class="tech-name">Paramiko + Ed25519</div>
-      <div class="tech-desc">Modern SSH library with strong key crypto. Restricted sudo on targets.</div>
-    </div>
-    <div class="tech">
-      <div class="tech-layer">SCHEDULER</div>
-      <div class="tech-name">APScheduler</div>
-      <div class="tech-desc">In-process job scheduling for baseline collection runs.</div>
-    </div>
-    <div class="tech">
-      <div class="tech-layer">CONTAINERS</div>
-      <div class="tech-name">Podman + Quadlet</div>
-      <div class="tech-desc">Rootless, daemonless containers. Systemd-native production deployment.</div>
-    </div>
-    <div class="tech">
-      <div class="tech-layer">REPORTS</div>
-      <div class="tech-name">WeasyPrint</div>
-      <div class="tech-desc">HTML-to-PDF rendering for CISO-ready wave reports.</div>
-    </div>
-  </div>
-</section>
-
-<!-- Roadmap -->
-<section class="container section" id="roadmap">
-  <div class="section-eyebrow">RELEASE ROADMAP</div>
-  <h2 class="section-title">Where we've been, where we're going</h2>
-  <p class="section-desc">Versioned milestones tracking shipped functionality and planned releases. Full feature breakdown per release.</p>
-
-  <div class="timeline">
-    <div class="milestone done">
-      <div class="milestone-version">v0.1.0-ALPHA · SHIPPED</div>
-      <div class="milestone-title">Foundation Release</div>
-      <div class="milestone-desc">Working end-to-end appliance with all core capabilities. Suitable for design partners and early adopters.</div>
-      <div class="milestone-features">
-        <span class="milestone-feature">VM Enrollment</span>
-        <span class="milestone-feature">Multi-Day Baseline</span>
-        <span class="milestone-feature">AI Migration Planner</span>
-        <span class="milestone-feature">MTV YAML</span>
-        <span class="milestone-feature">Validation Engine</span>
-        <span class="milestone-feature">PDF Reports</span>
-        <span class="milestone-feature">Audit Log</span>
-        <span class="milestone-feature">Settings Page</span>
-        <span class="milestone-feature">CI/CD Pipeline</span>
-      </div>
-    </div>
-
-    <div class="milestone current">
-      <div class="milestone-version">v0.2.0 · IN PROGRESS</div>
-      <div class="milestone-title">Polish & Hardening</div>
-      <div class="milestone-desc">Production-readiness work. Encrypted keys, SSH audit logging, application-aware probes, manual wave editing.</div>
-      <div class="milestone-features">
-        <span class="milestone-feature">Encrypted SSH Keys at Rest</span>
-        <span class="milestone-feature">SSH Connection Audit</span>
-        <span class="milestone-feature">App-Aware Probes</span>
-        <span class="milestone-feature">Manual Wave Editing</span>
-        <span class="milestone-feature">Risk Scoring</span>
-        <span class="milestone-feature">CSV Findings Export</span>
-      </div>
-    </div>
-
-    <div class="milestone future">
-      <div class="milestone-version">v0.3.0 · NEXT</div>
-      <div class="milestone-title">Remediation & Discovery</div>
-      <div class="milestone-desc">Ansible playbook generation, vCenter direct discovery, Helm chart for OpenShift deployments.</div>
-      <div class="milestone-features">
-        <span class="milestone-feature">Ansible Playbook Gen</span>
-        <span class="milestone-feature">vCenter Discovery</span>
-        <span class="milestone-feature">Helm Chart</span>
-        <span class="milestone-feature">MTV CRD Watcher</span>
-      </div>
-    </div>
-
-    <div class="milestone future">
-      <div class="milestone-version">v1.0.0 · GA TARGET</div>
-      <div class="milestone-title">Enterprise Production</div>
-      <div class="milestone-desc">First production-grade release. RBAC, multi-tenancy, notifications, vLLM, Windows VM support, custom branding.</div>
-      <div class="milestone-features">
-        <span class="milestone-feature">Multi-Tenancy / RBAC</span>
-        <span class="milestone-feature">Notifications</span>
-        <span class="milestone-feature">vLLM Backend</span>
-        <span class="milestone-feature">Windows Support</span>
-        <span class="milestone-feature">Custom Report Templates</span>
-        <span class="milestone-feature">Auto-Remediation (opt-in)</span>
-      </div>
-    </div>
-
-    <div class="milestone future">
-      <div class="milestone-version">v2.0.0 · FEDERAL CLASSIFIED</div>
-      <div class="milestone-title">Federal Classified Edition</div>
-      <div class="milestone-desc">Full federal compliance posture. Hardware-backed keys, CAC/PIV auth, FIPS mode, HashiCorp Vault.</div>
-      <div class="milestone-features">
-        <span class="milestone-feature">HashiCorp Vault</span>
-        <span class="milestone-feature">HSM/TPM Storage</span>
-        <span class="milestone-feature">CAC/PIV Auth</span>
-        <span class="milestone-feature">FIPS 140-3 Mode</span>
-        <span class="milestone-feature">Per-Env Key Separation</span>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- Idea Capture -->
-<section class="container section" id="ideas">
-  <div class="section-eyebrow">IDEA CAPTURE</div>
-  <h2 class="section-title">How to add new ideas to this map</h2>
-  <p class="section-desc">This document is a living artifact. As you have new product ideas — like the migration plan layout improvements or VM platform tracking — capture them here so they don't get lost.</p>
-
-  <div class="idea-box">
-    <div class="idea-title">CAPTURE WORKFLOW</div>
-    <div class="idea-desc">
-      <strong>1. New idea pops up</strong> — during a customer call, while building, in the shower, anywhere.<br><br>
-      <strong>2. Add it to GitHub Issues</strong> with the <code>roadmap</code> label so it shows up in your project board.<br><br>
-      <strong>3. Add it to this document</strong> in the appropriate Feature Catalog section with status <code>idea</code>.<br><br>
-      <strong>4. Promote when ready</strong> — when an idea graduates from "interesting" to "we're building this," update the status to <code>planned</code> and add it to the next release milestone in the roadmap.<br><br>
-      <strong>5. Mark shipped</strong> — when the feature lands in a release, flip status to <code>shipped</code> and tag with the version.
-    </div>
-  </div>
-
-  <div class="idea-box">
-    <div class="idea-title">IDEAS BACKLOG (CAPTURE NEW ONES HERE)</div>
-    <div class="idea-desc">
-      Use this space as scratchpad for ideas before formalizing them as GitHub issues. Examples:
-      <br><br>
-      • <strong>Drift detection mode</strong> — beyond migration, periodic re-validation to detect configuration drift over time<br>
-      • <strong>Compliance scanning integration</strong> — pair with OpenSCAP/STIG scans, surface results in same dashboard<br>
-      • <strong>Cost analysis</strong> — calculate VMware licensing savings vs OCP-Virt subscription cost per migrated VM<br>
-      • <strong>Migration time estimation</strong> — LLM predicts wave migration duration based on VM size and complexity<br>
-      • <strong>Diff visualization</strong> — interactive UI showing pre/post state side by side with highlighted differences<br>
-      • <strong>Parallel collection</strong> — collect baselines from many VMs concurrently to reduce window time<br>
-      • <strong>Snapshot deduplication</strong> — store snapshots more efficiently when state doesn't change between runs
-    </div>
-  </div>
-</section>
-
-<!-- Footer -->
-<footer class="container footer">
-  <div class="footer-text">
-    VIRTVALIDATE · OPEN SOURCE · APACHE 2.0 · 
-    <a class="footer-link" href="https://github.com/cmalafis/virtvalidation">GITHUB.COM/CMALAFIS/VIRTVALIDATION</a>
-  </div>
-</footer>
-
+</div>
 </body>
 </html>

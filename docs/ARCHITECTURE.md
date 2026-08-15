@@ -2224,7 +2224,7 @@ Depends on: `app.core.llm.types`, `app.models.settings`
 **Classes**
 
 - **`AppSettingsRead`** (Pydantic schema)
-  - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `ssh_operations_enabled`, `updated_at`, `next_run_at`
+  - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `ssh_operations_enabled`, `updated_at`, `next_run_at`, `max_vms_per_plan`
 - **`AppSettingsUpdate`** (Pydantic schema)
   - Fields: `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `ssh_operations_enabled`
 - **`HealthStatus`** (Pydantic schema)
@@ -2574,6 +2574,7 @@ Exports / inner components:
 - **`methodLabel`** (helper)
 - **`useLog`** (hook)
 - **`LogPagination`** (component)
+- **`LogTable`** (component)
 - **`CommandsTab`** (component)
 - **`InferenceTab`** (component)
 - **`AgentActivityPage`** (component)
@@ -2708,6 +2709,7 @@ API calls:
 - `/api/mappings`
 - `/api/plans`
 - `/api/plans/{id}`
+- `/api/settings`
 - `/api/vms?{id}`
 
 Exports / inner components:

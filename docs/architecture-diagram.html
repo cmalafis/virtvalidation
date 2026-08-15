@@ -4,88 +4,151 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>VirtValidate · Architecture Diagram</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
+  /* ---- Tokens ------------------------------------------------------
+     Same three-block theming contract as docs/product-map.html and the
+     other hand-written docs. No web fonts: this product ships into
+     air-gapped sites, so the page must not fetch anything. ----------- */
+  :root {
+    --ground:    #EDEFF2;
+    --surface:   #FFFFFF;
+    --surface-2: #F4F6F8;
+    --rule:      #D3D8DF;
+    --rule-hard: #B3BBC6;
+    --ink:       #151A21;
+    --ink-2:     #39414E;
+    --muted:     #5F6875;
+    --accent:      #A6120D;
+    --accent-soft: #FBEAE9;
+    --accent-rule: #E4B4B1;
+
+    --get:    #14496B;  --get-bg:    #E2EEF6;
+    --post:   #1F6B3B;  --post-bg:   #E4F2E8;
+    --mutate: #7A4E00;  --mutate-bg: #FAF0DC;
+    --delete: #8C2018;  --delete-bg: #FBEAE9;
+
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:    #16181C;
+      --surface:   #1E2126;
+      --surface-2: #262A30;
+      --rule:      #343941;
+      --rule-hard: #4A515B;
+      --ink:       #EDEFF2;
+      --ink-2:     #C3C9D2;
+      --muted:     #949BA6;
+      --accent:      #F09A95;
+      --accent-soft: #3A1E1C;
+      --accent-rule: #5E302D;
+      --get:    #8FC2E4;  --get-bg:    #172833;
+      --post:   #7BC99A;  --post-bg:   #1B2E22;
+      --mutate: #E0B770;  --mutate-bg: #322817;
+      --delete: #F09A95;  --delete-bg: #3A1E1C;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:    #16181C;
+    --surface:   #1E2126;
+    --surface-2: #262A30;
+    --rule:      #343941;
+    --rule-hard: #4A515B;
+    --ink:       #EDEFF2;
+    --ink-2:     #C3C9D2;
+    --muted:     #949BA6;
+    --accent:      #F09A95;
+    --accent-soft: #3A1E1C;
+    --accent-rule: #5E302D;
+    --get:    #8FC2E4;  --get-bg:    #172833;
+    --post:   #7BC99A;  --post-bg:   #1B2E22;
+    --mutate: #E0B770;  --mutate-bg: #322817;
+    --delete: #F09A95;  --delete-bg: #3A1E1C;
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #07070f; color: #eeeeff; font-family: 'Barlow', sans-serif; line-height: 1.5; }
-  a { color: #88aaff; }
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: #0d0d1a; }
-  ::-webkit-scrollbar-thumb { background: #2a2a44; border-radius: 2px; }
+  body { background: var(--ground); color: var(--ink); font-family: var(--sans);
+         line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--surface-2); }
+  ::-webkit-scrollbar-thumb { background: var(--rule-hard); border-radius: 999px; }
 
-  .nav { position: sticky; top: 0; background: rgba(7,7,15,0.95); backdrop-filter: blur(8px);
-         border-bottom: 1px solid #1a1a2e; z-index: 100; padding: 14px 32px;
-         display: flex; align-items: center; justify-content: space-between; gap: 24px; }
-  .nav-left { display: flex; align-items: center; gap: 16px; }
-  .nav-tri { width: 12px; height: 12px; background: #4488ff; clip-path: polygon(50% 0%, 100% 100%, 0% 100%); }
-  .nav-title { font-size: 18px; font-weight: 700; letter-spacing: 0.04em; }
-  .nav-subtitle { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #aaaacc; letter-spacing: 0.08em; margin-top: 2px; }
-  .nav-link { font-family: 'Barlow', sans-serif; font-size: 12px; color: #aaaacc; text-decoration: none;
-              padding: 8px 14px; border: 1px solid #3a3a55; letter-spacing: 0.06em;
-              text-transform: uppercase; font-weight: 700; }
-  .nav-link:hover { color: #88aaff; border-color: #4488ff; }
+  .nav { position: sticky; top: 0; z-index: 100; padding: 13px 32px;
+         background: color-mix(in srgb, var(--surface) 92%, transparent);
+         backdrop-filter: blur(10px); border-bottom: 1px solid var(--rule);
+         display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  .nav-left { display: flex; align-items: center; gap: 14px; }
+  .nav-tri { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); }
+  .nav-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+  .nav-subtitle { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .nav-link { font-size: 12.5px; color: var(--ink-2); text-decoration: none;
+              padding: 5px 10px; border-radius: 6px; }
+  .nav-link:hover { color: var(--accent); background: var(--surface-2); }
 
-  .hero { padding: 36px 32px 24px; max-width: 1280px; margin: 0 auto; }
-  .hero-eyebrow { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: #aaaacc; letter-spacing: 0.18em; margin-bottom: 14px; text-transform: uppercase; }
-  .hero h1 { font-size: 32px; font-weight: 700; letter-spacing: 0.02em; margin-bottom: 12px; }
-  .hero p { font-size: 15px; color: #aaaacc; max-width: 720px; line-height: 1.6; }
+  .hero { max-width: 1280px; margin: 0 auto; padding: 44px 32px 20px; }
+  .hero-eyebrow { font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+                  letter-spacing: 0.13em; margin-bottom: 10px; text-transform: uppercase; }
+  .hero h1 { font-size: 32px; line-height: 1.18; letter-spacing: -0.02em; font-weight: 700; }
+  .hero p { color: var(--ink-2); margin-top: 12px; max-width: 78ch; }
 
-  .controls { padding: 16px 32px; max-width: 1280px; margin: 0 auto;
-              display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
-              border-top: 1px solid #1a1a2e; border-bottom: 1px solid #1a1a2e; background: #0a0a18; }
-  .search { flex: 1; min-width: 240px; background: #07070f; border: 1px solid #2a2a44;
-            color: #eeeeff; padding: 11px 14px; font-size: 14px;
-            font-family: 'Share Tech Mono', monospace; outline: none; }
-  .search:focus { border-color: #4488ff; }
-  .legend { display: flex; gap: 14px; flex-wrap: wrap; }
-  .legend-item { display: inline-flex; align-items: center; gap: 8px; font-size: 12px;
-                 color: #aaaacc; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
-  .legend-swatch { width: 14px; height: 14px; border-radius: 2px; }
+  .controls { position: sticky; top: 57px; z-index: 90; display: flex; gap: 12px;
+              align-items: center; flex-wrap: wrap; padding: 14px 32px;
+              border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+              background: var(--surface); }
+  .search { flex: 1; min-width: 240px; background: var(--surface-2);
+            border: 1px solid var(--rule); border-radius: 8px; color: var(--ink);
+            padding: 9px 12px; font-family: var(--sans); font-size: 14px; outline: none; }
+  .search:focus { border-color: var(--accent-rule); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
 
-  .areas { padding: 32px; max-width: 1280px; margin: 0 auto; }
-  .area { margin-bottom: 48px; }
-  .area-title { font-size: 22px; font-weight: 700; letter-spacing: 0.02em; margin-bottom: 4px; }
-  .area-summary { font-size: 14px; color: #aaaacc; margin-bottom: 18px; line-height: 1.6; }
+  .areas { max-width: 1280px; margin: 0 auto; padding: 26px 32px 60px; }
+  .area { margin-bottom: 34px; }
+  .area-title { font-size: 13px; font-weight: 700; letter-spacing: 0.04em;
+                text-transform: uppercase; padding-bottom: 8px; margin-bottom: 6px;
+                border-bottom: 1px solid var(--rule); }
+  .area-summary { color: var(--muted); font-size: 13.5px; margin-bottom: 14px; max-width: 80ch; }
 
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
-  .card { border: 1px solid #1a1a2e; background: #0a0a18; padding: 18px; transition: all 0.15s; }
-  .card.hidden { display: none; }
-  .card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
-  .card-id { font-family: 'Share Tech Mono', monospace; font-size: 14px; color: #eeeeff;
-             font-weight: 700; word-break: break-word; }
-  .card-sub { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #aaaacc;
-              margin-top: 4px; word-break: break-word; }
-  .card-tag { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700;
-              padding: 4px 10px; border-radius: 2px; flex-shrink: 0; white-space: nowrap; }
-  .card-summary { font-size: 13px; color: #ccccee; margin: 8px 0 12px; line-height: 1.6; }
-
-  .card-section { font-size: 11px; letter-spacing: 0.08em; color: #aaaacc;
-                  text-transform: uppercase; font-weight: 700; margin-top: 14px; margin-bottom: 8px; }
-  .row { display: flex; gap: 8px; align-items: baseline; padding: 4px 0;
-         border-bottom: 1px solid #14142a; font-family: 'Share Tech Mono', monospace; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--rule); background: var(--surface);
+          border-radius: 10px; padding: 16px; transition: border-color 0.12s; }
+  .card:hover { border-color: var(--rule-hard); }
+  .card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .card-id { font-family: var(--mono); font-size: 13.5px; color: var(--ink); font-weight: 600; word-break: break-word; }
+  .card-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; word-break: break-all; }
+  .card-tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+              padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+              background: var(--surface-2); color: var(--muted); border: 1px solid var(--rule); }
+  .card-summary { color: var(--ink-2); font-size: 13.5px; margin-top: 10px; }
+  .card-section { margin-top: 12px; }
+  .row { padding: 6px 0; border-bottom: 1px solid var(--rule);
+         font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
   .row:last-child { border-bottom: none; }
-  .method { display: inline-block; min-width: 50px; padding: 2px 6px; font-weight: 700;
-            font-size: 10px; letter-spacing: 0.06em; border-radius: 2px; text-align: center; }
-  .method-GET { background: #003366; color: #aaccff; }
-  .method-POST { background: #1a3d2e; color: #88ddaa; }
-  .method-PATCH { background: #4a3500; color: #ffcc66; }
-  .method-PUT { background: #4a3500; color: #ffcc66; }
-  .method-DELETE { background: #4a1a1a; color: #ff99aa; }
-  .path { color: #eeeeff; word-break: break-all; }
-  .meta { color: #aaaacc; font-family: 'Barlow', sans-serif; font-size: 12px; line-height: 1.5; }
+  .kind { color: var(--muted); }
+  .path { font-family: var(--mono); color: var(--ink-2); word-break: break-all; }
+  .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
-  details summary { cursor: pointer; user-select: none; list-style: none;
-                    color: #88aaff; font-size: 12px; letter-spacing: 0.06em;
-                    text-transform: uppercase; font-weight: 700; margin-top: 12px; }
-  details summary::-webkit-details-marker { display: none; }
-  details[open] summary::after { content: " ▼"; }
-  details:not([open]) summary::after { content: " ▶"; }
+  .method { font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em;
+            padding: 2px 7px; border-radius: 999px; margin-right: 7px; display: inline-block; }
+  .method-GET { background: var(--get-bg); color: var(--get); }
+  .method-POST { background: var(--post-bg); color: var(--post); }
+  .method-PATCH { background: var(--mutate-bg); color: var(--mutate); }
+  .method-PUT { background: var(--mutate-bg); color: var(--mutate); }
+  .method-DELETE { background: var(--delete-bg); color: var(--delete); }
 
-  .empty { padding: 60px 24px; text-align: center; color: #aaaacc; font-size: 14px; }
-  .footer { padding: 24px 32px 48px; max-width: 1280px; margin: 0 auto;
-            border-top: 1px solid #1a1a2e; color: #aaaacc; font-size: 12px;
-            font-family: 'Share Tech Mono', monospace; }
+  .empty { padding: 60px 24px; text-align: center; color: var(--muted); font-size: 14px; }
+  .footer { padding: 22px 32px 48px; max-width: 1280px; margin: 0 auto;
+            border-top: 1px solid var(--rule); color: var(--muted); font-size: 12.5px; }
+
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 25px; }
+  }
 </style>
 </head>
 <body>
@@ -7164,7 +7227,8 @@ const DATA = {
               "ssh_host_key_policy",
               "ssh_operations_enabled",
               "updated_at",
-              "next_run_at"
+              "next_run_at",
+              "max_vms_per_plan"
             ],
             "methods": [],
             "summary": ""
@@ -8579,6 +8643,10 @@ const DATA = {
             "kind": "component"
           },
           {
+            "name": "LogTable",
+            "kind": "component"
+          },
+          {
             "name": "CommandsTab",
             "kind": "component"
           },
@@ -8849,6 +8917,7 @@ const DATA = {
           "/api/mappings",
           "/api/plans",
           "/api/plans/{id}",
+          "/api/settings",
           "/api/vms?{id}"
         ],
         "members": [
@@ -9330,27 +9399,27 @@ const DATA = {
     {
       "key": "api",
       "label": "API endpoints",
-      "color": "#4488ff"
+      "color": "#14496B"
     },
     {
       "key": "logic",
       "label": "Business logic",
-      "color": "#00cc88"
+      "color": "#1F6B3B"
     },
     {
       "key": "data",
       "label": "Data models / schemas",
-      "color": "#ffaa55"
+      "color": "#7A4E00"
     },
     {
       "key": "integration",
       "label": "External integration",
-      "color": "#bb88ff"
+      "color": "#4C3A78"
     },
     {
       "key": "frontend",
       "label": "Frontend component",
-      "color": "#22ddcc"
+      "color": "#0F6E6E"
     }
   ]
 };
@@ -9367,7 +9436,7 @@ DATA.categories.forEach(c => {
 });
 
 function renderCard(card) {
-  const color = COLOR[card.category] || "#888899";
+  const color = COLOR[card.category] || "var(--muted)";
   const div = document.createElement("article");
   div.className = "card";
   div.style.borderLeft = `3px solid ${color}`;
@@ -9420,7 +9489,7 @@ function renderCard(card) {
         const sum = document.createElement("summary");
         const kind = c.kind === "model" ? `model · ${c.table}` :
                      c.kind === "schema" ? "schema" : "class";
-        sum.innerHTML = `<code style="font-family:'Share Tech Mono',monospace;color:#eeeeff">${escapeHtml(c.name)}</code> <span style="color:#aaaacc">(${kind})</span>`;
+        sum.innerHTML = `<code style="font-family:var(--mono);color:var(--ink)">${escapeHtml(c.name)}</code> <span style="color:var(--muted)">(${kind})</span>`;
         det.appendChild(sum);
         if (c.summary) det.appendChild(metaLine(c.summary));
         if ((c.fields || []).length > 0) {
@@ -9455,9 +9524,9 @@ function renderCard(card) {
     if ((card.depends_on || []).length > 0) {
       div.appendChild(makeSection("Depends on"));
       const wrap = document.createElement("div");
-      wrap.style.fontFamily = "'Share Tech Mono', monospace";
+      wrap.style.fontFamily = "var(--mono)";
       wrap.style.fontSize = "11px";
-      wrap.style.color = "#aaaacc";
+      wrap.style.color = "var(--muted)";
       wrap.style.lineHeight = "1.7";
       wrap.textContent = card.depends_on.join("  ·  ");
       div.appendChild(wrap);
@@ -9529,15 +9598,16 @@ DATA.areas.forEach(area => {
     const ext = document.createElement("details");
     ext.style.marginTop = "16px";
     ext.style.padding = "12px 16px";
-    ext.style.border = "1px dashed #2a2a44";
-    ext.style.background = "#0a0a18";
+    ext.style.border = "1px dashed var(--rule-hard)";
+    ext.style.background = "var(--surface-2)";
+    ext.style.borderRadius = "8px";
     const sum = document.createElement("summary");
     sum.textContent = "Planned extensions";
     ext.appendChild(sum);
     const ul = document.createElement("ul");
     ul.style.paddingLeft = "20px";
     ul.style.marginTop = "10px";
-    ul.style.color = "#aaaacc";
+    ul.style.color = "var(--muted)";
     ul.style.fontSize = "13px";
     ul.style.lineHeight = "1.6";
     area.extensions.forEach(e => {
