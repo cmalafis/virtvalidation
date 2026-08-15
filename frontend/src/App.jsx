@@ -13,6 +13,7 @@ import PlanDetailPage from "./pages/PlanDetailPage";
 import PlansPage from "./pages/PlansPage";
 import PlanWizardPage from "./pages/PlanWizardPage";
 import ReportsPage from "./pages/ReportsPage";
+import SettingsPage from "./pages/SettingsPage";
 import VCenterSourcesPage from "./pages/VCenterSourcesPage";
 import ValidationsPage from "./pages/ValidationsPage";
 import VMDetailPage from "./pages/VMDetailPage";
@@ -22,7 +23,6 @@ import OCPTargetDetail from "./components/OCPTargetDetail";
 import ReportView from "./components/ReportView";
 import ResourceMappings, { ResourceMappingDetail } from "./components/ResourceMappings";
 import RVToolsUpload from "./components/RVToolsUpload";
-import Settings from "./components/Settings";
 
 export default function App() {
   return (
@@ -65,7 +65,7 @@ export default function App() {
           {/* Administration */}
           <Route path="agent-activity" element={<AgentActivityPage />} />
           <Route path="audit" element={<AuditLogPage />} />
-          <Route path="settings" element={<Settings />} />
+          <Route path="settings" element={<SettingsPage />} />
 
           {/* Back-compat: paths that shipped earlier and may be
               bookmarked. Kept as redirects rather than duplicate routes
