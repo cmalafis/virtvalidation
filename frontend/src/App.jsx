@@ -11,6 +11,7 @@ import OCPTargetsPage from "./pages/OCPTargetsPage";
 import OverviewPage from "./pages/OverviewPage";
 import PlanDetailPage from "./pages/PlanDetailPage";
 import PlansPage from "./pages/PlansPage";
+import PlanWizardPage from "./pages/PlanWizardPage";
 import ReportsPage from "./pages/ReportsPage";
 import VCenterSourcesPage from "./pages/VCenterSourcesPage";
 import ValidationsPage from "./pages/ValidationsPage";
@@ -18,7 +19,6 @@ import VMDetailPage from "./pages/VMDetailPage";
 
 import BulkOperations from "./components/BulkOperations";
 import OCPTargetDetail from "./components/OCPTargetDetail";
-import PlanWizard from "./components/PlanWizard";
 import ReportView from "./components/ReportView";
 import ResourceMappings, { ResourceMappingDetail } from "./components/ResourceMappings";
 import RVToolsUpload from "./components/RVToolsUpload";
@@ -46,7 +46,7 @@ export default function App() {
 
           {/* Migrate */}
           <Route path="plans" element={<PlansPage />} />
-          <Route path="plans/new" element={<PlanWizard />} />
+          <Route path="plans/new" element={<PlanWizardPage />} />
           <Route path="plans/:id" element={<PlanDetailPage />} />
           <Route path="operations" element={<BulkOperations />} />
 
