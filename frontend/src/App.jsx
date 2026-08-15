@@ -1,8 +1,13 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import AppLayout from "./layout/AppLayout";
+import AuditLogPage from "./pages/AuditLogPage";
+import DesignReviewsPage from "./pages/DesignReviewsPage";
 import InventoryPage from "./pages/InventoryPage";
 import OverviewPage from "./pages/OverviewPage";
+import PlansPage from "./pages/PlansPage";
+import ReportsPage from "./pages/ReportsPage";
+import ValidationsPage from "./pages/ValidationsPage";
 
 import AgentActivity from "./components/AgentActivity";
 import BulkOperations from "./components/BulkOperations";
@@ -19,7 +24,6 @@ import Settings from "./components/Settings";
 import StorageReviewDetail from "./components/StorageReviewDetail";
 import StorageReviewNew from "./components/StorageReviewNew";
 import VCenterSources from "./components/VCenterSources";
-import VirtValidate from "./components/VirtValidate";
 import VMDetail from "./components/VMDetail";
 
 export default function App() {
@@ -32,18 +36,10 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route index element={<OverviewPage />} />
 
-          {/* Discover — the old dashboard's six useState tabs are being
-              split into real routes. Until each is converted, the legacy
-              dashboard still serves them. */}
-          <Route path="inventory" element={<InventoryPage />} />
-          <Route path="validations" element={<VirtValidate />} />
-          <Route path="plans" element={<VirtValidate />} />
-          <Route path="reports" element={<VirtValidate />} />
-          <Route path="design-reviews" element={<VirtValidate />} />
-          <Route path="audit" element={<VirtValidate />} />
-
           {/* Discover */}
+          <Route path="inventory" element={<InventoryPage />} />
           <Route path="vms/:id" element={<VMDetail />} />
+          <Route path="design-reviews" element={<DesignReviewsPage />} />
           <Route path="rvtools/upload" element={<RVToolsUpload />} />
           <Route path="design-reviews/network/new" element={<NetworkReviewNew />} />
           <Route path="design-reviews/storage/new" element={<StorageReviewNew />} />
@@ -51,11 +47,14 @@ export default function App() {
           <Route path="design-reviews/:id" element={<NetworkReviewDetail />} />
 
           {/* Migrate */}
+          <Route path="plans" element={<PlansPage />} />
           <Route path="plans/new" element={<PlanWizard />} />
           <Route path="plans/:id" element={<PlanView />} />
           <Route path="operations" element={<BulkOperations />} />
 
           {/* Verify */}
+          <Route path="validations" element={<ValidationsPage />} />
+          <Route path="reports" element={<ReportsPage />} />
           <Route path="reports/:type" element={<ReportView />} />
 
           {/* Configure */}
@@ -67,6 +66,7 @@ export default function App() {
 
           {/* Administration */}
           <Route path="agent-activity" element={<AgentActivity />} />
+          <Route path="audit" element={<AuditLogPage />} />
           <Route path="settings" element={<Settings />} />
 
           {/* Back-compat: paths that shipped earlier and may be

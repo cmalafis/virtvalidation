@@ -16,13 +16,25 @@ import InProgressIcon from "@patternfly/react-icons/dist/esm/icons/in-progress-i
 import InfoCircleIcon from "@patternfly/react-icons/dist/esm/icons/info-circle-icon";
 import OutlinedClockIcon from "@patternfly/react-icons/dist/esm/icons/outlined-clock-icon";
 
-// Validation verdicts (was STATUS_CONFIG).
+// Validation verdicts (was STATUS_CONFIG) plus the VM.status lifecycle.
+//
+// "pass"/"fail" are deliberate aliases for "passed"/"failed":
+// ValidationStatus is the enum whose member names differ from its values
+// (passed = "pass"), and per CLAUDE.md its migration created the Postgres
+// type from the NAMES, so which spelling reaches the client depends on
+// the path. Accepting both is cheaper than being wrong.
 const STATUS = {
   healthy: { color: "green", icon: CheckCircleIcon, label: "Healthy" },
   passed: { color: "green", icon: CheckCircleIcon, label: "Passed" },
+  pass: { color: "green", icon: CheckCircleIcon, label: "Passed" },
+  validated: { color: "green", icon: CheckCircleIcon, label: "Validated" },
   degraded: { color: "orange", icon: ExclamationTriangleIcon, label: "Degraded" },
   failed: { color: "red", icon: ExclamationCircleIcon, label: "Failed" },
+  fail: { color: "red", icon: ExclamationCircleIcon, label: "Failed" },
   captured: { color: "blue", icon: CheckCircleIcon, label: "Captured" },
+  baseline_captured: { color: "blue", icon: CheckCircleIcon, label: "Baseline captured" },
+  discovered: { color: "grey", icon: OutlinedClockIcon, label: "Discovered" },
+  migrated: { color: "purple", icon: CheckCircleIcon, label: "Migrated" },
   running: { color: "blue", icon: InProgressIcon, label: "Running" },
   pending: { color: "grey", icon: OutlinedClockIcon, label: "Pending" },
 };
