@@ -149,15 +149,20 @@ when reconciling a specific upload.
 
 | Flow | When to use | Persists `source_vcenter_id`? |
 |------|-------------|-------------------------------|
-| **Auto-link `/rvtools/upload`** (recommended) | Any RVTools file, single or multi-vCenter | ✅ Yes — auto-detected per VM |
-| **Per-vCenter `vCenters → row → Upload`** | Legacy compat, or when the file lacks a vCenter column | ✅ Yes — operator-specified |
-| **Top nav → + Add VMs (Enroll modal)** | Single-environment customers, ad-hoc CSV / XLSX bulk-add | ❌ No — VMs land ungrouped |
+| **Discover → Virtual Machines → Import VMs** (recommended) | Any RVTools file, single or multi-vCenter | ✅ Yes — auto-detected per VM, with a routing step you confirm |
+| **Configure → vCenter Sources → row → Import** | Legacy compat, or when the file lacks a vCenter column | ✅ Yes — operator-specified |
 
-The auto-link page covers everything the per-vCenter page does plus
-multi-vCenter distribution. The per-vCenter page is kept for files
-without a vCenter column and for operators who want explicit control.
-The Enroll modal stays for non-scoped imports (a quick lab import,
-CMDB exports without vCenter metadata).
+The import page covers everything the per-vCenter flow does plus
+multi-vCenter distribution. It shows every detected vCenter hostname and
+lets you route each to a registered source; VMs whose hostname routes
+nowhere are **skipped, not guessed at**, and the count is shown before you
+commit. The per-vCenter flow is kept for files without a vCenter column
+and for operators who want explicit control.
+
+> The old "+ Add VMs" enroll modal in the top nav is gone as of the
+> PatternFly UI. Its non-scoped import path landed VMs ungrouped, which
+> then had to be fixed up by hand; routing them at import time is
+> strictly better.
 
 ### Tested capacity
 

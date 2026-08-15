@@ -216,20 +216,25 @@ sequencing engine. Not on the v1.0 roadmap. The single-program
 hierarchical pipeline above covers customer-tier migrations; multi-
 program coordination is a v1.5+ concern.
 
-### UI virtualization
+### ~~UI virtualization~~ — resolved by server-side pagination
 
-The inventory table renders every row. Beyond ~1,000 rows the page
-takes >1s to first paint. Fix is `react-window` or
-`@tanstack/react-virtual` — reasonably small change but needs
-careful testing against the existing keyboard navigation +
-multi-select bulk-action affordances. Tagged
-``ui-virtualization-inventory``.
+Previously: the inventory table rendered every row and took >1s to
+first paint beyond ~1,000 rows, and the fix was assumed to be
+`react-window` / `@tanstack/react-virtual`.
+
+The PatternFly rebuild made that moot. The table pages server-side
+(20 rows by default) against `GET /api/vms` with `skip`/`limit`, so
+the row count in the DOM is bounded regardless of fleet size, and
+filter counts come from `GET /api/vms/facets` rather than from
+counting loaded rows. Virtualization is only worth revisiting if a
+future view genuinely needs an unpaginated list.
 
 ### Multi-program switcher UI
 
 `MigrationProgram` rows can already coexist (East Coast / West
-Coast). The dashboard surfaces the latest plan; switching between
-programs needs a top-bar program picker + scoped queries. Tagged
+Coast). Migration Plans lists every plan, but nothing scopes the UI
+to one program; switching between them needs a masthead program
+picker + scoped queries. Tagged
 ``multi-program-switcher``.
 
 ### Real-time progressive streaming

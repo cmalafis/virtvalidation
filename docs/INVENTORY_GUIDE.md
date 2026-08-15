@@ -1,10 +1,13 @@
 # Inventory Page Guide
 
-The inventory tab is VirtValidate's primary VM management surface.
-On a 1,000-VM federal fleet it must paginate, filter, sort, and
-support bulk operations without dragging the dashboard to a halt.
-This document covers the operator-facing workflow plus the API
-contract that backs it.
+**Discover → Virtual Machines** is VirtValidate's primary VM management
+surface. On a 1,000-VM federal fleet it must paginate, filter, sort, and
+support bulk operations without dragging the UI to a halt. This document
+covers the operator-facing workflow plus the API contract that backs it.
+
+Page state — page, sort, and every filter — lives in the query string, so
+a filtered view is bookmarkable and shareable
+(`/inventory?status=discovered`).
 
 ---
 

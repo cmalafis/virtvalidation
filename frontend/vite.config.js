@@ -11,5 +11,14 @@ export default defineConfig({
         changeOrigin: true,
       }
     }
-  }
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.js'],
+    // PatternFly ships CSS imports inside its component modules; without
+    // this every page import fails to parse under the test runner.
+    css: false,
+    include: ['src/**/*.test.{js,jsx}'],
+  },
 })

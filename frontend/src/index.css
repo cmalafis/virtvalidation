@@ -1,0 +1,28 @@
+/* PatternFly 6 base styles.
+ *
+ * This is the ONLY stylesheet in the app. Per-component CSS ships with
+ * each `@patternfly/react-core` import, so pulling base + addons here
+ * does not drag in the full 2 MB patternfly.css.
+ *
+ * Fonts (Red Hat Display / Text / Mono) resolve to local .woff2 files
+ * under @patternfly/patternfly/assets/fonts/ and are bundled by Vite.
+ * Nothing is fetched from fonts.googleapis.com — that matters because
+ * this appliance ships into air-gapped sites where an outbound font
+ * request would silently fail (and leak a request in the first place).
+ */
+@import "@patternfly/react-core/dist/styles/base.css";
+@import "@patternfly/patternfly/patternfly-addons.css";
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* PatternFly's dark theme underlines anchors so links stay
+ * distinguishable without relying on color alone. That's right for body
+ * copy, but the masthead logo is a brand, not a link — the OpenShift
+ * console never hits this because its logo is an image, not text. */
+.pf-v6-c-masthead__logo {
+  text-decoration: none;
+}

@@ -8401,344 +8401,358 @@ const DATA = {
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/AgentActivity.jsx",
-        "title": "AgentActivity.jsx",
-        "subtitle": "frontend/src/components/AgentActivity.jsx",
-        "summary": "Agent Activity \u2014 the operator's \"what is the agent actually doing?\" surface.",
+        "id": "frontend/src/common/ConfirmModal.jsx",
+        "title": "ConfirmModal.jsx",
+        "subtitle": "frontend/src/common/ConfirmModal.jsx",
+        "summary": "Shared confirmation dialog.",
         "category": "frontend",
-        "api_calls": [
-          "/api/command-audits?{id}",
-          "/api/inference-logs/stats",
-          "/api/inference-logs?{id}"
-        ],
+        "api_calls": [],
         "members": [
           {
-            "name": "Pager",
-            "kind": "component"
-          },
-          {
-            "name": "pagerBtn",
-            "kind": "helper"
-          },
-          {
-            "name": "Badge",
-            "kind": "component"
-          },
-          {
-            "name": "CommandAuditTable",
-            "kind": "component"
-          },
-          {
-            "name": "InferenceLogTable",
-            "kind": "component"
-          },
-          {
-            "name": "AgentActivity",
+            "name": "ConfirmModal",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/BulkOperations.jsx",
-        "title": "BulkOperations.jsx",
-        "subtitle": "frontend/src/components/BulkOperations.jsx",
-        "summary": "Bulk operations page \u2014 selection-driven capture + validation.",
+        "id": "frontend/src/common/EmptyStates.jsx",
+        "title": "EmptyStates.jsx",
+        "subtitle": "frontend/src/common/EmptyStates.jsx",
+        "summary": "Guided empty states.",
         "category": "frontend",
-        "api_calls": [
-          "/api/sources/vcenters",
-          "/api/validations/preview-tiers",
-          "/api/vms?limit=1000"
-        ],
+        "api_calls": [],
         "members": [
           {
-            "name": "BulkOperations",
+            "name": "GuidedEmptyState",
             "kind": "component"
           },
           {
-            "name": "FiltersPanel",
+            "name": "NoResultsEmptyState",
             "kind": "component"
           },
           {
-            "name": "TierPreviewCard",
+            "name": "ErrorEmptyState",
             "kind": "component"
           },
           {
-            "name": "TaskStatusCard",
-            "kind": "component"
-          },
-          {
-            "name": "Field",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
+            "name": "LoadingEmptyState",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/InventoryTable.jsx",
-        "title": "InventoryTable.jsx",
-        "subtitle": "frontend/src/components/InventoryTable.jsx",
-        "summary": "Paginated inventory table for the dashboard's inventory tab.",
+        "id": "frontend/src/common/FindingCard.jsx",
+        "title": "FindingCard.jsx",
+        "subtitle": "frontend/src/common/FindingCard.jsx",
+        "summary": "A single design-review finding.",
         "category": "frontend",
-        "api_calls": [
-          "/api/ocp-targets/{id}/namespaces?limit=500",
-          "/api/sources/targets",
-          "/api/vms/all?{id}",
-          "/api/vms/bulk-set-target-cluster",
-          "/api/vms/bulk-set-target-namespace",
-          "/api/vms/facets?{id}",
-          "/api/vms/{id}",
-          "/api/vms?{id}"
-        ],
+        "api_calls": [],
         "members": [
-          {
-            "name": "StatusPill",
-            "kind": "component"
-          },
-          {
-            "name": "LifecyclePill",
-            "kind": "component"
-          },
-          {
-            "name": "fmt",
-            "kind": "helper"
-          },
-          {
-            "name": "TargetClusterCell",
-            "kind": "component"
-          },
-          {
-            "name": "TargetClusterPopover",
-            "kind": "component"
-          },
-          {
-            "name": "TargetNamespaceCell",
-            "kind": "component"
-          },
-          {
-            "name": "TargetNamespacePopover",
-            "kind": "component"
-          },
-          {
-            "name": "TargetNetworksCell",
-            "kind": "component"
-          },
-          {
-            "name": "BulkActionBar",
-            "kind": "component"
-          },
-          {
-            "name": "formatTimestamp",
-            "kind": "helper"
-          },
-          {
-            "name": "readStateFromUrl",
-            "kind": "helper"
-          },
-          {
-            "name": "writeStateToUrl",
-            "kind": "helper"
-          },
-          {
-            "name": "buildQueryString",
-            "kind": "helper"
-          },
-          {
-            "name": "DeleteAllModal",
-            "kind": "component"
-          },
-          {
-            "name": "FacetDropdown",
-            "kind": "component"
-          },
-          {
-            "name": "InventoryTable",
-            "kind": "component"
-          }
-        ]
-      },
-      {
-        "kind": "frontend",
-        "id": "frontend/src/components/NetworkReviewDetail.jsx",
-        "title": "NetworkReviewDetail.jsx",
-        "subtitle": "frontend/src/components/NetworkReviewDetail.jsx",
-        "summary": "Per-review detail page. Renders the full report view + lets operators",
-        "category": "frontend",
-        "api_calls": [
-          "/api/network-reviews/{id}",
-          "/api/network-reviews/{id}/analyze",
-          "/api/network-reviews/{id}/findings/{id}"
-        ],
-        "members": [
-          {
-            "name": "NetworkReviewDetail",
-            "kind": "component"
-          },
-          {
-            "name": "FindingCard",
-            "kind": "component"
-          },
-          {
-            "name": "ConfidenceTag",
-            "kind": "component"
-          },
           {
             "name": "EvidenceBlock",
             "kind": "component"
           },
           {
-            "name": "SourceProposedBlocks",
-            "kind": "component"
-          },
-          {
-            "name": "ConfidenceLimitations",
-            "kind": "component"
-          },
-          {
-            "name": "StatusPill",
-            "kind": "component"
-          },
-          {
-            "name": "Caveats",
-            "kind": "component"
-          },
-          {
-            "name": "H2",
-            "kind": "component"
-          },
-          {
-            "name": "Err",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
-            "kind": "component"
-          },
-          {
-            "name": "Styles",
+            "name": "FindingCard",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/NetworkReviewNew.jsx",
-        "title": "NetworkReviewNew.jsx",
-        "subtitle": "frontend/src/components/NetworkReviewNew.jsx",
-        "summary": "New Network Design Review wizard. Single-page form: name \u2192 notes upload",
+        "id": "frontend/src/common/PageFrame.jsx",
+        "title": "PageFrame.jsx",
+        "subtitle": "frontend/src/common/PageFrame.jsx",
+        "summary": "Standard page chrome: breadcrumb, title, description, actions.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "PageFrame",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/common/StatusLabel.jsx",
+        "title": "StatusLabel.jsx",
+        "subtitle": "frontend/src/common/StatusLabel.jsx",
+        "summary": "Shared status / severity / lifecycle labels.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "humanize",
+            "kind": "helper"
+          },
+          {
+            "name": "StatusLabel",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/layout/AppLayout.jsx",
+        "title": "AppLayout.jsx",
+        "subtitle": "frontend/src/layout/AppLayout.jsx",
+        "summary": "The application shell.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "AppLayout",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/layout/AppMasthead.jsx",
+        "title": "AppMasthead.jsx",
+        "subtitle": "frontend/src/layout/AppMasthead.jsx",
+        "summary": "Application masthead.",
         "category": "frontend",
         "api_calls": [
-          "/api/network-reviews",
-          "/api/network-reviews/{id}/analyze"
+          "/api/health/full"
         ],
         "members": [
           {
-            "name": "NetworkReviewNew",
+            "name": "ThemeToggle",
             "kind": "component"
           },
           {
-            "name": "Section",
+            "name": "BackendStatus",
             "kind": "component"
           },
           {
-            "name": "Field",
-            "kind": "component"
-          },
-          {
-            "name": "FileLoader",
-            "kind": "component"
-          },
-          {
-            "name": "Notice",
-            "kind": "component"
-          },
-          {
-            "name": "Styles",
+            "name": "AppMasthead",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/OCPTargetDetail.jsx",
-        "title": "OCPTargetDetail.jsx",
-        "subtitle": "frontend/src/components/OCPTargetDetail.jsx",
-        "summary": "OCP target detail page. Two operator-driven catalogs hang off the",
+        "id": "frontend/src/layout/AppNav.jsx",
+        "title": "AppNav.jsx",
+        "subtitle": "frontend/src/layout/AppNav.jsx",
+        "summary": "Primary navigation.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "isPrefixMatch",
+            "kind": "helper"
+          },
+          {
+            "name": "matches",
+            "kind": "helper"
+          },
+          {
+            "name": "AppNav",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/AgentActivityPage.jsx",
+        "title": "AgentActivityPage.jsx",
+        "subtitle": "frontend/src/pages/AgentActivityPage.jsx",
+        "summary": "Agent activity \u2014 what the appliance actually did.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "methodLabel",
+            "kind": "helper"
+          },
+          {
+            "name": "useLog",
+            "kind": "hook"
+          },
+          {
+            "name": "LogPagination",
+            "kind": "component"
+          },
+          {
+            "name": "CommandsTab",
+            "kind": "component"
+          },
+          {
+            "name": "InferenceTab",
+            "kind": "component"
+          },
+          {
+            "name": "AgentActivityPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/AuditLogPage.jsx",
+        "title": "AuditLogPage.jsx",
+        "subtitle": "frontend/src/pages/AuditLogPage.jsx",
+        "summary": "Audit log.",
         "category": "frontend",
         "api_calls": [
-          "/api/ocp-targets/{id}/namespaces/{id}",
-          "/api/ocp-targets/{id}/namespaces?limit=500",
-          "/api/ocp-targets/{id}/networks",
-          "/api/ocp-targets/{id}/networks/{id}",
-          "/api/ocp-targets/{id}/storage-classes",
-          "/api/ocp-targets/{id}/storage-classes/{id}",
+          "/api/audit?{id}"
+        ],
+        "members": [
+          {
+            "name": "SingleSelect",
+            "kind": "component"
+          },
+          {
+            "name": "AuditLogPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/BulkOperationsPage.jsx",
+        "title": "BulkOperationsPage.jsx",
+        "subtitle": "frontend/src/pages/BulkOperationsPage.jsx",
+        "summary": "Bulk operations \u2014 capture baselines or validate across a selection.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/sources/vcenters",
+          "/api/validations/preview-tiers",
+          "/api/vms/facets"
+        ],
+        "members": [
+          {
+            "name": "ScopeForm",
+            "kind": "component"
+          },
+          {
+            "name": "OperationTab",
+            "kind": "component"
+          },
+          {
+            "name": "BulkOperationsPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/DesignReviewDetailPage.jsx",
+        "title": "DesignReviewDetailPage.jsx",
+        "subtitle": "frontend/src/pages/DesignReviewDetailPage.jsx",
+        "summary": "Design review detail \u2014 one component for both kinds.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "DesignReviewDetailPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/DesignReviewNewPage.jsx",
+        "title": "DesignReviewNewPage.jsx",
+        "subtitle": "frontend/src/pages/DesignReviewNewPage.jsx",
+        "summary": "New design review \u2014 one component for both kinds.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "FileField",
+            "kind": "component"
+          },
+          {
+            "name": "DesignReviewNewPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/DesignReviewsPage.jsx",
+        "title": "DesignReviewsPage.jsx",
+        "subtitle": "frontend/src/pages/DesignReviewsPage.jsx",
+        "summary": "Design reviews \u2014 network and storage, in one index.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "DesignReviewsPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/InventoryPage.jsx",
+        "title": "InventoryPage.jsx",
+        "subtitle": "frontend/src/pages/InventoryPage.jsx",
+        "summary": "Virtual Machines \u2014 the primary working surface.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/vms/facets?{id}",
+          "/api/vms/{id}/capture",
+          "/api/vms?{id}"
+        ],
+        "members": [
+          {
+            "name": "readState",
+            "kind": "helper"
+          },
+          {
+            "name": "buildQuery",
+            "kind": "helper"
+          },
+          {
+            "name": "FacetSelect",
+            "kind": "component"
+          },
+          {
+            "name": "InventoryPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/OCPTargetDetailPage.jsx",
+        "title": "OCPTargetDetailPage.jsx",
+        "subtitle": "frontend/src/pages/OCPTargetDetailPage.jsx",
+        "summary": "Target cluster catalogs \u2014 networks, storage classes, namespaces.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/ocp-targets/{id}/{id}/{id}",
+          "/api/ocp-targets/{id}/{id}?limit=500",
           "/api/sources/targets/{id}"
         ],
         "members": [
           {
-            "name": "OCPTargetDetail",
+            "name": "EntityModal",
             "kind": "component"
           },
           {
-            "name": "NetworksTab",
+            "name": "CatalogTab",
             "kind": "component"
           },
           {
-            "name": "StorageTab",
-            "kind": "component"
-          },
-          {
-            "name": "NetworkModal",
-            "kind": "component"
-          },
-          {
-            "name": "StorageModal",
-            "kind": "component"
-          },
-          {
-            "name": "NamespacesTab",
-            "kind": "component"
-          },
-          {
-            "name": "NamespaceModal",
-            "kind": "component"
-          },
-          {
-            "name": "Tab",
-            "kind": "component"
-          },
-          {
-            "name": "Empty",
-            "kind": "component"
-          },
-          {
-            "name": "Pill",
-            "kind": "component"
-          },
-          {
-            "name": "Field",
-            "kind": "component"
-          },
-          {
-            "name": "ErrorBlock",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
+            "name": "OCPTargetDetailPage",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/OCPTargets.jsx",
-        "title": "OCPTargets.jsx",
-        "subtitle": "frontend/src/components/OCPTargets.jsx",
-        "summary": "OCP target cluster registry. Operators register the cluster they're",
+        "id": "frontend/src/pages/OCPTargetsPage.jsx",
+        "title": "OCPTargetsPage.jsx",
+        "subtitle": "frontend/src/pages/OCPTargetsPage.jsx",
+        "summary": "OpenShift target clusters.",
         "category": "frontend",
         "api_calls": [
           "/api/sources/targets",
@@ -8746,323 +8760,170 @@ const DATA = {
         ],
         "members": [
           {
-            "name": "OCPTargets",
+            "name": "toPayload",
+            "kind": "helper"
+          },
+          {
+            "name": "TargetModal",
             "kind": "component"
           },
           {
-            "name": "Row",
-            "kind": "component"
-          },
-          {
-            "name": "CreateModal",
-            "kind": "component"
-          },
-          {
-            "name": "Empty",
-            "kind": "component"
-          },
-          {
-            "name": "Pill",
-            "kind": "component"
-          },
-          {
-            "name": "Field",
-            "kind": "component"
-          },
-          {
-            "name": "ErrorBlock",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
+            "name": "OCPTargetsPage",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/PlanView.jsx",
-        "title": "PlanView.jsx",
-        "subtitle": "frontend/src/components/PlanView.jsx",
-        "summary": "Strategy-driven plan detail page. Surfaces the LLM's rationale +",
+        "id": "frontend/src/pages/OverviewPage.jsx",
+        "title": "OverviewPage.jsx",
+        "subtitle": "frontend/src/pages/OverviewPage.jsx",
+        "summary": "Overview \u2014 the landing page.",
         "category": "frontend",
         "api_calls": [
-          "/api/plans/{id}",
-          "/api/plans/{id}/chunks",
-          "/api/plans/{id}/waves/{id}/move-vm",
-          "/api/vms?limit=500"
+          "/api/health/full",
+          "/api/mappings",
+          "/api/settings/llm",
+          "/api/sources/targets",
+          "/api/sources/vcenters",
+          "/api/vms/stats"
         ],
         "members": [
           {
-            "name": "PlanView",
+            "name": "StatTile",
             "kind": "component"
           },
           {
-            "name": "ChunkCard",
+            "name": "NextStepCard",
             "kind": "component"
+          },
+          {
+            "name": "SystemCard",
+            "kind": "component"
+          },
+          {
+            "name": "OverviewPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/PlanDetailPage.jsx",
+        "title": "PlanDetailPage.jsx",
+        "subtitle": "frontend/src/pages/PlanDetailPage.jsx",
+        "summary": "Migration plan detail \u2014 the waves and how to run them.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/plans/{id}",
+          "/api/plans/{id}/mark-succeeded",
+          "/api/plans/{id}/waves/{id}/mtv-yaml"
+        ],
+        "members": [
+          {
+            "name": "methodLabel",
+            "kind": "helper"
+          },
+          {
+            "name": "riskColor",
+            "kind": "helper"
           },
           {
             "name": "WaveCard",
             "kind": "component"
           },
           {
-            "name": "MoveVMPicker",
-            "kind": "component"
-          },
-          {
-            "name": "Section",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
+            "name": "PlanDetailPage",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/PlanWizard.jsx",
-        "title": "PlanWizard.jsx",
-        "subtitle": "frontend/src/components/PlanWizard.jsx",
-        "summary": "Per-VM plan creation page. Two steps:",
+        "id": "frontend/src/pages/PlanWizardPage.jsx",
+        "title": "PlanWizardPage.jsx",
+        "subtitle": "frontend/src/pages/PlanWizardPage.jsx",
+        "summary": "Generate a migration plan.",
         "category": "frontend",
         "api_calls": [
           "/api/mappings",
           "/api/plans",
           "/api/plans/{id}",
-          "/api/vms/facets?{id}",
           "/api/vms?{id}"
         ],
         "members": [
           {
-            "name": "PlanWizard",
-            "kind": "component"
+            "name": "stageLabel",
+            "kind": "helper"
           },
           {
-            "name": "StepBar",
-            "kind": "component"
+            "name": "stagePercent",
+            "kind": "helper"
           },
           {
-            "name": "MappingMultiSelect",
-            "kind": "component"
-          },
-          {
-            "name": "FilterBar",
-            "kind": "component"
-          },
-          {
-            "name": "FacetDropdown",
-            "kind": "component"
-          },
-          {
-            "name": "Toggle",
-            "kind": "component"
-          },
-          {
-            "name": "NarrowingPanel",
-            "kind": "component"
-          },
-          {
-            "name": "SelectionCounter",
-            "kind": "component"
-          },
-          {
-            "name": "VMTable",
-            "kind": "component"
-          },
-          {
-            "name": "Pager",
-            "kind": "component"
-          },
-          {
-            "name": "ProgressBar",
-            "kind": "component"
-          },
-          {
-            "name": "Step",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
+            "name": "PlanWizardPage",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/RVToolsUpload.jsx",
-        "title": "RVToolsUpload.jsx",
-        "subtitle": "frontend/src/components/RVToolsUpload.jsx",
-        "summary": "Top-level RVTools upload \u2014 auto-detects vCenter per VM, matches to",
+        "id": "frontend/src/pages/PlansPage.jsx",
+        "title": "PlansPage.jsx",
+        "subtitle": "frontend/src/pages/PlansPage.jsx",
+        "summary": "Migration plans \u2014 the index.",
         "category": "frontend",
         "api_calls": [
-          "/api/rvtools/upload-multi-vcenter",
-          "/api/sources/vcenters",
-          "/api/sources/vcenters/auto-match"
+          "/api/plans?limit=100"
         ],
         "members": [
           {
-            "name": "RVToolsUpload",
+            "name": "stageProgress",
+            "kind": "helper"
+          },
+          {
+            "name": "humanize",
+            "kind": "helper"
+          },
+          {
+            "name": "PlanStatus",
             "kind": "component"
           },
           {
-            "name": "ImportErrorBanner",
-            "kind": "component"
-          },
-          {
-            "name": "PickStage",
-            "kind": "component"
-          },
-          {
-            "name": "ParseStatsCard",
-            "kind": "component"
-          },
-          {
-            "name": "ConfirmStage",
-            "kind": "component"
-          },
-          {
-            "name": "DoneStage",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
+            "name": "PlansPage",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/ReportView.jsx",
-        "title": "ReportView.jsx",
-        "subtitle": "frontend/src/components/ReportView.jsx",
-        "summary": "Inline report viewer. Mirrors the dashboard aesthetic exactly so users",
+        "id": "frontend/src/pages/RVToolsUploadPage.jsx",
+        "title": "RVToolsUploadPage.jsx",
+        "subtitle": "frontend/src/pages/RVToolsUploadPage.jsx",
+        "summary": "Import inventory from an RVTools export.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/rvtools/upload-multi-vcenter",
+          "/api/sources/vcenters"
+        ],
+        "members": [
+          {
+            "name": "RVToolsUploadPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/ReportViewPage.jsx",
+        "title": "ReportViewPage.jsx",
+        "subtitle": "frontend/src/pages/ReportViewPage.jsx",
+        "summary": "Report viewer.",
         "category": "frontend",
         "api_calls": [],
         "members": [
           {
-            "name": "ReportView",
-            "kind": "component"
-          },
-          {
-            "name": "ExecutiveSummaryView",
-            "kind": "component"
-          },
-          {
-            "name": "ValidationListView",
-            "kind": "component"
-          },
-          {
-            "name": "ValidationCard",
-            "kind": "component"
-          },
-          {
-            "name": "WavePlanView",
-            "kind": "component"
-          },
-          {
-            "name": "BaselineSnapshotView",
-            "kind": "component"
-          },
-          {
-            "name": "SectionTitle",
-            "kind": "component"
-          },
-          {
-            "name": "SubLabel",
-            "kind": "component"
-          },
-          {
-            "name": "Stat",
-            "kind": "component"
-          },
-          {
-            "name": "Pill",
-            "kind": "component"
-          },
-          {
-            "name": "Loader",
-            "kind": "component"
-          },
-          {
-            "name": "Err",
-            "kind": "component"
-          },
-          {
-            "name": "ReportStyles",
-            "kind": "component"
-          }
-        ]
-      },
-      {
-        "kind": "frontend",
-        "id": "frontend/src/components/ResourceMappings.jsx",
-        "title": "ResourceMappings.jsx",
-        "subtitle": "frontend/src/components/ResourceMappings.jsx",
-        "summary": "Resource-mapping editor. Operators map source vSphere networks /",
-        "category": "frontend",
-        "api_calls": [
-          "/api/mappings",
-          "/api/mappings/{id}",
-          "/api/mappings/{id}/preflight",
-          "/api/mappings/{id}/suggest-network",
-          "/api/mappings/{id}/suggest-storage",
-          "/api/ocp-targets/{id}/networks",
-          "/api/ocp-targets/{id}/storage-classes",
-          "/api/ocp-targets/{id}/{id}",
-          "/api/ocp-targets/{id}/{id}/{id}",
-          "/api/sources/targets",
-          "/api/sources/targets/{id}",
-          "/api/sources/vcenters",
-          "/api/vms?source_vcenter_id={id}&limit=1000"
-        ],
-        "members": [
-          {
-            "name": "ResourceMappings",
-            "kind": "component"
-          },
-          {
-            "name": "ConfirmDeleteModal",
-            "kind": "component"
-          },
-          {
-            "name": "CreateModal",
-            "kind": "component"
-          },
-          {
-            "name": "normaliseNamespaceStrategy",
-            "kind": "helper"
-          },
-          {
-            "name": "ResourceMappingDetail",
-            "kind": "component"
-          },
-          {
-            "name": "TargetEntityManagerModal",
-            "kind": "component"
-          },
-          {
-            "name": "InlineCreateNetworkModal",
-            "kind": "component"
-          },
-          {
-            "name": "InlineCreateStorageClassModal",
-            "kind": "component"
-          },
-          {
-            "name": "EmptyCatalogHint",
-            "kind": "component"
-          },
-          {
-            "name": "NamespaceStrategySection",
-            "kind": "component"
-          },
-          {
-            "name": "StatusDot",
-            "kind": "component"
-          },
-          {
-            "name": "PreflightPanel",
+            "name": "PrintStyles",
             "kind": "component"
           },
           {
@@ -9070,373 +8931,223 @@ const DATA = {
             "kind": "component"
           },
           {
-            "name": "RowGrid",
-            "kind": "component"
-          },
-          {
-            "name": "ConfidencePill",
-            "kind": "component"
-          },
-          {
-            "name": "Empty",
-            "kind": "component"
-          },
-          {
-            "name": "Pill",
-            "kind": "component"
-          },
-          {
-            "name": "Field",
-            "kind": "component"
-          },
-          {
-            "name": "ErrorBlock",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
+            "name": "ReportViewPage",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/Settings.jsx",
-        "title": "Settings.jsx",
-        "subtitle": "frontend/src/components/Settings.jsx",
-        "summary": "",
+        "id": "frontend/src/pages/ReportsPage.jsx",
+        "title": "ReportsPage.jsx",
+        "subtitle": "frontend/src/pages/ReportsPage.jsx",
+        "summary": "Reports \u2014 the index of available reports.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "ReportsPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/ResourceMappingDetailPage.jsx",
+        "title": "ResourceMappingDetailPage.jsx",
+        "subtitle": "frontend/src/pages/ResourceMappingDetailPage.jsx",
+        "summary": "Resource mapping detail \u2014 the row-by-row editor.",
         "category": "frontend",
         "api_calls": [
-          "/api/health/llm",
-          "/api/health/postgres",
+          "/api/mappings/{id}",
+          "/api/mappings/{id}/preflight",
+          "/api/mappings/{id}/{id}",
+          "/api/ocp-targets/{id}/networks?limit=500",
+          "/api/ocp-targets/{id}/storage-classes?limit=500"
+        ],
+        "members": [
+          {
+            "name": "ConfidenceCell",
+            "kind": "component"
+          },
+          {
+            "name": "ResourceMappingDetailPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/ResourceMappingsPage.jsx",
+        "title": "ResourceMappingsPage.jsx",
+        "subtitle": "frontend/src/pages/ResourceMappingsPage.jsx",
+        "summary": "Resource mappings \u2014 the index.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/mappings",
+          "/api/mappings/{id}",
+          "/api/sources/targets",
+          "/api/sources/vcenters"
+        ],
+        "members": [
+          {
+            "name": "CreateModal",
+            "kind": "component"
+          },
+          {
+            "name": "ResourceMappingsPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/SettingsPage.jsx",
+        "title": "SettingsPage.jsx",
+        "subtitle": "frontend/src/pages/SettingsPage.jsx",
+        "summary": "Settings.",
+        "category": "frontend",
+        "api_calls": [
           "/api/settings",
           "/api/settings/llm",
           "/api/settings/llm/test-connection",
           "/api/system/fips-status",
-          "/api/system/ollama-models",
           "/api/system/ssh-key",
           "/api/system/ssh-key/generate",
           "/api/system/ssh-key/rotate"
         ],
         "members": [
           {
-            "name": "NextRunIndicator",
+            "name": "GeneralTab",
             "kind": "component"
           },
           {
-            "name": "ConfirmModal",
+            "name": "LLMTab",
             "kind": "component"
           },
           {
-            "name": "EnrollmentInstructions",
+            "name": "ComplianceTab",
             "kind": "component"
           },
           {
-            "name": "SSHKeyViewerWithFIPS",
-            "kind": "component"
-          },
-          {
-            "name": "ValidationKeysWithFIPS",
-            "kind": "component"
-          },
-          {
-            "name": "SSHKeyViewer",
-            "kind": "component"
-          },
-          {
-            "name": "ConnectionStatus",
-            "kind": "component"
-          },
-          {
-            "name": "FIPSCompliancePanel",
-            "kind": "component"
-          },
-          {
-            "name": "LLMBackendPanel",
-            "kind": "component"
-          },
-          {
-            "name": "ConfigurationForm",
-            "kind": "component"
-          },
-          {
-            "name": "Settings",
-            "kind": "component"
-          },
-          {
-            "name": "Spinner",
-            "kind": "component"
-          },
-          {
-            "name": "Shimmer",
-            "kind": "component"
-          },
-          {
-            "name": "Section",
-            "kind": "component"
-          },
-          {
-            "name": "StatusDot",
-            "kind": "component"
-          },
-          {
-            "name": "SecondaryButton",
-            "kind": "component"
-          },
-          {
-            "name": "PrimaryButton",
-            "kind": "component"
-          },
-          {
-            "name": "Row",
-            "kind": "component"
-          },
-          {
-            "name": "Pill",
+            "name": "SettingsPage",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/StorageReviewDetail.jsx",
-        "title": "StorageReviewDetail.jsx",
-        "subtitle": "frontend/src/components/StorageReviewDetail.jsx",
-        "summary": "Per-review detail page. Renders the full report view + lets operators",
-        "category": "frontend",
-        "api_calls": [
-          "/api/storage-reviews/{id}",
-          "/api/storage-reviews/{id}/analyze",
-          "/api/storage-reviews/{id}/findings/{id}"
-        ],
-        "members": [
-          {
-            "name": "StorageReviewDetail",
-            "kind": "component"
-          },
-          {
-            "name": "FindingCard",
-            "kind": "component"
-          },
-          {
-            "name": "ConfidenceTag",
-            "kind": "component"
-          },
-          {
-            "name": "EvidenceBlock",
-            "kind": "component"
-          },
-          {
-            "name": "SourceProposedBlocks",
-            "kind": "component"
-          },
-          {
-            "name": "ConfidenceLimitations",
-            "kind": "component"
-          },
-          {
-            "name": "StatusPill",
-            "kind": "component"
-          },
-          {
-            "name": "Caveats",
-            "kind": "component"
-          },
-          {
-            "name": "H2",
-            "kind": "component"
-          },
-          {
-            "name": "Err",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
-            "kind": "component"
-          },
-          {
-            "name": "Styles",
-            "kind": "component"
-          }
-        ]
-      },
-      {
-        "kind": "frontend",
-        "id": "frontend/src/components/StorageReviewNew.jsx",
-        "title": "StorageReviewNew.jsx",
-        "subtitle": "frontend/src/components/StorageReviewNew.jsx",
-        "summary": "New Storage Design Review wizard. Sister page to NetworkReviewNew \u2014",
-        "category": "frontend",
-        "api_calls": [
-          "/api/storage-reviews",
-          "/api/storage-reviews/{id}/analyze"
-        ],
-        "members": [
-          {
-            "name": "StorageReviewNew",
-            "kind": "component"
-          },
-          {
-            "name": "FileUpload",
-            "kind": "component"
-          },
-          {
-            "name": "Section",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
-            "kind": "component"
-          }
-        ]
-      },
-      {
-        "kind": "frontend",
-        "id": "frontend/src/components/VCenterSources.jsx",
-        "title": "VCenterSources.jsx",
-        "subtitle": "frontend/src/components/VCenterSources.jsx",
-        "summary": "Scale-aware vCenter source registry. List + create + edit + delete.",
+        "id": "frontend/src/pages/VCenterSourcesPage.jsx",
+        "title": "VCenterSourcesPage.jsx",
+        "subtitle": "frontend/src/pages/VCenterSourcesPage.jsx",
+        "summary": "vCenter sources \u2014 the first step in the workflow.",
         "category": "frontend",
         "api_calls": [
           "/api/sources/vcenters",
-          "/api/sources/vcenters/{id}",
-          "/api/sources/vcenters/{id}/categorize",
-          "/api/sources/vcenters/{id}/categorize/{id}",
-          "/api/sources/vcenters/{id}/rvtools/import",
-          "/api/sources/vcenters/{id}/rvtools/import/{id}",
-          "/api/sources/vcenters/{id}/rvtools/preview"
+          "/api/sources/vcenters/{id}"
         ],
         "members": [
           {
-            "name": "VCenterSources",
-            "kind": "component"
-          },
-          {
-            "name": "Row",
-            "kind": "component"
-          },
-          {
-            "name": "CreateModal",
-            "kind": "component"
-          },
-          {
-            "name": "UploadRVToolsModal",
-            "kind": "component"
-          },
-          {
-            "name": "DeltaSummaryGrid",
-            "kind": "component"
-          },
-          {
-            "name": "DoneSummary",
-            "kind": "component"
-          },
-          {
-            "name": "Empty",
-            "kind": "component"
-          },
-          {
-            "name": "Pill",
-            "kind": "component"
-          },
-          {
-            "name": "Field",
-            "kind": "component"
-          },
-          {
-            "name": "ErrorBlock",
-            "kind": "component"
-          },
-          {
-            "name": "Shell",
-            "kind": "component"
-          }
-        ]
-      },
-      {
-        "kind": "frontend",
-        "id": "frontend/src/components/VMDetail.jsx",
-        "title": "VMDetail.jsx",
-        "subtitle": "frontend/src/components/VMDetail.jsx",
-        "summary": "Per-VM detail page \u2014 everything operators want to see about a VM in one",
-        "category": "frontend",
-        "api_calls": [
-          "/api/audit?resource_type=vm&limit=50",
-          "/api/plans?limit=20",
-          "/api/vms/{id}",
-          "/api/vms/{id}/baseline/profile",
-          "/api/vms/{id}/capture",
-          "/api/vms/{id}/capture/{id}",
-          "/api/vms/{id}/snapshots",
-          "/api/vms/{id}/validate",
-          "/api/vms/{id}/validate/{id}",
-          "/api/vms/{id}/validation/latest"
-        ],
-        "members": [
-          {
-            "name": "classifyCaptureError",
+            "name": "toPayload",
             "kind": "helper"
           },
           {
-            "name": "VMDetailBody",
+            "name": "VCenterModal",
             "kind": "component"
           },
           {
-            "name": "Shell",
-            "kind": "component"
-          },
-          {
-            "name": "Section",
-            "kind": "component"
-          },
-          {
-            "name": "Field",
-            "kind": "component"
-          },
-          {
-            "name": "Stat",
-            "kind": "component"
-          },
-          {
-            "name": "Subtitle",
-            "kind": "component"
-          },
-          {
-            "name": "Banner",
-            "kind": "component"
-          },
-          {
-            "name": "Error",
-            "kind": "component"
-          },
-          {
-            "name": "ValidationProgress",
-            "kind": "component"
-          },
-          {
-            "name": "Finding",
-            "kind": "component"
-          },
-          {
-            "name": "Evidence",
-            "kind": "component"
-          },
-          {
-            "name": "OSBadge",
-            "kind": "component"
-          },
-          {
-            "name": "VMDetail",
+            "name": "VCenterSourcesPage",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/ValidationKeysSection.jsx",
-        "title": "ValidationKeysSection.jsx",
-        "subtitle": "frontend/src/components/ValidationKeysSection.jsx",
-        "summary": "Multi-key SSH catalog UI for the wave-scoped baseline + validation flow.",
+        "id": "frontend/src/pages/VMDetailPage.jsx",
+        "title": "VMDetailPage.jsx",
+        "subtitle": "frontend/src/pages/VMDetailPage.jsx",
+        "summary": "Single VM detail.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/audit?resource_type=vm&limit=50",
+          "/api/vms/{id}",
+          "/api/vms/{id}/baseline/profile",
+          "/api/vms/{id}/snapshots",
+          "/api/vms/{id}/validation/latest",
+          "/api/vms/{id}/{id}",
+          "/api/vms/{id}/{id}/{id}"
+        ],
+        "members": [
+          {
+            "name": "fmt",
+            "kind": "helper"
+          },
+          {
+            "name": "Rows",
+            "kind": "component"
+          },
+          {
+            "name": "VMDetailPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/ValidationsPage.jsx",
+        "title": "ValidationsPage.jsx",
+        "subtitle": "frontend/src/pages/ValidationsPage.jsx",
+        "summary": "Validations.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/vms/stats",
+          "/api/vms?{id}"
+        ],
+        "members": [
+          {
+            "name": "ValidationsPage",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/plan/WaveRunPanel.jsx",
+        "title": "WaveRunPanel.jsx",
+        "subtitle": "frontend/src/pages/plan/WaveRunPanel.jsx",
+        "summary": "Per-wave execution: dry-run preview, baseline, validate.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/plans/{id}/waves/{id}/preview",
+          "/api/plans/{id}/waves/{id}/{id}",
+          "/api/ssh-keys?status=active&limit=200",
+          "/api/{id}/{id}"
+        ],
+        "members": [
+          {
+            "name": "runCounts",
+            "kind": "helper"
+          },
+          {
+            "name": "RunProgress",
+            "kind": "component"
+          },
+          {
+            "name": "RunModal",
+            "kind": "component"
+          },
+          {
+            "name": "WaveRunPanel",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/settings/ValidationKeys.jsx",
+        "title": "ValidationKeys.jsx",
+        "subtitle": "frontend/src/pages/settings/ValidationKeys.jsx",
+        "summary": "Per-wave SSH key catalog.",
         "category": "frontend",
         "api_calls": [
           "/api/plans?limit=200",
@@ -9446,271 +9157,73 @@ const DATA = {
         ],
         "members": [
           {
-            "name": "ValidationKeysSection",
-            "kind": "component"
-          },
-          {
-            "name": "KeyRow",
-            "kind": "component"
-          },
-          {
-            "name": "PostCreatePanel",
-            "kind": "component"
-          },
-          {
             "name": "CreateKeyModal",
             "kind": "component"
           },
           {
-            "name": "FieldLabel",
-            "kind": "component"
-          },
-          {
-            "name": "btnPrimary",
-            "kind": "helper"
-          },
-          {
-            "name": "btnGhost",
-            "kind": "helper"
-          },
-          {
-            "name": "btnSecondaryStyle",
-            "kind": "helper"
-          }
-        ]
-      },
-      {
-        "kind": "frontend",
-        "id": "frontend/src/components/VirtValidate.jsx",
-        "title": "VirtValidate.jsx",
-        "subtitle": "frontend/src/components/VirtValidate.jsx",
-        "summary": "Design Review status + severity colors. Module-level so the dashboard",
-        "category": "frontend",
-        "api_calls": [
-          "/api/audit?{id}",
-          "/api/network-reviews",
-          "/api/plans/{id}/waves/{id}/mtv-yaml",
-          "/api/plans?limit=1",
-          "/api/snapshots/capture-all",
-          "/api/sources/vcenters",
-          "/api/storage-reviews",
-          "/api/templates/csv",
-          "/api/validations/run-all",
-          "/api/vms",
-          "/api/vms/bulk",
-          "/api/vms/stats",
-          "/api/vms/{id}",
-          "/api/vms/{id}/baseline/profile",
-          "/api/vms/{id}/capture",
-          "/api/vms/{id}/capture/{id}",
-          "/api/vms/{id}/validate",
-          "/api/vms/{id}/validate/{id}",
-          "/api/vms/{id}/validation/latest",
-          "/api/vms?limit=1000&sort_by=name"
-        ],
-        "members": [
-          {
-            "name": "NetworkReviewStatusPill",
-            "kind": "component"
-          },
-          {
-            "name": "mapVM",
-            "kind": "helper"
-          },
-          {
-            "name": "fetchJSON",
-            "kind": "helper"
-          },
-          {
-            "name": "FindingCard",
-            "kind": "component"
-          },
-          {
-            "name": "OSBadge",
-            "kind": "component"
-          },
-          {
-            "name": "WaveMTVDownload",
-            "kind": "component"
-          },
-          {
-            "name": "Modal",
-            "kind": "component"
-          },
-          {
-            "name": "CSVTemplateDownload",
-            "kind": "component"
-          },
-          {
-            "name": "CSVColumnDocs",
-            "kind": "component"
-          },
-          {
-            "name": "AccordionSection",
-            "kind": "component"
-          },
-          {
-            "name": "ManualTab",
-            "kind": "component"
-          },
-          {
-            "name": "BulkTab",
-            "kind": "component"
-          },
-          {
-            "name": "EnrollVMsModal",
-            "kind": "component"
-          },
-          {
-            "name": "DeleteVMModal",
-            "kind": "component"
-          },
-          {
-            "name": "BulkDeleteVMsModal",
-            "kind": "component"
-          },
-          {
-            "name": "VirtValidate",
-            "kind": "component"
-          },
-          {
-            "name": "RevertToVmwareModal",
-            "kind": "component"
-          },
-          {
-            "name": "MakeAvailableModal",
-            "kind": "component"
-          },
-          {
-            "name": "StatusBadge",
-            "kind": "component"
-          },
-          {
-            "name": "SeverityTag",
-            "kind": "component"
-          },
-          {
-            "name": "Metric",
-            "kind": "component"
-          },
-          {
-            "name": "Shimmer",
-            "kind": "component"
-          },
-          {
-            "name": "SkeletonRow",
-            "kind": "component"
-          },
-          {
-            "name": "TableSkeleton",
-            "kind": "component"
-          },
-          {
-            "name": "Spinner",
-            "kind": "component"
-          },
-          {
-            "name": "PrimaryButton",
-            "kind": "component"
-          },
-          {
-            "name": "SecondaryButton",
-            "kind": "component"
-          },
-          {
-            "name": "EmptyState",
-            "kind": "component"
-          },
-          {
-            "name": "ErrorState",
-            "kind": "component"
-          },
-          {
-            "name": "Notice",
-            "kind": "component"
-          },
-          {
-            "name": "FormField",
-            "kind": "component"
-          },
-          {
-            "name": "PreviewTable",
-            "kind": "component"
-          },
-          {
-            "name": "TabButton",
+            "name": "ValidationKeys",
             "kind": "component"
           }
         ]
       },
       {
         "kind": "frontend",
-        "id": "frontend/src/components/WaveRunsPanel.jsx",
-        "title": "WaveRunsPanel.jsx",
-        "subtitle": "frontend/src/components/WaveRunsPanel.jsx",
-        "summary": "Wave-scoped baseline + validation actions, embedded inside a WaveCard.",
+        "id": "frontend/src/test/pages.test.jsx",
+        "title": "pages.test.jsx",
+        "subtitle": "frontend/src/test/pages.test.jsx",
+        "summary": "Smoke tests: every page mounts against empty data, an API error, and a",
         "category": "frontend",
-        "api_calls": [
-          "/api/baseline-runs/{id}",
-          "/api/baseline-runs/{id}/retry-failed",
-          "/api/plans/{id}/waves/{id}/baseline",
-          "/api/plans/{id}/waves/{id}/preview",
-          "/api/plans/{id}/waves/{id}/revoke-validation-key",
-          "/api/plans/{id}/waves/{id}/validate",
-          "/api/ssh-keys?status=active&limit=200",
-          "/api/validation-runs/{id}"
-        ],
+        "api_calls": [],
         "members": [
           {
-            "name": "AuthLine",
-            "kind": "component"
-          },
-          {
-            "name": "WaveRunsPanel",
-            "kind": "component"
-          },
-          {
-            "name": "BaselineProgressCard",
-            "kind": "component"
-          },
-          {
-            "name": "ValidationProgressCard",
-            "kind": "component"
-          },
-          {
-            "name": "ValidationRow",
-            "kind": "component"
-          },
-          {
-            "name": "VerdictPill",
-            "kind": "component"
-          },
-          {
-            "name": "ProgressBar",
-            "kind": "component"
-          },
-          {
-            "name": "KeyPickerModal",
-            "kind": "component"
-          },
-          {
-            "name": "RevokeKeyModal",
-            "kind": "component"
-          },
-          {
-            "name": "ModalShell",
-            "kind": "component"
-          },
-          {
-            "name": "btnPrimary",
+            "name": "stubFetch",
             "kind": "helper"
           },
           {
-            "name": "btnGhost",
+            "name": "stubFetchError",
             "kind": "helper"
           },
           {
-            "name": "btnSecondaryStyle",
+            "name": "renderAt",
+            "kind": "helper"
+          },
+          {
+            "name": "expectMounted",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/theme.js",
+        "title": "theme.js",
+        "subtitle": "frontend/src/theme.js",
+        "summary": "Theme handling for the PatternFly 6 shell.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "prefersDark",
+            "kind": "helper"
+          },
+          {
+            "name": "getStoredTheme",
+            "kind": "helper"
+          },
+          {
+            "name": "resolveTheme",
+            "kind": "helper"
+          },
+          {
+            "name": "applyTheme",
+            "kind": "helper"
+          },
+          {
+            "name": "initTheme",
+            "kind": "helper"
+          },
+          {
+            "name": "subscribeToSystemTheme",
             "kind": "helper"
           }
         ]
@@ -9730,6 +9243,21 @@ const DATA = {
           },
           {
             "name": "throwForResponse",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/utils/asArray.js",
+        "title": "asArray.js",
+        "subtitle": "frontend/src/utils/asArray.js",
+        "summary": "Coerce an API result into an array.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "asArray",
             "kind": "helper"
           }
         ]
