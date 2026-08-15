@@ -12,12 +12,16 @@
 //    result. "mechanical_fallback_auth" and "mechanical_fallback_guardrail"
 //    are distinct from a plain fallback on purpose: they mean a key was
 //    rejected or a detector fired, not that the model had a bad day.
+//
+// Both use expandable ROWS rather than an expander inside a cell: the
+// payloads here are command output, prompts and JSON detections, and
+// wrapping those into a 20%-wide column makes them unreadable.
 
 import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Bullseye,
-  ExpandableSection,
+  Content,
   Label,
   PageSection,
   Pagination,
@@ -25,9 +29,16 @@ import {
   Tab,
   TabTitleText,
   Tabs,
-  Content,
 } from "@patternfly/react-core";
-import { Table, Tbody, Td, Th, Thead, Tr } from "@patternfly/react-table";
+import {
+  ExpandableRowContent,
+  Table,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
+} from "@patternfly/react-table";
 
 import PageFrame from "../common/PageFrame";
 import StatusLabel from "../common/StatusLabel";
@@ -55,6 +66,15 @@ function methodLabel(method) {
     </Label>
   );
 }
+
+const PRE_STYLE = {
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+  margin: 0,
+  padding: "var(--pf-t--global--spacer--sm)",
+  background: "var(--pf-t--global--background--color--secondary--default)",
+  borderRadius: "var(--pf-t--global--border--radius--small)",
+};
 
 function useLog(endpoint) {
   const [state, setState] = useState({ items: [], total: 0, loading: true, error: null });
@@ -103,222 +123,256 @@ function LogPagination({ log }) {
   );
 }
 
-function CommandsTab() {
-  const log = useLog("/api/command-audits");
+/**
+ * Shared frame for both logs.
+ *
+ * `columns` describes the header; `renderRow` returns the visible cells;
+ * `renderDetail` returns the full-width expanded content (or null when a
+ * row has nothing to expand).
+ */
+function LogTable({ log, label, columns, emptyState, renderRow, renderDetail }) {
+  const [expanded, setExpanded] = useState(() => new Set());
+  const colCount = columns.length + 1; // + the expand toggle column
 
-  const body = () => {
-    if (log.error) {
-      return <ErrorEmptyState error={log.error} onRetry={log.reload} isRetrying={log.loading} />;
-    }
-    if (log.loading && log.items.length === 0) {
-      return Array.from({ length: 6 }).map((_, i) => (
-        <Tr key={`sk-${i}`}>
-          <Td colSpan={6}>
-            <Skeleton screenreaderText="Loading commands" />
-          </Td>
-        </Tr>
-      ));
-    }
-    if (log.items.length === 0) {
-      return (
-        <Tr>
-          <Td colSpan={6}>
-            <Bullseye>
-              <GuidedEmptyState
-                title="No SSH commands recorded"
-                body="Every command VirtValidate runs on a managed host is recorded here, including any that the read-only guard blocked. The log fills in once you capture a baseline or run a validation."
-                primary={{ label: "Go to bulk operations", to: "/operations" }}
-              />
-            </Bullseye>
-          </Td>
-        </Tr>
-      );
-    }
+  const toggle = (id) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
-    return log.items.map((row) => (
-      <Tr key={row.id} isStriped={row.blocked}>
-        <Td dataLabel="Started">
-          {row?.started_at ? new Date(row.started_at).toLocaleString() : "—"}
-        </Td>
-        <Td dataLabel="Host">{row?.host ?? "—"}</Td>
-        <Td dataLabel="Command">
-          <code className="pf-v6-u-font-size-sm">{row?.command ?? "—"}</code>
-        </Td>
-        <Td dataLabel="Result">
-          {row?.blocked ? (
-            <Label isCompact color="red">
-              Blocked by guard
-            </Label>
-          ) : (
-            <StatusLabel
-              kind="status"
-              value={row?.exit_status === 0 ? "healthy" : "failed"}
-            >
-              {row?.exit_status === 0 ? "OK" : `exit ${row?.exit_status ?? "?"}`}
-            </StatusLabel>
-          )}
-        </Td>
-        <Td dataLabel="Duration">{row?.duration_ms != null ? `${row.duration_ms} ms` : "—"}</Td>
-        <Td dataLabel="Output">
-          {row?.stdout_truncated ? (
-            <ExpandableSection toggleText="View" isIndented>
-              <pre
-                className="pf-v6-u-font-size-sm"
-                style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}
-              >
-                {row.stdout_truncated}
-              </pre>
-              <Content component="small" className="pf-v6-u-color-200">
-                {row.stdout_byte_count} bytes captured
-                {row.stdout_sha256 ? ` · sha256 ${row.stdout_sha256.slice(0, 12)}…` : ""}
-              </Content>
-            </ExpandableSection>
-          ) : (
-            "—"
-          )}
-        </Td>
+  const message = (node) => (
+    <Tbody>
+      <Tr>
+        <Td colSpan={colCount}>{node}</Td>
       </Tr>
-    ));
-  };
+    </Tbody>
+  );
+
+  let content;
+  if (log.error) {
+    content = message(
+      <ErrorEmptyState error={log.error} onRetry={log.reload} isRetrying={log.loading} />,
+    );
+  } else if (log.loading && log.items.length === 0) {
+    content = (
+      <Tbody>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Tr key={`sk-${i}`}>
+            <Td colSpan={colCount}>
+              <Skeleton screenreaderText={`Loading ${label}`} />
+            </Td>
+          </Tr>
+        ))}
+      </Tbody>
+    );
+  } else if (log.items.length === 0) {
+    content = message(<Bullseye>{emptyState}</Bullseye>);
+  } else {
+    content = log.items.map((row, rowIndex) => {
+      const detail = renderDetail(row);
+      const isExpanded = expanded.has(row.id);
+      return (
+        <Tbody key={row.id} isExpanded={isExpanded}>
+          <Tr>
+            <Td
+              expand={
+                detail
+                  ? {
+                      rowIndex,
+                      isExpanded,
+                      onToggle: () => toggle(row.id),
+                      expandId: `log-${row.id}`,
+                    }
+                  : undefined
+              }
+            />
+            {renderRow(row)}
+          </Tr>
+          {detail && (
+            <Tr isExpanded={isExpanded}>
+              {/* Span every column so prompts, command output and JSON
+                  detections get the full table width. */}
+              <Td colSpan={colCount}>
+                <ExpandableRowContent>{detail}</ExpandableRowContent>
+              </Td>
+            </Tr>
+          )}
+        </Tbody>
+      );
+    });
+  }
 
   return (
     <>
       <LogPagination log={log} />
-      <Table aria-label="SSH command audit" variant="compact">
+      <Table aria-label={label} variant="compact" isExpandable>
         <Thead>
           <Tr>
-            <Th width={15}>Started</Th>
-            <Th width={15}>Host</Th>
-            <Th width={30}>Command</Th>
-            <Th width={15}>Result</Th>
-            <Th width={10}>Duration</Th>
-            <Th width={15}>Output</Th>
+            <Th screenReaderText="Row expansion" />
+            {columns.map((c) => (
+              <Th key={c.label} width={c.width}>
+                {c.label}
+              </Th>
+            ))}
           </Tr>
         </Thead>
-        <Tbody>{body()}</Tbody>
+        {content}
       </Table>
     </>
+  );
+}
+
+function CommandsTab() {
+  const log = useLog("/api/command-audits");
+
+  return (
+    <LogTable
+      log={log}
+      label="SSH command audit"
+      columns={[
+        { label: "Started", width: 20 },
+        { label: "Host", width: 20 },
+        { label: "Command", width: 35 },
+        { label: "Result", width: 15 },
+        { label: "Duration", width: 10 },
+      ]}
+      emptyState={
+        <GuidedEmptyState
+          title="No SSH commands recorded"
+          body="Every command VirtValidate runs on a managed host is recorded here, including any that the read-only guard blocked. The log fills in once you capture a baseline or run a validation."
+          primary={{ label: "Go to bulk operations", to: "/operations" }}
+        />
+      }
+      renderRow={(row) => (
+        <>
+          <Td dataLabel="Started">
+            {row?.started_at ? new Date(row.started_at).toLocaleString() : "—"}
+          </Td>
+          <Td dataLabel="Host">{row?.host ?? "—"}</Td>
+          <Td dataLabel="Command">
+            <code className="pf-v6-u-font-size-sm">{row?.command ?? "—"}</code>
+          </Td>
+          <Td dataLabel="Result">
+            {row?.blocked ? (
+              <Label isCompact color="red">
+                Blocked by guard
+              </Label>
+            ) : (
+              <StatusLabel kind="status" value={row?.exit_status === 0 ? "healthy" : "failed"}>
+                {row?.exit_status === 0 ? "OK" : `exit ${row?.exit_status ?? "?"}`}
+              </StatusLabel>
+            )}
+          </Td>
+          <Td dataLabel="Duration">
+            {row?.duration_ms != null ? `${row.duration_ms} ms` : "—"}
+          </Td>
+        </>
+      )}
+      renderDetail={(row) =>
+        row?.stdout_truncated ? (
+          <>
+            <pre className="pf-v6-u-font-size-sm" style={PRE_STYLE}>
+              {row.stdout_truncated}
+            </pre>
+            <Content component="small" className="pf-v6-u-color-200 pf-v6-u-mt-sm pf-v6-u-display-block">
+              {row.stdout_byte_count} bytes captured
+              {row.stdout_sha256 ? ` · sha256 ${row.stdout_sha256.slice(0, 16)}…` : ""}
+            </Content>
+          </>
+        ) : null
+      }
+    />
   );
 }
 
 function InferenceTab() {
   const log = useLog("/api/inference-logs");
 
-  const body = () => {
-    if (log.error) {
-      return <ErrorEmptyState error={log.error} onRetry={log.reload} isRetrying={log.loading} />;
-    }
-    if (log.loading && log.items.length === 0) {
-      return Array.from({ length: 6 }).map((_, i) => (
-        <Tr key={`sk-${i}`}>
-          <Td colSpan={6}>
-            <Skeleton screenreaderText="Loading inference log" />
-          </Td>
-        </Tr>
-      ));
-    }
-    if (log.items.length === 0) {
-      return (
-        <Tr>
-          <Td colSpan={6}>
-            <Bullseye>
-              <GuidedEmptyState
-                title="No LLM calls recorded"
-                body="Every inference call is captured here with its full input, output, and the method that produced the result — so you can tell an LLM answer from a mechanical fallback after the fact."
-                primary={{ label: "Generate a plan", to: "/plans/new" }}
-              />
-            </Bullseye>
-          </Td>
-        </Tr>
-      );
-    }
-
-    return log.items.map((row) => {
-      const detections = row?.detections ?? null;
-      const hasDetections = Boolean(detections) && Object.keys(detections).length > 0;
-      const isGuardrail = String(row?.method ?? "").includes("guardrail");
-      return (
-        <Tr key={row.id}>
+  return (
+    <LogTable
+      log={log}
+      label="LLM inference log"
+      columns={[
+        { label: "Time", width: 20 },
+        { label: "Operation", width: 20 },
+        { label: "Model", width: 25 },
+        { label: "Method", width: 20 },
+        { label: "Latency", width: 15 },
+      ]}
+      emptyState={
+        <GuidedEmptyState
+          title="No LLM calls recorded"
+          body="Every inference call is captured here with its full input, output, and the method that produced the result — so you can tell an LLM answer from a mechanical fallback after the fact."
+          primary={{ label: "Generate a plan", to: "/plans/new" }}
+        />
+      }
+      renderRow={(row) => (
+        <>
           <Td dataLabel="Time">
             {row?.created_at ? new Date(row.created_at).toLocaleString() : "—"}
           </Td>
           <Td dataLabel="Operation">{row?.operation ?? "—"}</Td>
           <Td dataLabel="Model">
-            {row?.model ?? "—"}
-            <Content component="small" className="pf-v6-u-display-block pf-v6-u-color-200">
-              {row?.backend_type ?? ""}
-            </Content>
+            {row?.model || "—"}
+            {row?.backend_type && (
+              <Content component="small" className="pf-v6-u-display-block pf-v6-u-color-200">
+                {row.backend_type}
+              </Content>
+            )}
           </Td>
           <Td dataLabel="Method">{methodLabel(row?.method)}</Td>
           <Td dataLabel="Latency">{row?.latency_ms != null ? `${row.latency_ms} ms` : "—"}</Td>
-          <Td dataLabel="Detail">
-            <ExpandableSection toggleText="View" isIndented>
-              {hasDetections ? (
-                <>
-                  <Content component="p" className="pf-v6-u-font-weight-bold">
-                    Guardrail detections
-                  </Content>
-                  <pre
-                    className="pf-v6-u-font-size-sm"
-                    style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
-                  >
-                    {JSON.stringify(detections, null, 2)}
-                  </pre>
-                </>
-              ) : (
-                isGuardrail && (
-                  // A guardrail fallback with no persisted detections
-                  // would otherwise expand to a bare "(empty)", which
-                  // reads as a UI bug rather than missing evidence.
-                  <Alert
-                    variant="warning"
-                    isInline
-                    isPlain
-                    title="No detection payload was recorded for this call"
-                    className="pf-v6-u-mb-md"
-                  >
-                    A detector blocked this call, but the structured
-                    detections were not persisted on the log row. The
-                    orchestrator response is the only evidence.
-                  </Alert>
-                )
-              )}
-              <Content component="p" className="pf-v6-u-font-weight-bold">
-                Output
-              </Content>
-              <pre
-                className="pf-v6-u-font-size-sm"
-                style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}
-              >
-                {row?.output_text ||
-                  (isGuardrail
-                    ? "No output — the call was blocked before the model answered."
-                    : "(empty)")}
-              </pre>
-            </ExpandableSection>
-          </Td>
-        </Tr>
-      );
-    });
-  };
+        </>
+      )}
+      renderDetail={(row) => {
+        const detections = row?.detections ?? null;
+        const hasDetections = Boolean(detections) && Object.keys(detections).length > 0;
+        const isGuardrail = String(row?.method ?? "").includes("guardrail");
 
-  return (
-    <>
-      <LogPagination log={log} />
-      <Table aria-label="LLM inference log" variant="compact">
-        <Thead>
-          <Tr>
-            <Th width={15}>Time</Th>
-            <Th width={20}>Operation</Th>
-            <Th width={15}>Model</Th>
-            <Th width={20}>Method</Th>
-            <Th width={10}>Latency</Th>
-            <Th width={20}>Detail</Th>
-          </Tr>
-        </Thead>
-        <Tbody>{body()}</Tbody>
-      </Table>
-    </>
+        return (
+          <>
+            {hasDetections ? (
+              <>
+                <Content component="p" className="pf-v6-u-font-weight-bold">
+                  Guardrail detections
+                </Content>
+                <pre className="pf-v6-u-font-size-sm pf-v6-u-mb-md" style={PRE_STYLE}>
+                  {JSON.stringify(detections, null, 2)}
+                </pre>
+              </>
+            ) : (
+              isGuardrail && (
+                // Without this a blocked call expands to a bare
+                // "(empty)", which reads as a broken UI rather than as
+                // missing evidence.
+                <Alert
+                  variant="warning"
+                  isInline
+                  isPlain
+                  title="No detection payload was recorded for this call"
+                  className="pf-v6-u-mb-md"
+                >
+                  A detector blocked this call, but the structured detections
+                  were not persisted on the log row.
+                </Alert>
+              )
+            )}
+
+            <Content component="p" className="pf-v6-u-font-weight-bold">
+              Output
+            </Content>
+            <pre className="pf-v6-u-font-size-sm" style={PRE_STYLE}>
+              {row?.output_text ||
+                (isGuardrail
+                  ? "No output — the call was blocked before the model answered."
+                  : "(empty)")}
+            </pre>
+          </>
+        );
+      }}
+    />
   );
 }
 
@@ -334,14 +388,10 @@ export default function AgentActivityPage() {
       <PageSection hasBodyWrapper={false}>
         <Tabs activeKey={tab} onSelect={(_e, key) => setTab(key)} aria-label="Activity logs">
           <Tab eventKey={0} title={<TabTitleText>SSH commands</TabTitleText>}>
-            <div className="pf-v6-u-mt-md">
-              <CommandsTab />
-            </div>
+            <div className="pf-v6-u-mt-md">{tab === 0 && <CommandsTab />}</div>
           </Tab>
           <Tab eventKey={1} title={<TabTitleText>LLM inference</TabTitleText>}>
-            <div className="pf-v6-u-mt-md">
-              <InferenceTab />
-            </div>
+            <div className="pf-v6-u-mt-md">{tab === 1 && <InferenceTab />}</div>
           </Tab>
         </Tabs>
       </PageSection>
