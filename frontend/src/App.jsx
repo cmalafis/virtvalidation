@@ -4,9 +4,11 @@ import AppLayout from "./layout/AppLayout";
 import AuditLogPage from "./pages/AuditLogPage";
 import DesignReviewsPage from "./pages/DesignReviewsPage";
 import InventoryPage from "./pages/InventoryPage";
+import OCPTargetsPage from "./pages/OCPTargetsPage";
 import OverviewPage from "./pages/OverviewPage";
 import PlansPage from "./pages/PlansPage";
 import ReportsPage from "./pages/ReportsPage";
+import VCenterSourcesPage from "./pages/VCenterSourcesPage";
 import ValidationsPage from "./pages/ValidationsPage";
 
 import AgentActivity from "./components/AgentActivity";
@@ -14,7 +16,6 @@ import BulkOperations from "./components/BulkOperations";
 import NetworkReviewDetail from "./components/NetworkReviewDetail";
 import NetworkReviewNew from "./components/NetworkReviewNew";
 import OCPTargetDetail from "./components/OCPTargetDetail";
-import OCPTargets from "./components/OCPTargets";
 import PlanView from "./components/PlanView";
 import PlanWizard from "./components/PlanWizard";
 import ReportView from "./components/ReportView";
@@ -23,7 +24,6 @@ import RVToolsUpload from "./components/RVToolsUpload";
 import Settings from "./components/Settings";
 import StorageReviewDetail from "./components/StorageReviewDetail";
 import StorageReviewNew from "./components/StorageReviewNew";
-import VCenterSources from "./components/VCenterSources";
 import VMDetail from "./components/VMDetail";
 
 export default function App() {
@@ -58,8 +58,8 @@ export default function App() {
           <Route path="reports/:type" element={<ReportView />} />
 
           {/* Configure */}
-          <Route path="sources/vcenters" element={<VCenterSources />} />
-          <Route path="sources/targets" element={<OCPTargets />} />
+          <Route path="sources/vcenters" element={<VCenterSourcesPage />} />
+          <Route path="sources/targets" element={<OCPTargetsPage />} />
           <Route path="sources/targets/:id" element={<OCPTargetDetail />} />
           <Route path="mappings" element={<ResourceMappings />} />
           <Route path="mappings/:id" element={<ResourceMappingDetail />} />
