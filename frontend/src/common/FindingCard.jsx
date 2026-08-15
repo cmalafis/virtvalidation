@@ -99,7 +99,10 @@ export default function FindingCard({ finding, onTriage, isBusy }) {
                 </Label>
               )}
               {category && <Label isCompact>{category}</Label>}
-              <StatusLabel kind="record" value={triage} />
+              {/* Only design-review findings carry a triage state.
+                  Validation findings don't, and an empty "—" label reads
+                  as missing data rather than not-applicable. */}
+              {triage && <StatusLabel kind="record" value={triage} />}
             </LabelGroup>
           </FlexItem>
         </Flex>

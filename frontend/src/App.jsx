@@ -13,6 +13,7 @@ import PlansPage from "./pages/PlansPage";
 import ReportsPage from "./pages/ReportsPage";
 import VCenterSourcesPage from "./pages/VCenterSourcesPage";
 import ValidationsPage from "./pages/ValidationsPage";
+import VMDetailPage from "./pages/VMDetailPage";
 
 import BulkOperations from "./components/BulkOperations";
 import OCPTargetDetail from "./components/OCPTargetDetail";
@@ -22,7 +23,6 @@ import ReportView from "./components/ReportView";
 import ResourceMappings, { ResourceMappingDetail } from "./components/ResourceMappings";
 import RVToolsUpload from "./components/RVToolsUpload";
 import Settings from "./components/Settings";
-import VMDetail from "./components/VMDetail";
 
 export default function App() {
   return (
@@ -36,7 +36,7 @@ export default function App() {
 
           {/* Discover */}
           <Route path="inventory" element={<InventoryPage />} />
-          <Route path="vms/:id" element={<VMDetail />} />
+          <Route path="vms/:id" element={<VMDetailPage />} />
           <Route path="design-reviews" element={<DesignReviewsPage />} />
           <Route path="rvtools/upload" element={<RVToolsUpload />} />
           <Route path="design-reviews/network/new" element={<DesignReviewNewPage kind="network" />} />
