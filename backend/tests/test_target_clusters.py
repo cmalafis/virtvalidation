@@ -930,3 +930,108 @@ def test_mtv_yaml_export_handles_dict_shape_namespace_strategy(client, db_sessio
     assert "prod-vms" in body
     assert "prod-vlan-100" in body
     assert "ocs-rbd" in body
+
+
+# ---------------------------------------------------------------------------
+# GET /api/mappings/{id}/source-signals
+#
+# Feeds the mapping editor's "pull from inventory" action. Mapping rows can
+# also be authored by hand (a site with its network list but no RVTools
+# export), so "no inventory" is a normal empty 200 rather than a 404.
+# ---------------------------------------------------------------------------
+def test_source_signals_aggregates_names_with_vm_counts(client):
+    vc = _create_vcenter(client)
+    target = _create_target(client)
+    _create_vm(
+        client,
+        "vm-a",
+        source_vcenter_id=vc["id"],
+        networks=["src-prod"],
+        datastores=["src-tier1"],
+    )
+    _create_vm(
+        client,
+        "vm-b",
+        source_vcenter_id=vc["id"],
+        networks=["src-prod", "src-dmz"],
+        datastores=["src-tier1"],
+    )
+    m = client.post(
+        "/api/mappings",
+        json={"name": "m", "vcenter_source_id": vc["id"], "ocp_target_id": target["id"]},
+    ).json()
+
+    r = client.get(f"/api/mappings/{m['id']}/source-signals")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {n["name"]: n["vm_count"] for n in body["networks"]} == {
+        "src-prod": 2,
+        "src-dmz": 1,
+    }
+    assert {d["name"]: d["vm_count"] for d in body["datastores"]} == {"src-tier1": 2}
+
+
+def test_source_signals_scoped_to_the_mappings_vcenter(client):
+    vc_a = _create_vcenter(client, name="vc-a")
+    vc_b = _create_vcenter(client, name="vc-b")
+    target = _create_target(client)
+    _create_vm(client, "vm-a", source_vcenter_id=vc_a["id"], networks=["only-in-a"])
+    _create_vm(client, "vm-b", source_vcenter_id=vc_b["id"], networks=["only-in-b"])
+    m = client.post(
+        "/api/mappings",
+        json={"name": "m-a", "vcenter_source_id": vc_a["id"], "ocp_target_id": target["id"]},
+    ).json()
+
+    body = client.get(f"/api/mappings/{m['id']}/source-signals").json()
+    assert [n["name"] for n in body["networks"]] == ["only-in-a"]
+
+
+def test_source_signals_returns_200_with_empty_lists_when_no_inventory(client):
+    vc = _create_vcenter(client)
+    target = _create_target(client)
+    m = client.post(
+        "/api/mappings",
+        json={"name": "m", "vcenter_source_id": vc["id"], "ocp_target_id": target["id"]},
+    ).json()
+
+    r = client.get(f"/api/mappings/{m['id']}/source-signals")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"networks": [], "datastores": []}
+
+
+def test_source_signals_404_for_unknown_mapping(client):
+    assert client.get("/api/mappings/99999/source-signals").status_code == 404
+
+
+def test_patch_persists_hand_authored_row_matching_no_vm(client):
+    """The no-inventory workflow: rows typed by hand persist verbatim,
+    and client-only bookkeeping fields never reach the DB."""
+    vc = _create_vcenter(client)
+    target = _create_target(client)
+    _discover_target_manually(client, target["id"])
+    m = client.post(
+        "/api/mappings",
+        json={"name": "m", "vcenter_source_id": vc["id"], "ocp_target_id": target["id"]},
+    ).json()
+
+    r = client.patch(
+        f"/api/mappings/{m['id']}",
+        json={
+            "network_mappings": [
+                {
+                    "source_network": "never-seen-in-inventory",
+                    "target_network_name": "prod-vlan-100",
+                    "_key": 7,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    rows = r.json()["network_mappings"]
+    assert len(rows) == 1
+    assert rows[0]["source_network"] == "never-seen-in-inventory"
+    assert rows[0]["target_network_name"] == "prod-vlan-100"
+    assert "_key" not in rows[0]
+
+    reread = client.get(f"/api/mappings/{m['id']}").json()
+    assert reread["network_mappings"][0]["source_network"] == "never-seen-in-inventory"

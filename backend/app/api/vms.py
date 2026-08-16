@@ -80,6 +80,38 @@ def _get_vm_or_404(db: Session, vm_id: int) -> VM:
     return vm
 
 
+def _apply_environment_detection(vm: VM) -> None:
+    """Fill ``vm.environment`` from the detection cascade when the caller
+    didn't supply one, and record provenance either way.
+
+    The cascade reads name / folder / cluster / custom_attributes; tiers
+    2-4 only resolve once those fields are populated (RVTools import, or
+    an operator filling them on the manual-add form).
+    ``environment_source`` records provenance so a later redetect-all job
+    skips operator-supplied labels.
+
+    Shared by the single-create and bulk-create paths so a manually added
+    VM partitions the same way an imported one does — ``environment`` is
+    a plan partition key in ``preclassifier.classify``.
+    """
+    from app.core.environment import Environment, detect_environment
+
+    if not vm.environment:
+        result = detect_environment(
+            name=vm.name,
+            folder_path=vm.vsphere_folder,
+            cluster=vm.vsphere_cluster,
+            custom_attributes=vm.custom_attributes,
+        )
+        if result.environment != Environment.UNKNOWN:
+            vm.environment = result.environment.value
+            vm.environment_source = "auto_detected"
+    else:
+        # Caller provided an explicit value — preserve operator intent +
+        # mark source so redetect leaves it alone.
+        vm.environment_source = "user_set"
+
+
 def _vm_with_resolution(vm: VM, resolved: ResolvedTarget | None) -> dict:
     """Render a VM ORM row + its :class:`ResolvedTarget` as a flat dict
     that ``VMRead`` validates without extra schema gymnastics. The
@@ -129,6 +161,7 @@ def _decorate_with_resolution(vms: list[VM], db: Session) -> list[dict]:
 @router.post("", response_model=VMRead, status_code=status.HTTP_201_CREATED)
 def create_vm(payload: VMCreate, db: Session = Depends(get_db)) -> VM:
     vm = VM(**payload.model_dump())
+    _apply_environment_detection(vm)
     db.add(vm)
     try:
         db.commit()
@@ -149,8 +182,6 @@ def create_vms_bulk(payload: BulkVMCreate, db: Session = Depends(get_db)) -> dic
     IntegrityErrors. Returns the created rows and a list of names that were
     skipped (with reason). Within-batch duplicates are also caught.
     """
-    from app.core.environment import Environment, detect_environment
-
     existing_names: set[str] = set(db.scalars(select(VM.name)).all())
     seen_in_batch: set[str] = set()
     created: list[VM] = []
@@ -167,26 +198,7 @@ def create_vms_bulk(payload: BulkVMCreate, db: Session = Depends(get_db)) -> dic
         seen_in_batch.add(name)
         fields = entry.model_dump()
         vm = VM(**fields)
-        # Auto-detect environment when the caller didn't provide one.
-        # The detection cascade reads name / folder / cluster /
-        # custom_attributes; tiers 2-4 only resolve once those
-        # fields are populated by the RVTools import flow.
-        # ``environment_source`` records provenance so a later
-        # redetect-all job can skip operator-supplied labels.
-        if not vm.environment:
-            result = detect_environment(
-                name=vm.name,
-                folder_path=vm.vsphere_folder,
-                cluster=vm.vsphere_cluster,
-                custom_attributes=vm.custom_attributes,
-            )
-            if result.environment != Environment.UNKNOWN:
-                vm.environment = result.environment.value
-                vm.environment_source = "auto_detected"
-        else:
-            # Caller provided an explicit value — preserve operator
-            # intent + mark source so redetect leaves it alone.
-            vm.environment_source = "user_set"
+        _apply_environment_detection(vm)
         db.add(vm)
         created.append(vm)
 

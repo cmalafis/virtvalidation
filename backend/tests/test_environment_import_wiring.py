@@ -181,3 +181,81 @@ def test_bulk_import_cluster_loses_to_folder_in_cascade(client):
     assert r.status_code == 200
     body = r.json()["created"][0]
     assert body["environment"] == "development"
+
+
+# ---------------------------------------------------------------------------
+# Single-VM create (POST /api/vms) — the manual-add path.
+#
+# create_vm skipped the detection cascade that bulk ran, so a hand-entered
+# VM landed with environment=None. That is a plan partition key
+# (preclassifier.classify partitions on the normalized environment), so a
+# manually added VM partitioned differently from an identical imported one.
+# Both paths now share _apply_environment_detection.
+# ---------------------------------------------------------------------------
+def test_single_create_auto_detects_from_folder(client):
+    r = client.post(
+        "/api/vms",
+        json={
+            "name": "ehr-web-02",
+            "source_hostname": "ehr-web-02.local",
+            "vsphere_folder": "/prod/ehr-pro",
+        },
+    )
+    assert r.status_code == 201
+    assert r.json()["environment"] == "production"
+
+
+def test_single_create_auto_detects_from_cluster(client):
+    r = client.post(
+        "/api/vms",
+        json={
+            "name": "cluster-detect-01",
+            "source_hostname": "cluster-detect-01.local",
+            "vsphere_cluster": "PROD-Cluster-A",
+        },
+    )
+    assert r.status_code == 201
+    assert r.json()["environment"] == "production"
+
+
+def test_single_create_explicit_environment_marks_user_set(client, db_session):
+    from app.models.vm import VM
+
+    r = client.post(
+        "/api/vms",
+        json={
+            "name": "alpha-single",
+            "source_hostname": "alpha-single.local",
+            "environment": "production",
+        },
+    )
+    assert r.status_code == 201
+    vm = db_session.get(VM, r.json()["id"])
+    assert vm.environment == "production"
+    assert vm.environment_source == "user_set"
+
+
+def test_single_create_auto_detected_marks_source(client, db_session):
+    from app.models.vm import VM
+
+    r = client.post(
+        "/api/vms",
+        json={"name": "prod-web-02", "source_hostname": "prod-web-02.local"},
+    )
+    assert r.status_code == 201
+    vm = db_session.get(VM, r.json()["id"])
+    assert vm.environment == "production"
+    assert vm.environment_source == "auto_detected"
+
+
+def test_single_create_unknown_remains_unset(client, db_session):
+    from app.models.vm import VM
+
+    r = client.post(
+        "/api/vms",
+        json={"name": "zzz-nondescript", "source_hostname": "zzz-nondescript.local"},
+    )
+    assert r.status_code == 201
+    vm = db_session.get(VM, r.json()["id"])
+    assert not vm.environment
+    assert vm.environment_source == "unset"

@@ -96,7 +96,13 @@ def _vm_to_resolver_payload(vm: VM) -> dict:
     return {
         "environment": (vm.environment or "").strip(),
         "application_hint": (vm.application_hint or "").strip(),
-        "vcenter_folder": (getattr(vm, "vcenter_folder", "") or "").strip(),
+        # The resolver's payload key is "vcenter_folder" (see
+        # MappingResolver._resolve_criteria_rows); the column backing it
+        # is VM.vsphere_folder. Reading vm.vcenter_folder here silently
+        # yielded "" via getattr's default, so a criteria="vcenter_folder"
+        # namespace rule could never match and Stage 0 reported a
+        # spurious namespace gap.
+        "vcenter_folder": (vm.vsphere_folder or "").strip(),
     }
 
 

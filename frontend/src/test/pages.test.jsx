@@ -95,10 +95,18 @@ const POPULATED = [
   [/\/api\/sources\/targets\/\d+/, { id: 1, name: "ocp", api_endpoint: "https://x", status: "active" }],
   [/\/api\/sources\/targets/, [{ id: 1, name: "ocp", api_endpoint: "https://x", status: "active", classification_level: "unclassified" }]],
   [/\/api\/sources\/vcenters/, [{ id: 1, name: "vc", hostname: "vc.local", status: "active", classification_level: "unclassified", vm_count: 3 }]],
+  // Must precede the /api/mappings/\d+ entry below — that pattern is a
+  // substring match and would otherwise swallow this URL, handing the page
+  // a mapping object where it expects {networks, datastores}.
+  [/\/api\/mappings\/\d+\/source-signals/, {
+    networks: [{ name: "n", vm_count: 2 }],
+    datastores: [{ name: "d", vm_count: 1 }],
+  }],
   [/\/api\/mappings\/\d+/, {
     id: 1, name: "M", vcenter_source_id: 1, ocp_target_id: 1, status: "draft",
     network_mappings: [{ source_network: "n", confidence: "high", rationale: "r" }],
     storage_mappings: [{ source_datastore: "d" }],
+    namespace_mappings: { strategy: "per_environment", per_env_namespaces: { production: "prod-vms" } },
   }],
   [/\/api\/mappings/, [{ id: 1, name: "M", vcenter_source_id: 1, ocp_target_id: 1, status: "draft", network_mappings: [], storage_mappings: [] }]],
   [/\/api\/health\/full/, {
