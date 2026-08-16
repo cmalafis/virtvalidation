@@ -169,6 +169,31 @@ class MappingSuggestionResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Source signals (distinct source resources in the mapping's vCenter scope)
+# ---------------------------------------------------------------------------
+class SourceSignal(BaseModel):
+    """One distinct source network or datastore seen in inventory, with
+    the number of VMs referencing it."""
+
+    name: str
+    vm_count: int = 0
+
+
+class MappingSourceSignals(BaseModel):
+    """Returned by GET /api/mappings/{id}/source-signals — the distinct
+    source networks/datastores the mapping's vCenter scope references.
+
+    Drives the mapping editor's "pull from inventory" action. Returns
+    empty lists (200, never 404) when no inventory has been imported —
+    mapping rows can also be authored by hand, so an empty result is a
+    normal state rather than an error.
+    """
+
+    networks: list[SourceSignal] = Field(default_factory=list)
+    datastores: list[SourceSignal] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Pre-flight check
 # ---------------------------------------------------------------------------
 class PreflightCheckResponse(BaseModel):

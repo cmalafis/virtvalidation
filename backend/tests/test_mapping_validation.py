@@ -239,3 +239,33 @@ class TestStage0Validation:
         )
         result = validate_plan_inputs([vm], [m])
         assert result.ok, result.render()
+
+    def test_vcenter_folder_criteria_resolves_from_vsphere_folder(self):
+        """A criteria="vcenter_folder" namespace rule must match against
+        the VM's folder path.
+
+        Regression: the resolver payload read ``vm.vcenter_folder``, which
+        is not a column on VM (it is ``vsphere_folder``). ``getattr``'s
+        default silently produced "", so the rule could never match and
+        Stage 0 reported a spurious namespace gap for every folder-based
+        mapping.
+        """
+        vm = _vm("app-01", networks=("vlan-100",), datastores=("tier1",))
+        vm.vsphere_folder = "/DC1/vm/Payments"
+        m = ResourceMapping(
+            name="m-folder",
+            vcenter_source_id=1,
+            ocp_target_id=1,
+            network_mappings=[{"source_network": "vlan-100", "target_network_name": "nad"}],
+            storage_mappings=[{"source_datastore": "tier1", "target_storage_class": "sc-a"}],
+            namespace_mappings=[
+                {
+                    "criteria": "vcenter_folder",
+                    "criteria_value": "/DC1/vm/Payments",
+                    "target_namespace": "payments-vms",
+                }
+            ],
+        )
+        result = validate_plan_inputs([vm], [m])
+        assert result.ok, result.render()
+        assert not [g for g in result.gaps if g.kind == "namespace"]

@@ -800,6 +800,7 @@ Depends on: `app.core.audit`, `app.core.db`, `app.core.mapping_suggester`, `app.
 | `GET` | `/api/mappings/{mapping_id}` | `get_mapping(mapping_id, db)` | — |
 | `PATCH` | `/api/mappings/{mapping_id}` | `update_mapping(request, mapping_id, payload, db)` | — |
 | `DELETE` | `/api/mappings/{mapping_id}` | `delete_mapping(request, mapping_id, db)` | Delete a resource mapping. |
+| `GET` | `/api/mappings/{mapping_id}/source-signals` | `mapping_source_signals(mapping_id, db)` | The distinct source networks/datastores this mapping&#x27;s vCenter |
 | `POST` | `/api/mappings/{mapping_id}/suggest-network` | `suggest_networks(mapping_id, db)` | Ask the LLM to match source vSphere networks onto the operator&#x27;s |
 | `POST` | `/api/mappings/{mapping_id}/suggest-storage` | `suggest_storage(mapping_id, db)` | — |
 | `POST` | `/api/mappings/{mapping_id}/preflight` | `preflight(mapping_id, db)` | Validate a mapping is ready to drive plan generation. |
@@ -2352,6 +2353,12 @@ Depends on: `app.models.target`, `app.models.vcenter`
   - Fields: `id`, `name`, `vcenter_source_id`, `ocp_target_id`, `network_mappings`, `storage_mappings`, `namespace_mappings`, `status`, `last_used_at`, `created_at`, `updated_at`
 - **`MappingSuggestionResponse`** (Pydantic schema)
   - Fields: `suggestions`, `rationale_summary`
+- **`SourceSignal`** (Pydantic schema)
+  - One distinct source network or datastore seen in inventory, with
+  - Fields: `name`, `vm_count`
+- **`MappingSourceSignals`** (Pydantic schema)
+  - Returned by GET /api/mappings/{id}/source-signals — the distinct
+  - Fields: `networks`, `datastores`
 - **`PreflightCheckResponse`** (Pydantic schema)
   - Returned by POST /api/mappings/{id}/preflight. Reports every
   - Fields: `ok`, `target_status`, `unmapped_networks`, `unmapped_datastores`, `missing_storage_classes_on_target`, `missing_networks_on_target`, `missing_namespaces_on_target`, `warnings`
@@ -2764,6 +2771,7 @@ Exports / inner components:
 API calls:
 - `/api/mappings/{id}`
 - `/api/mappings/{id}/preflight`
+- `/api/mappings/{id}/source-signals`
 - `/api/mappings/{id}/{id}`
 - `/api/ocp-targets/{id}/networks?limit=500`
 - `/api/ocp-targets/{id}/storage-classes?limit=500`
@@ -2849,6 +2857,17 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/pages/inventory/AddVMModal.jsx</code></strong> — <em>Frontend component</em> · Add a single VM by hand.</summary>
+
+API calls:
+- `/api/sources/vcenters`
+- `/api/vms`
+
+Exports / inner components:
+- **`AddVMModal`** (component)
+
+</details>
+
 <details><summary><strong><code>frontend/src/pages/plan/WaveRunPanel.jsx</code></strong> — <em>Frontend component</em> · Per-wave execution: dry-run preview, baseline, validate.</summary>
 
 API calls:
@@ -2876,6 +2895,13 @@ API calls:
 Exports / inner components:
 - **`CreateKeyModal`** (component)
 - **`ValidationKeys`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/test/mappingAuthoring.test.jsx</code></strong> — <em>Frontend component</em> · Behavior tests for authoring mapping rows without inventory.</summary>
+
+Exports / inner components:
+- **`stub`** (helper)
 
 </details>
 

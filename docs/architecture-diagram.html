@@ -2913,6 +2913,12 @@ const DATA = {
             "summary": "Delete a resource mapping."
           },
           {
+            "method": "GET",
+            "path": "/api/mappings/{mapping_id}/source-signals",
+            "handler": "mapping_source_signals",
+            "summary": "The distinct source networks/datastores this mapping's vCenter"
+          },
+          {
             "method": "POST",
             "path": "/api/mappings/{mapping_id}/suggest-network",
             "handler": "suggest_networks",
@@ -7881,6 +7887,28 @@ const DATA = {
             "summary": ""
           },
           {
+            "name": "SourceSignal",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "vm_count"
+            ],
+            "methods": [],
+            "summary": "One distinct source network or datastore seen in inventory, with"
+          },
+          {
+            "name": "MappingSourceSignals",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "networks",
+              "datastores"
+            ],
+            "methods": [],
+            "summary": "Returned by GET /api/mappings/{id}/source-signals \u2014 the distinct"
+          },
+          {
             "name": "PreflightCheckResponse",
             "kind": "schema",
             "table": "",
@@ -9030,6 +9058,7 @@ const DATA = {
         "api_calls": [
           "/api/mappings/{id}",
           "/api/mappings/{id}/preflight",
+          "/api/mappings/{id}/source-signals",
           "/api/mappings/{id}/{id}",
           "/api/ocp-targets/{id}/networks?limit=500",
           "/api/ocp-targets/{id}/storage-classes?limit=500"
@@ -9181,6 +9210,24 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/pages/inventory/AddVMModal.jsx",
+        "title": "AddVMModal.jsx",
+        "subtitle": "frontend/src/pages/inventory/AddVMModal.jsx",
+        "summary": "Add a single VM by hand.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/sources/vcenters",
+          "/api/vms"
+        ],
+        "members": [
+          {
+            "name": "AddVMModal",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/pages/plan/WaveRunPanel.jsx",
         "title": "WaveRunPanel.jsx",
         "subtitle": "frontend/src/pages/plan/WaveRunPanel.jsx",
@@ -9232,6 +9279,21 @@ const DATA = {
           {
             "name": "ValidationKeys",
             "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/test/mappingAuthoring.test.jsx",
+        "title": "mappingAuthoring.test.jsx",
+        "subtitle": "frontend/src/test/mappingAuthoring.test.jsx",
+        "summary": "Behavior tests for authoring mapping rows without inventory.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "stub",
+            "kind": "helper"
           }
         ]
       },

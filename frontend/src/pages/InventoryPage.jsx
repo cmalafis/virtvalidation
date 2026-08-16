@@ -44,6 +44,7 @@ import {
 } from "../common/EmptyStates";
 import { fetchJSON } from "../utils/fetchJSON";
 import { asArray } from "../utils/asArray";
+import AddVMModal from "./inventory/AddVMModal";
 
 // Explicit widths: without them the sort carets steal enough room from
 // the flexible columns that "Environment" renders as "Enviro...".
@@ -165,6 +166,7 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
+  const [addOpen, setAddOpen] = useState(false);
 
   // Local mirror of the search box so typing feels instant while the
   // committed value (which drives fetches) is debounced.
@@ -227,19 +229,25 @@ export default function InventoryPage() {
     load();
   }, [load]);
 
+  const loadFacets = useCallback(
+    (isCancelled = () => false) =>
+      fetchJSON(`/api/vms/facets?${facetKey}`)
+        .then((data) => {
+          if (!isCancelled()) setFacets(data ?? {});
+        })
+        // Facets are decoration; losing them shouldn't surface an error
+        // over a table that loaded fine.
+        .catch(() => {}),
+    [facetKey],
+  );
+
   useEffect(() => {
     let cancelled = false;
-    fetchJSON(`/api/vms/facets?${facetKey}`)
-      .then((data) => {
-        if (!cancelled) setFacets(data ?? {});
-      })
-      // Facets are decoration; losing them shouldn't surface an error
-      // over a table that loaded fine.
-      .catch(() => {});
+    loadFacets(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [facetKey]);
+  }, [loadFacets]);
 
   const activeFilterCount = FILTERS.reduce(
     (n, f) => n + (state.filters[f.key]?.length ?? 0),
@@ -354,6 +362,11 @@ export default function InventoryPage() {
             </Button>
           </ToolbarItem>
           <ToolbarItem>
+            <Button variant="secondary" onClick={() => setAddOpen(true)}>
+              Add VM
+            </Button>
+          </ToolbarItem>
+          <ToolbarItem>
             <Button variant="primary" component={(p) => <Link to="/rvtools/upload" {...p} />}>
               Import VMs
             </Button>
@@ -396,7 +409,7 @@ export default function InventoryPage() {
                   title={NO_VMS.title}
                   body={NO_VMS.body}
                   primary={{ label: "Import VMs", to: "/rvtools/upload" }}
-                  secondary={{ label: "Register a vCenter first", to: "/sources/vcenters" }}
+                  secondary={{ label: "Add a VM manually", onClick: () => setAddOpen(true) }}
                 />
               )}
             </Bullseye>
@@ -476,6 +489,17 @@ export default function InventoryPage() {
         <Divider />
         {pagination("bottom")}
       </PageSection>
+      <AddVMModal
+        isOpen={addOpen}
+        onClose={() => setAddOpen(false)}
+        onCreated={() => {
+          // Re-read rather than splicing the new row in: the listing is
+          // sorted + filtered server-side, so the VM may not belong on
+          // this page at all.
+          load();
+          loadFacets();
+        }}
+      />
     </PageFrame>
   );
 }

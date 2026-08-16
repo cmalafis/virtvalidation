@@ -147,7 +147,7 @@ export const NO_MAPPINGS = {
 
 export const NO_VMS = {
   title: "No virtual machines in inventory",
-  body: "Import your estate from an RVTools export, a CSV, or add VMs manually. Inventory is what everything else — baselines, plans, and validation — operates on.",
+  body: "Import your estate from an RVTools export, or add a VM by hand. Inventory is what everything else — baselines, plans, and validation — operates on.",
 };
 
 export const NO_PLANS = {

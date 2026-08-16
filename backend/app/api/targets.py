@@ -40,6 +40,7 @@ from app.models.target_storage_class import TargetStorageClass
 from app.models.vcenter import VCenterSource
 from app.models.vm import VM
 from app.schemas.target import (
+    MappingSourceSignals,
     MappingSuggestionResponse,
     OCPTargetCreate,
     OCPTargetRead,
@@ -523,6 +524,22 @@ def _vcenter_source_signals(db: Session, mapping: ResourceMapping) -> tuple[list
         for name, count in sorted(ds_counts.items(), key=lambda x: -x[1])
     ]
     return networks, datastores
+
+
+@mappings_router.get("/{mapping_id}/source-signals", response_model=MappingSourceSignals)
+def mapping_source_signals(mapping_id: int, db: Session = Depends(get_db)) -> dict:
+    """The distinct source networks/datastores this mapping's vCenter
+    scope references, with VM counts.
+
+    The mapping editor uses this to offer "pull from inventory" as a
+    starting point for rows. Rows can equally be authored by hand — a
+    site that has its network/datastore list but hasn't imported an
+    RVTools export still needs to build a mapping — so an empty result
+    is a normal 200, not a 404.
+    """
+    mapping = _get_mapping_or_404(db, mapping_id)
+    networks, datastores = _vcenter_source_signals(db, mapping)
+    return {"networks": networks, "datastores": datastores}
 
 
 @mappings_router.post("/{mapping_id}/suggest-network", response_model=MappingSuggestionResponse)

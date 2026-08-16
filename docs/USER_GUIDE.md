@@ -35,7 +35,9 @@ the MTV (Forklift) YAML, but it does not perform the migration itself.
   validate, on the VM's SSH port. VirtValidate authenticates with keys it
   generates and holds; the private key never leaves the appliance.
 - **An inventory export** — an RVTools `vInfo` sheet is the usual source.
-  CSV and manual entry also work.
+  Single VMs can also be entered by hand from **Virtual machines → Add
+  VM**, which is the quickest way to try the resource-mapping features
+  without producing an export first.
 - **Knowledge of your target cluster** — its networks, storage classes,
   and namespaces. VirtValidate does **not** connect to the OpenShift
   cluster and stores no cluster credentials. You describe the cluster;
@@ -162,7 +164,21 @@ See [ENVIRONMENT_LABELS.md](ENVIRONMENT_LABELS.md).
 **Configure → Resource Mappings → Create mapping.**
 
 A mapping translates one vCenter's networks and datastores into one
-cluster's NADs and StorageClasses. Open it and fill in the rows.
+cluster's NADs and StorageClasses. Declare the cluster's networks and
+storage classes first (**Configure → OpenShift Targets →** the cluster);
+those are what the target dropdowns offer.
+
+Then open the mapping and build its rows two ways:
+
+- **Pull from inventory** seeds a row for every source network and
+  datastore the VMs imported for that vCenter reference.
+- **Add row** takes a source name you type. Use this when you have the
+  network and datastore list but no inventory loaded — the source side is
+  free text and never has to match an imported VM.
+
+The **Namespaces** tab decides where VMs land: a single namespace for
+everything, one per environment, or one per application. Without it, VMs
+fall back to the cluster default and preflight warns about it.
 
 **Suggest with AI** proposes matches with a confidence and a rationale for
 each row. These populate the form only — **nothing is saved until you
