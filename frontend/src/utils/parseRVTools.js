@@ -115,7 +115,7 @@ export function rowToPayload(rawRow) {
     target_network_attachment: cap(get("target_network_attachment"), "target_network_attachment"),
     // RVTools per-VM vCenter — drives the auto-link flow. Normalized
     // to lowercase + trailing-dot-stripped so equivalent values
-    // ("vc-east-01.dha.mil." vs "VC-EAST-01.DHA.MIL") cluster
+    // ("vc-east-01.corp.local." vs "VC-EAST-01.CORP.LOCAL") cluster
     // together when grouping.
     source_vcenter_hostname: normalizeHostname(vcenterHost),
     // Placement metadata feeding the environment detection cascade.

@@ -245,7 +245,7 @@ operator-supplied `application_hint` carries that signal.
 
 ### Example: rich preclassification output
 
-For the DHA fleet (see `docs/TEST_DATA.md`), the preclassifier
+For the reference fleet (see `docs/TEST_DATA.md`), the preclassifier
 produces output like:
 
 ```json

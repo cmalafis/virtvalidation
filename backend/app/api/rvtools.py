@@ -10,8 +10,8 @@ Request shape:
 {
   "vms": [ ... parsed RVTools rows, each with optional source_vcenter_hostname ... ],
   "vcenter_mapping": {
-    "vc-east-01.dha.mil": 1,
-    "vc-east-02.dha.mil": 2
+    "vc-east-01.corp.local": 1,
+    "vc-east-02.corp.local": 2
   },
   "create_missing": false
 }
@@ -120,8 +120,8 @@ def upload_multi_vcenter(
     actor = request.headers.get("x-actor", "user")
     started = time.monotonic()
 
-    # Normalize the mapping keys so the parser's "vc-east-01.dha.mil"
-    # and the operator's "VC-East-01.DHA.MIL." cluster equivalently.
+    # Normalize the mapping keys so the parser's "vc-east-01.corp.local"
+    # and the operator's "VC-East-01.CORP.LOCAL." cluster equivalently.
     normalized_mapping: dict[str, int] = {}
     for raw_host, vc_id in payload.vcenter_mapping.items():
         key = _normalize_hostname(raw_host)

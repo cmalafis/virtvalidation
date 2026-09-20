@@ -30,7 +30,7 @@ spec:
               name: http
           env:
             - name: UPSTREAM_BASE_URL
-              value: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
+              value: https://maas.example.com/v1
             - name: UPSTREAM_API_KEY
               valueFrom:
                 secretKeyRef:

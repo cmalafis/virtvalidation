@@ -465,7 +465,7 @@ def _ehr_dr() -> list[FleetVMSpec]:
 # ---------------------------------------------------------------------------
 # Public entry points
 # ---------------------------------------------------------------------------
-def dha_fleet_specs() -> list[FleetVMSpec]:
+def sample_fleet_specs() -> list[FleetVMSpec]:
     """Return the 57-VM fleet as plain specs (no SQLAlchemy session)."""
     out: list[FleetVMSpec] = []
     out.extend(_ehrpro())
@@ -479,14 +479,14 @@ def dha_fleet_specs() -> list[FleetVMSpec]:
     return out
 
 
-def build_dha_fleet_vms() -> list[VM]:
+def build_sample_fleet_vms() -> list[VM]:
     """Materialize the fleet as detached VM model instances with ids.
 
     Detached (no session add) so unit tests using SQLAlchemy fixtures
     don't have to commit them. Database integration tests should
-    instead call :func:`persist_dha_fleet` against the test session.
+    instead call :func:`persist_sample_fleet` against the test session.
     """
-    specs = dha_fleet_specs()
+    specs = sample_fleet_specs()
     vms: list[VM] = []
     for i, spec in enumerate(specs, start=1):
         vm = VM(
@@ -506,9 +506,9 @@ def build_dha_fleet_vms() -> list[VM]:
     return vms
 
 
-def persist_dha_fleet(db_session) -> list[VM]:
+def persist_sample_fleet(db_session) -> list[VM]:
     """Insert the fleet into a test DB session and return the rows."""
-    specs = dha_fleet_specs()
+    specs = sample_fleet_specs()
     vms: list[VM] = []
     for spec in specs:
         vm = VM(

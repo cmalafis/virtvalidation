@@ -165,7 +165,7 @@ class Settings(BaseSettings):
     # External authenticated inference endpoint — LiteLLM proxy,
     # OpenRouter, hosted vLLM behind a reverse-proxy, etc. The base URL
     # follows OpenAI client convention and INCLUDES the ``/v1`` prefix
-    # (e.g. ``https://litellm-prod.apps.maas.redhatworkshops.io/v1``);
+    # (e.g. ``https://litellm.example.com/v1``);
     # the backend appends ``/chat/completions`` and ``/models`` to it.
     #
     # The API key is mounted from a Kubernetes Secret as the

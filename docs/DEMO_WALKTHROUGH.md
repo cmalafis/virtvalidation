@@ -1,7 +1,7 @@
 # Demo walkthrough — simulated VMware → OCP-Virt migration validation
 
 _Run 2026-08-13 against the sandbox deployment (`main` @ `c56ad12`,
-images `0.2.1`, project `cmalafis-dev`). Every number and quoted string below
+images `0.2.1`, project `virtvalidate-dev`). Every number and quoted string below
 was captured from the live run._
 
 ## What this demonstrates
@@ -170,9 +170,8 @@ There are two validation tables. The wave engine writes `VMValidation`; every
 report reads the legacy `ValidationResult`. They are disjoint, so the run panel
 says the VM failed while every report says nothing has been validated.
 
-This is recorded as **Finding 10** in `SANDBOX_DEPLOYMENT_ANALYSIS.md`. It fails
-in the dangerous direction: a broken migration reads as clean in the executive
-summary.
+This is a known defect. It fails in the dangerous direction: a broken
+migration reads as clean in the executive summary.
 
 ---
 

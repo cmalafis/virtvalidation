@@ -62,10 +62,10 @@ Flow:
      hostnames. The backend matches them to registered
      `VCenterSource` rows:
        - **exact** — normalized hostname equality
-         (`vc-east-01.dha.mil.` == `VC-EAST-01.DHA.MIL`)
+         (`vc-east-01.corp.local.` == `VC-EAST-01.CORP.LOCAL`)
        - **fuzzy** — prefix match either direction
          (registered short `vc-east-01` matches RVTools FQDN
-         `vc-east-01.dha.mil`)
+         `vc-east-01.corp.local`)
   3. **Operator reviews matches.** For each detected hostname the
      operator chooses:
        - Match to an existing vCenter (auto-filled when matched)

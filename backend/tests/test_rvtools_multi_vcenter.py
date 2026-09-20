@@ -30,10 +30,10 @@ def _register_vcenter(client, name: str, hostname: str | None = None) -> int:
 # Auto-match endpoint
 # ---------------------------------------------------------------------------
 def test_auto_match_exact_hostname(client):
-    vc_id = _register_vcenter(client, "vc-east-01", "vc-east-01.dha.mil")
+    vc_id = _register_vcenter(client, "vc-east-01", "vc-east-01.corp.local")
     r = client.post(
         "/api/sources/vcenters/auto-match",
-        json={"hostnames": ["vc-east-01.dha.mil"]},
+        json={"hostnames": ["vc-east-01.corp.local"]},
     )
     assert r.status_code == 200
     body = r.json()
@@ -44,10 +44,10 @@ def test_auto_match_exact_hostname(client):
 
 
 def test_auto_match_handles_trailing_dot_and_case(client):
-    vc_id = _register_vcenter(client, "vc-east-02", "vc-east-02.dha.mil")
+    vc_id = _register_vcenter(client, "vc-east-02", "vc-east-02.corp.local")
     r = client.post(
         "/api/sources/vcenters/auto-match",
-        json={"hostnames": ["VC-East-02.DHA.MIL."]},
+        json={"hostnames": ["VC-East-02.CORP.LOCAL."]},
     )
     assert r.status_code == 200
     body = r.json()
@@ -61,7 +61,7 @@ def test_auto_match_fuzzy_match_on_short_vs_fqdn(client):
     vc_id = _register_vcenter(client, "vc-short", "vc-short")
     r = client.post(
         "/api/sources/vcenters/auto-match",
-        json={"hostnames": ["vc-short.dha.mil"]},
+        json={"hostnames": ["vc-short.corp.local"]},
     )
     body = r.json()
     assert body["matches"][0]["matched_vcenter_id"] == vc_id
@@ -69,14 +69,14 @@ def test_auto_match_fuzzy_match_on_short_vs_fqdn(client):
 
 
 def test_auto_match_unmatched_returned_separately(client):
-    _register_vcenter(client, "vc-east-03", "vc-east-03.dha.mil")
+    _register_vcenter(client, "vc-east-03", "vc-east-03.corp.local")
     r = client.post(
         "/api/sources/vcenters/auto-match",
-        json={"hostnames": ["vc-east-03.dha.mil", "vc-unknown.example.com"]},
+        json={"hostnames": ["vc-east-03.corp.local", "vc-unknown.example.com"]},
     )
     body = r.json()
     matched_hosts = [m["hostname"] for m in body["matches"]]
-    assert "vc-east-03.dha.mil" in matched_hosts
+    assert "vc-east-03.corp.local" in matched_hosts
     assert body["unmatched"] == ["vc-unknown.example.com"]
 
 
@@ -92,17 +92,17 @@ def test_auto_match_rejects_non_list_payload(client):
 # Multi-vCenter import — single vCenter
 # ---------------------------------------------------------------------------
 def test_single_vcenter_file_routes_all_vms(client):
-    vc_id = _register_vcenter(client, "vc-solo", "vc-solo.dha.mil")
+    vc_id = _register_vcenter(client, "vc-solo", "vc-solo.corp.local")
     payload = {
         "vms": [
             {
                 "name": f"vm-{i:03d}",
                 "source_hostname": f"vm-{i:03d}.corp",
-                "source_vcenter_hostname": "vc-solo.dha.mil",
+                "source_vcenter_hostname": "vc-solo.corp.local",
             }
             for i in range(1, 11)
         ],
-        "vcenter_mapping": {"vc-solo.dha.mil": vc_id},
+        "vcenter_mapping": {"vc-solo.corp.local": vc_id},
     }
     r = client.post("/api/rvtools/upload-multi-vcenter", json=payload)
     assert r.status_code == 200, r.text
@@ -119,29 +119,29 @@ def test_single_vcenter_file_routes_all_vms(client):
 # Multi-vCenter import — all matched
 # ---------------------------------------------------------------------------
 def test_multi_vcenter_file_routes_per_hostname(client):
-    vc_a = _register_vcenter(client, "vc-a", "vc-a.dha.mil")
-    vc_b = _register_vcenter(client, "vc-b", "vc-b.dha.mil")
+    vc_a = _register_vcenter(client, "vc-a", "vc-a.corp.local")
+    vc_b = _register_vcenter(client, "vc-b", "vc-b.corp.local")
     payload = {
         "vms": [
             {
                 "name": "alpha-1",
                 "source_hostname": "a1.corp",
-                "source_vcenter_hostname": "vc-a.dha.mil",
+                "source_vcenter_hostname": "vc-a.corp.local",
             },
             {
                 "name": "alpha-2",
                 "source_hostname": "a2.corp",
-                "source_vcenter_hostname": "vc-a.dha.mil",
+                "source_vcenter_hostname": "vc-a.corp.local",
             },
             {
                 "name": "beta-1",
                 "source_hostname": "b1.corp",
-                "source_vcenter_hostname": "vc-b.dha.mil",
+                "source_vcenter_hostname": "vc-b.corp.local",
             },
         ],
         "vcenter_mapping": {
-            "vc-a.dha.mil": vc_a,
-            "vc-b.dha.mil": vc_b,
+            "vc-a.corp.local": vc_a,
+            "vc-b.corp.local": vc_b,
         },
     }
     r = client.post("/api/rvtools/upload-multi-vcenter", json=payload)
@@ -160,26 +160,26 @@ def test_multi_vcenter_file_routes_per_hostname(client):
 # Multi-vCenter import — unmapped hostname falls into skipped
 # ---------------------------------------------------------------------------
 def test_unmapped_hostname_skips_those_vms_with_reason(client):
-    vc_a = _register_vcenter(client, "vc-mapped", "vc-mapped.dha.mil")
+    vc_a = _register_vcenter(client, "vc-mapped", "vc-mapped.corp.local")
     payload = {
         "vms": [
             {
                 "name": "mapped-1",
                 "source_hostname": "m1.corp",
-                "source_vcenter_hostname": "vc-mapped.dha.mil",
+                "source_vcenter_hostname": "vc-mapped.corp.local",
             },
             {
                 "name": "unmapped-1",
                 "source_hostname": "u1.corp",
-                "source_vcenter_hostname": "vc-unknown.dha.mil",
+                "source_vcenter_hostname": "vc-unknown.corp.local",
             },
             {
                 "name": "unmapped-2",
                 "source_hostname": "u2.corp",
-                "source_vcenter_hostname": "vc-unknown.dha.mil",
+                "source_vcenter_hostname": "vc-unknown.corp.local",
             },
         ],
-        "vcenter_mapping": {"vc-mapped.dha.mil": vc_a},
+        "vcenter_mapping": {"vc-mapped.corp.local": vc_a},
     }
     r = client.post("/api/rvtools/upload-multi-vcenter", json=payload)
     assert r.status_code == 200, r.text
@@ -188,7 +188,7 @@ def test_unmapped_hostname_skips_those_vms_with_reason(client):
     assert len(body["skipped"]) == 2
     # Per-row skip reason names the hostname so the UI can prompt.
     skipped_hosts = {s["detected_hostname"] for s in body["skipped"]}
-    assert skipped_hosts == {"vc-unknown.dha.mil"}
+    assert skipped_hosts == {"vc-unknown.corp.local"}
     assert any("no vcenter mapping" in s["reason"] for s in body["skipped"])
 
 
@@ -196,22 +196,22 @@ def test_unmapped_hostname_skips_those_vms_with_reason(client):
 # Multi-vCenter import — default_vcenter_id fallback
 # ---------------------------------------------------------------------------
 def test_default_vcenter_id_catches_unmapped_vms(client):
-    vc_a = _register_vcenter(client, "vc-mapped", "vc-mapped.dha.mil")
-    vc_default = _register_vcenter(client, "vc-default", "vc-default.dha.mil")
+    vc_a = _register_vcenter(client, "vc-mapped", "vc-mapped.corp.local")
+    vc_default = _register_vcenter(client, "vc-default", "vc-default.corp.local")
     payload = {
         "vms": [
             {
                 "name": "mapped-x",
                 "source_hostname": "mx.corp",
-                "source_vcenter_hostname": "vc-mapped.dha.mil",
+                "source_vcenter_hostname": "vc-mapped.corp.local",
             },
             {
                 "name": "fallback-x",
                 "source_hostname": "fx.corp",
-                "source_vcenter_hostname": "vc-other.dha.mil",
+                "source_vcenter_hostname": "vc-other.corp.local",
             },
         ],
-        "vcenter_mapping": {"vc-mapped.dha.mil": vc_a},
+        "vcenter_mapping": {"vc-mapped.corp.local": vc_a},
         "default_vcenter_id": vc_default,
     }
     r = client.post("/api/rvtools/upload-multi-vcenter", json=payload)
@@ -232,10 +232,10 @@ def test_mapping_to_unknown_vcenter_id_409s(client):
             {
                 "name": "x",
                 "source_hostname": "x.corp",
-                "source_vcenter_hostname": "vc-unknown.dha.mil",
+                "source_vcenter_hostname": "vc-unknown.corp.local",
             }
         ],
-        "vcenter_mapping": {"vc-unknown.dha.mil": 99_999},
+        "vcenter_mapping": {"vc-unknown.corp.local": 99_999},
     }
     r = client.post("/api/rvtools/upload-multi-vcenter", json=payload)
     assert r.status_code == 409
@@ -258,7 +258,7 @@ def test_no_routable_vms_returns_422(client):
             {
                 "name": "ghost",
                 "source_hostname": "ghost.corp",
-                "source_vcenter_hostname": "vc-nowhere.dha.mil",
+                "source_vcenter_hostname": "vc-nowhere.corp.local",
             }
         ],
         "vcenter_mapping": {},
@@ -272,17 +272,17 @@ def test_no_routable_vms_returns_422(client):
 # Re-upload idempotency — second pass should be all updates/unchanged
 # ---------------------------------------------------------------------------
 def test_re_upload_is_idempotent(client):
-    vc = _register_vcenter(client, "vc-idem", "vc-idem.dha.mil")
+    vc = _register_vcenter(client, "vc-idem", "vc-idem.corp.local")
     payload = {
         "vms": [
             {
                 "name": "vm-idem",
                 "source_hostname": "i.corp",
                 "ip_address": "10.0.0.5",
-                "source_vcenter_hostname": "vc-idem.dha.mil",
+                "source_vcenter_hostname": "vc-idem.corp.local",
             }
         ],
-        "vcenter_mapping": {"vc-idem.dha.mil": vc},
+        "vcenter_mapping": {"vc-idem.corp.local": vc},
     }
     first = client.post("/api/rvtools/upload-multi-vcenter", json=payload).json()
     second = client.post("/api/rvtools/upload-multi-vcenter", json=payload).json()

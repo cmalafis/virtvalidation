@@ -1,26 +1,26 @@
 # Test Data
 
 VirtValidate's planner + classifier tests are pinned against a
-synthetic federal hospital scenario — fictional but representative
-of the customer environments we target. This document explains what
+synthetic hospital scenario — fictional but representative of the
+kinds of environments the product targets. This document explains what
 the test data represents and why it's structured the way it is.
 
 If you're adding new planner / preclassifier tests and want a
-non-trivial fleet to assert against, reach for the DHA fixture
-described below rather than rolling your own one-off VMs.
+non-trivial fleet to assert against, reach for the reference
+fixture described below rather than rolling your own one-off VMs.
 
 ---
 
-## DHA fleet — 57 VMs across 8 applications
+## Reference fleet — 57 VMs across 8 applications
 
 ### Where it lives
 
-`backend/tests/fixtures/dha_fleet.py` builds the fleet
+`backend/tests/fixtures/sample_fleet.py` builds the fleet
 programmatically. Two entry points:
 
-  - `build_dha_fleet_vms()` — detached `VM` model instances with
+  - `build_sample_fleet_vms()` — detached `VM` model instances with
     assigned IDs. Use for unit tests that don't need a DB session.
-  - `persist_dha_fleet(db_session)` — inserts the rows into the
+  - `persist_sample_fleet(db_session)` — inserts the rows into the
     given session. Use for API / integration tests.
 
 ### Why a fixture and not an .xlsx
@@ -42,9 +42,8 @@ specific fleet shape.
 
 ### The fictional scenario
 
-The fleet represents a **DoD-adjacent health-care provider** —
-think of it as a fictional Defense Health Agency tenant — running
-a mix of federally-required + commercial applications:
+The fleet represents a **fictional health-care provider** running
+a mix of regulated + commercial applications:
 
 | Application       | VMs | Role tiers                              | Environment     |
 |-------------------|----:|-----------------------------------------|-----------------|
@@ -63,8 +62,8 @@ a mix of federally-required + commercial applications:
 Each `FleetVMSpec` sets:
 
   - `name` — e.g. `ehrpro-postgres-db-01`. Role-revealing prefix +
-    application + sequence number, matching the federal customer's
-    actual naming convention.
+    application + sequence number, following a naming convention
+    typical of large regulated fleets.
   - `application_hint` — `ehrpro`, `pacsimaging`, etc. The operator-
     supplied custom attribute the preclassifier uses as the PRIMARY
     cohesion signal.
@@ -81,7 +80,7 @@ Each `FleetVMSpec` sets:
 
 ### Why these specifics matter for the preclassifier
 
-The DHA fleet is sized to exercise every branch of the
+The reference fleet is sized to exercise every branch of the
 preclassifier's grouping logic:
 
   - **PRIMARY partition** — three distinct vCenters never merge.
@@ -141,7 +140,7 @@ comfortably under that.
 
 If a new test scenario needs a different shape:
 
-1. **Prefer extending `dha_fleet.py`** with a new app definition
+1. **Prefer extending `sample_fleet.py`** with a new app definition
    if the scenario fits the federal-hospital frame.
 2. **Build a one-off fixture** in your test file if it's a corner
    case (cycles in dependencies, single-VM plans, etc.). Keep the
@@ -150,6 +149,6 @@ If a new test scenario needs a different shape:
    import-flow round-trip. The fixture path is faster and easier
    to review.
 
-When extending `dha_fleet.py`, keep the same naming + metadata
+When extending `sample_fleet.py`, keep the same naming + metadata
 conventions so the test invariants ("network populated", "role
 detection finds the right tier") continue to hold.

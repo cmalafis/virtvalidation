@@ -246,12 +246,12 @@ def test_scale_1000_vms_completes_under_thirty_seconds():
         assert len(wave["vm_ids"]) <= MAX_VMS_PER_WAVE
 
 
-def test_dha_fleet_passes_all_hard_limits():
+def test_sample_fleet_passes_all_hard_limits():
     """The canonical 57-VM federal fleet must produce a valid plan
     where every wave respects all hard limits."""
-    from tests.fixtures.dha_fleet import build_dha_fleet_vms
+    from tests.fixtures.sample_fleet import build_sample_fleet_vms
 
-    vms = build_dha_fleet_vms()
+    vms = build_sample_fleet_vms()
     result = MigrationPlanner(backend=MockBackend()).plan_with_groups(vms)
     for wave in result["waves"]:
         assert len(wave["vm_ids"]) <= MAX_VMS_PER_WAVE
@@ -347,13 +347,13 @@ def test_waves_never_mix_target_namespaces():
     assert len(result["waves"]) >= 2
 
 
-def test_dha_fleet_waves_are_partition_coherent():
+def test_sample_fleet_waves_are_partition_coherent():
     """Scale check: the canonical 57-VM federal fleet spans multiple
     vCenters and target namespaces. Every wave it produces must
     still be partition-coherent."""
-    from tests.fixtures.dha_fleet import build_dha_fleet_vms
+    from tests.fixtures.sample_fleet import build_sample_fleet_vms
 
-    vms = build_dha_fleet_vms()
+    vms = build_sample_fleet_vms()
     result = MigrationPlanner(backend=MockBackend()).plan_with_groups(vms)
     _assert_wave_partition_coherent(result["waves"], vms)
 

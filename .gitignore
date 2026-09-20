@@ -32,3 +32,12 @@ dist/
 # Local env
 .env
 .env.local
+
+# SSH key material — generated per-install, never committed.
+# A committed private key is unrecoverable once pushed; the app
+# generates its own via Settings → SSH key (app/core/ssh_key.py).
+backend/app/keys/*
+!backend/app/keys/.gitkeep
+
+# Generated test fixtures — rebuild with scripts/generate-test-rvtools.py
+test-1000.xlsx

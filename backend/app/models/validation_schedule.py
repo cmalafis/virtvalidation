@@ -66,7 +66,7 @@ class ValidationSchedule(Base):
     )
 
     # Operator notes. Federal reviewers want to see why a schedule
-    # exists ("DHA Phase 1 prod fleet — required by COMPL-22-014").
+    # exists ("Phase 1 prod fleet — required by COMPL-22-014").
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Bookkeeping.

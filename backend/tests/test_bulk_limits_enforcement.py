@@ -83,11 +83,11 @@ def test_rvtools_import_rejects_over_max(client):
             {
                 "name": f"vm-{i:05d}",
                 "source_hostname": f"vm-{i:05d}.corp",
-                "source_vcenter_hostname": "vc-east-01.dha.mil",
+                "source_vcenter_hostname": "vc-east-01.corp.local",
             }
             for i in range(MAX_VMS_PER_RVTOOLS_IMPORT + 1)
         ],
-        "vcenter_mapping": {"vc-east-01.dha.mil": 1},
+        "vcenter_mapping": {"vc-east-01.corp.local": 1},
     }
     r = client.post("/api/rvtools/upload-multi-vcenter", json=payload)
     assert r.status_code == 422

@@ -188,7 +188,7 @@ that calls it at scale is the next step.
 
 - [`docs/PLANNING_ARCHITECTURE.md`](./PLANNING_ARCHITECTURE.md) —
   the preclassifier partition flow that consumes environment.
-- [`docs/TEST_DATA.md`](./TEST_DATA.md) — the DHA federal fleet
+- [`docs/TEST_DATA.md`](./TEST_DATA.md) — the reference federal fleet
   fixture already populates `environment` on every VM.
 - `backend/tests/test_environment.py` — pinned alias + cascade
   contracts.

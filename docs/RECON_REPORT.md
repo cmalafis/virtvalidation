@@ -6,7 +6,7 @@ _Generated 2026-06-02 after a ~2 week absence. Read-only assessment — no code,
 
 The project is in **substantially better shape than a two-week gap usually leaves it**. Every major workstream that was in flight before the absence has landed in `main` and is merged cleanly: the multi-cluster target-architecture refactor (PR #10), the deterministic planner pipeline + VM lifecycle + 1000-VM cap (PR #7), the dual-variant image / Snyk / Trivy security hardening (PR #12), the wave-scoped baseline + validation engine (PR #13), and the MaaS LLM backend with runtime backend switching (PR #14). The working tree is clean, `main` is up to date with origin, three release tags are applied (`v0.2.0/.1/.2`), and CLAUDE.md's architectural claims hold up almost exactly against the code — the one nuance is cosmetic (field naming in the partition key). The test suite is healthy: **990 backend tests pass at 82% coverage** on isolated in-memory SQLite. There is essentially **no loose-end debt** — no stray TODOs, no skipped tests, no orphaned components, one documented `vllm` placeholder by design.
 
-The risks are narrow and concrete. **CI is red on `main` for three independent reasons, only one of which is real code debt**: 15 auto-fixable `ruff` violations were merged without running the formatter (the lint gate is genuinely failing); the Snyk job fails on a missing `SNYK_TOKEN` secret plus an unguarded SARIF upload; the image-scan job fails on a GitHub Advanced Security SARIF-upload permission (the images themselves build clean and Trivy reports zero vulnerabilities). The single most important forward-looking signal: **the LLM client does not persist inference inputs/outputs** — only token/latency telemetry, and wave-annotation calls aren't even captured there — so the planned TrustyAI integration would be a retrofit unless that gap is closed first. Finally, the deploy path is **clean and cluster-agnostic**: no dead-cluster references survive anywhere in the repo, the Helm chart lints and renders, and getting onto the new sandbox39 cluster with MaaS is a standard `helm install` with a handful of `--set` overrides (documented below). The recommended first action is the cheapest high-leverage one: **get CI green** so the next feature session starts from a trustworthy baseline.
+The risks are narrow and concrete. **CI is red on `main` for three independent reasons, only one of which is real code debt**: 15 auto-fixable `ruff` violations were merged without running the formatter (the lint gate is genuinely failing); the Snyk job fails on a missing `SNYK_TOKEN` secret plus an unguarded SARIF upload; the image-scan job fails on a GitHub Advanced Security SARIF-upload permission (the images themselves build clean and Trivy reports zero vulnerabilities). The single most important forward-looking signal: **the LLM client does not persist inference inputs/outputs** — only token/latency telemetry, and wave-annotation calls aren't even captured there — so the planned TrustyAI integration would be a retrofit unless that gap is closed first. Finally, the deploy path is **clean and cluster-agnostic**: no dead-cluster references survive anywhere in the repo, the Helm chart lints and renders, and getting onto the new sandbox cluster with MaaS is a standard `helm install` with a handful of `--set` overrides (documented below). The recommended first action is the cheapest high-leverage one: **get CI green** so the next feature session starts from a trustworthy baseline.
 
 ## What's Landed in Main
 
@@ -81,18 +81,18 @@ Strong and federal-aligned:
 
 ## Local-Deploy Readiness
 
-**No dead-cluster references anywhere.** Grep across `deploy/`, `scripts/`, `docs/` finds only illustrative example hosts (e.g. `litellm-prod.apps.maas.redhatworkshops.io`, `virtvalidate.apps.your-cluster.com` placeholders). The repo was never pinned to the old cluster; the chart is cluster-agnostic — `storageClass: ""` (cluster default), `route.host: ""` (OpenShift auto-assigns from the wildcard domain). `scripts/verify_mappings.sh` uses a throwaway SQLite + fake URLs; nothing to un-wire.
+**No dead-cluster references anywhere.** Grep across `deploy/`, `scripts/`, `docs/` finds only illustrative example hosts (e.g. `litellm.example.com`, `virtvalidate.apps.your-cluster.com` placeholders). The repo was never pinned to the old cluster; the chart is cluster-agnostic — `storageClass: ""` (cluster default), `route.host: ""` (OpenShift auto-assigns from the wildcard domain). `scripts/verify_mappings.sh` uses a throwaway SQLite + fake URLs; nothing to un-wire.
 
 **Local (podman-compose):** `podman-compose.yml` at repo root (there is no `deploy/local/`). Brings up frontend, backend, postgres (`docker.io/postgres:16-alpine`), ollama. `LLM_BACKEND_TYPE=mock` is hardcoded (`:39`) — correct per the dev-infra decision. Requires a root `.env` (compose references `${DATABASE_URL}`/`${SECRET_KEY}` with no defaults); `.env.example` is the template. Migrations auto-run at startup (`main.py:122`).
 
 **Helm:** chart `version 0.1.4`, `appVersion 0.1.2-alpha`; `helm lint` passes, `helm template` renders clean (zero hardcoded storageClass/host/old-domain hits). MaaS wiring present (`values.yaml:190-208`). Migrations run two ways — startup `apply_migrations` + a `pre-install,pre-upgrade` Helm Job — so **no manual seed**. Resource requests are sandbox-sane except **Ollama (req 4Gi / lim 16Gi / 20Gi PVC)**, which default-deploys regardless of backend — must be disabled when using MaaS.
 
-### First-deploy checklist — sandbox39 + MaaS
+### First-deploy checklist — sandbox + MaaS
 
 ```bash
 # 0. Pull + log in
 git pull
-oc login https://api.ocp.jpngc.sandbox39.opentlc.com:6443
+oc login https://api.ocp.example.opentlc.com:6443
 
 # 1. Namespace
 oc new-project virtvalidate
@@ -105,7 +105,7 @@ oc create secret generic virtvalidate-maas \
 helm install virtvalidate deploy/helm/virtvalidate/ -n virtvalidate \
   --set llm.backend=maas \
   --set llm.maas.enabled=true \
-  --set llm.maas.baseUrl='https://<MAAS_HOST>.apps.ocp.jpngc.sandbox39.opentlc.com/v1' \
+  --set llm.maas.baseUrl='https://<MAAS_HOST>.apps.ocp.example.opentlc.com/v1' \
   --set llm.maas.model='<MODEL_NAME>' \
   --set llm.maas.existingSecret=virtvalidate-maas \
   --set llm.ollama.deploy=false \
@@ -130,7 +130,7 @@ Prioritized. Session weight in parentheses; dependencies noted.
 
 1. **★ TOP — Get CI green (small).** Run `ruff check --fix . && ruff format .` in `backend/` (fixes the 15 lint errors gating the real CI job); add `SNYK_TOKEN` as a repo secret _or_ add the `hashFiles()` guard to the unguarded Snyk SARIF-upload steps; enable GHAS code scanning _or_ guard/skip the Trivy SARIF upload. _Why first:_ cheapest high-leverage item — `main` currently fails its own lint gate, and a red board hides real regressions in every future PR. No dependencies. **Do this before anything else.**
 2. **TrustyAI prerequisite — persist structured inference records (medium).** Add a per-call inference log (input, output, model, latency, fallback-fired) covering wave annotation _and_ validation, written through the LLM client. _Why:_ the single most valuable forward investment; makes the eventual TrustyAI work a clean add. Depends on nothing; best done before the TrustyAI feature session.
-3. **First real sandbox39 deploy + smoke test (medium).** Execute the checklist above, point at MaaS (Granite via LiteLLM), validate end-to-end (import → plan → baseline → validate). _Why:_ proves the cluster-agnostic chart against the new environment; surfaces any MaaS/route/storageClass reality the static read can't. Depends loosely on #1 (clean images) and a real MaaS endpoint/key.
+3. **First real sandbox deploy + smoke test (medium).** Execute the checklist above, point at MaaS (Granite via LiteLLM), validate end-to-end (import → plan → baseline → validate). _Why:_ proves the cluster-agnostic chart against the new environment; surfaces any MaaS/route/storageClass reality the static read can't. Depends loosely on #1 (clean images) and a real MaaS endpoint/key.
 4. **Prune stale branch + tidy release (small).** Delete `feat/dual-variant-images-snyk` (fully merged); decide whether to merge release-please PR #4 to cut a tagged release. _Why:_ removes the misleading "12 ahead" signal. No dependencies.
 5. **Frontend test harness (medium).** Stand up Vitest + React Testing Library; cover `WaveRunsPanel`, `PlanWizard`, and the defensive-null contracts CLAUDE.md mandates. _Why:_ the only correctness gap in an otherwise well-tested codebase; frontend currently has zero tests.
 6. **Backfill `ssh_key_service` coverage (small).** Cover the 56%-covered day-2 revocation paths (`services/ssh_key_service.py:248-337`). _Why:_ security-sensitive code (key removal from VMs) is the least-tested module. Depends on nothing.
@@ -138,7 +138,7 @@ Prioritized. Session weight in parentheses; dependencies noted.
 
 ## Open Questions for the Operator
 
-- **MaaS endpoint specifics:** what is the actual LiteLLM base URL and model name on sandbox39, and is the API key already issued? The checklist needs these three values.
+- **MaaS endpoint specifics:** what is the actual LiteLLM base URL and model name on sandbox, and is the API key already issued? The checklist needs these three values.
 - **Release cadence:** should release-please PR #4 be merged to cut `0.1.1-alpha`, or is the project staying on the `v0.2.x` manual tags? The two version schemes (`Chart.appVersion 0.1.2-alpha` vs git tags `v0.2.2-fixes`) are diverging.
 - **CI gating intent:** should Snyk/Trivy stay `continue-on-error` ("surface-only"), or is this the session to make them blocking? Affects whether fix #1 just unblocks the board or tightens the gate.
 - **TrustyAI scope:** is the goal full prompt/response capture (heavier storage, PII considerations on VM data) or decision-level metadata only? This shapes backlog item #2's schema.

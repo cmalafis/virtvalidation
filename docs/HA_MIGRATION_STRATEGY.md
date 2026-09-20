@@ -115,7 +115,7 @@ where no node is more important than the others.
 
 ## What "spread" produces
 
-When `ha_strategy="spread"` runs against the DHA test fleet's
+When `ha_strategy="spread"` runs against the reference test fleet's
 EHRPro data tier (3 postgres VMs), the preclassifier first builds
 one group (`vc1/ehrpro-prod/data/stateful/hint:ehrpro:data`) with
 3 ha_members, then `split_ha_group` expands it into three

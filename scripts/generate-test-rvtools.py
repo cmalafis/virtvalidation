@@ -161,7 +161,7 @@ def _generate_vm_row(
 
 def _generate_vminfo_rows(vm_count: int, vcenter_count: int) -> list[dict]:
     vcenters = [
-        f"vc-east-{i:02d}.dha.mil" for i in range(1, vcenter_count + 1)
+        f"vc-east-{i:02d}.corp.local" for i in range(1, vcenter_count + 1)
     ]
     clusters = [f"cluster-{c[3:7]}" for c in vcenters]
     hosts_per_cluster = 4

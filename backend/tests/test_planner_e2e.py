@@ -1,4 +1,4 @@
-"""End-to-end planner tests against the enriched DHA fleet fixture.
+"""End-to-end planner tests against the enriched reference fleet fixture.
 
 Pins the post-refactor guarantees:
 
@@ -18,18 +18,18 @@ from __future__ import annotations
 from app.core.llm.mock_backend import MockBackend
 from app.core.planner import MigrationPlanner
 from app.core.preclassifier import PreClassifier
-from tests.fixtures.dha_fleet import build_dha_fleet_vms, dha_fleet_specs
+from tests.fixtures.sample_fleet import build_sample_fleet_vms, sample_fleet_specs
 
 
 # ---------------------------------------------------------------------------
 # Fixture sanity
 # ---------------------------------------------------------------------------
-def test_dha_fleet_specs_total_is_57():
-    assert len(dha_fleet_specs()) == 57
+def test_sample_fleet_specs_total_is_57():
+    assert len(sample_fleet_specs()) == 57
 
 
-def test_dha_fleet_vms_have_populated_metadata():
-    vms = build_dha_fleet_vms()
+def test_sample_fleet_vms_have_populated_metadata():
+    vms = build_sample_fleet_vms()
     # Every VM should carry application_hint, environment, networks,
     # datastores — that's the entire point of the enriched fixture.
     for vm in vms:
@@ -43,7 +43,7 @@ def test_dha_fleet_vms_have_populated_metadata():
 # Preclassifier on realistic input
 # ---------------------------------------------------------------------------
 def test_preclassifier_57_vm_fleet_stays_under_llm_ceiling():
-    vms = build_dha_fleet_vms()
+    vms = build_sample_fleet_vms()
     groups = PreClassifier().classify(vms)
     # Architectural invariant: group count <= LLM_MAX_ITEMS_PER_CALL.
     # On the canonical 57-VM federal hospital fixture (3 vCenters,
@@ -54,7 +54,7 @@ def test_preclassifier_57_vm_fleet_stays_under_llm_ceiling():
 
 
 def test_preclassifier_groups_have_populated_shared_attributes():
-    vms = build_dha_fleet_vms()
+    vms = build_sample_fleet_vms()
     groups = PreClassifier().classify(vms)
     for g in groups:
         # At minimum the group should expose its application_hint and
@@ -82,7 +82,7 @@ def test_preclassifier_groups_have_populated_shared_attributes():
 
 
 def test_preclassifier_separates_apps_into_role_subgroups():
-    vms = build_dha_fleet_vms()
+    vms = build_sample_fleet_vms()
     groups = PreClassifier().classify(vms)
     ehrpro_groups = [g for g in groups if "ehrpro" in g.id]
     # EHRPro has web + app + data + worker tiers — should be at least
@@ -100,7 +100,7 @@ def test_preclassifier_separates_apps_into_role_subgroups():
 
 
 def test_preclassifier_seeds_dependency_hints_for_app_groups():
-    vms = build_dha_fleet_vms()
+    vms = build_sample_fleet_vms()
     groups = PreClassifier().classify(vms)
     app_groups = [g for g in groups if g.estimated_role == "app"]
     assert app_groups, "no app groups produced"
@@ -109,7 +109,7 @@ def test_preclassifier_seeds_dependency_hints_for_app_groups():
 
 
 def test_preclassifier_never_merges_across_vcenter():
-    vms = build_dha_fleet_vms()
+    vms = build_sample_fleet_vms()
     groups = PreClassifier().classify(vms)
     vcs = {g.key.vcenter_id for g in groups}
     # The fixture spans three vCenters (prod / dev / DR).
@@ -119,8 +119,8 @@ def test_preclassifier_never_merges_across_vcenter():
 # ---------------------------------------------------------------------------
 # End-to-end planner
 # ---------------------------------------------------------------------------
-def test_plan_with_groups_succeeds_on_dha_fleet():
-    vms = build_dha_fleet_vms()
+def test_plan_with_groups_succeeds_on_sample_fleet():
+    vms = build_sample_fleet_vms()
     planner = MigrationPlanner(backend=MockBackend())
     result = planner.plan_with_groups(vms)
     placed = sorted(vid for wave in result["waves"] for vid in wave["vm_ids"])

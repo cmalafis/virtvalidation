@@ -52,7 +52,7 @@ Assumes VirtValidate is already deployed and the `virtvalidate-maas` Secret
 exists.
 
 ```bash
-NS=cmalafis-dev
+NS=virtvalidate-dev
 
 # 1. VM. The sandbox permits only runStrategy: Manual, and its webhook
 #    rewrites cloud-init to inject its own key — hence the explicit start.

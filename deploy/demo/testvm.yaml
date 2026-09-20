@@ -75,7 +75,7 @@ spec:
                 - [ systemctl, enable, --now, sshd ]
 ---
 # ClusterIP Service so the VirtValidate backend pod can reach the VM's
-# sshd by in-cluster DNS: vv-testvm-01.cmalafis-dev.svc.cluster.local:22
+# sshd by in-cluster DNS: vv-testvm-01.virtvalidate-dev.svc.cluster.local:22
 apiVersion: v1
 kind: Service
 metadata:

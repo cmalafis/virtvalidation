@@ -108,7 +108,7 @@ helm install virtvalidate deploy/helm/virtvalidate/ \
   --namespace virtvalidate \
   --create-namespace \
   --set llm.maas.enabled=true \
-  --set llm.maas.baseUrl=https://litellm-prod.apps.maas.redhatworkshops.io/v1 \
+  --set llm.maas.baseUrl=https://litellm.example.com/v1 \
   --set llm.maas.model=granite-32-8b-instruct \
   --set llm.maas.existingSecret=virtvalidate-maas
 ```

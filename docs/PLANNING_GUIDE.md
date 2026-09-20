@@ -104,7 +104,7 @@ you'd picked a strategy yourself.
 | Customer profile | Strategy |
 |------------------|----------|
 | Single hospital migrating clinical apps | By application + small waves + low-risk first + non-prod first + atomic apps |
-| DHA multi-region cutover | By data classification + medium waves + mixed risk + non-prod first + atomic apps + freeform: "East before West" |
+| Multi-region cutover | By data classification + medium waves + mixed risk + non-prod first + atomic apps + freeform: "East before West" |
 | Defense SECRET environment | By data classification + small waves + low-risk first + dedicated prod waves + atomic apps + freeform: "no migration windows during exercise X" |
 | Civilian agency mixed cloud + on-prem fleet | By environment + medium waves + low-risk first + non-prod first + can-split apps |
 | Research enclave with day-one NIST 800-53 audit | By application + small waves + low-risk first + dedicated prod + atomic apps + freeform: "every wave needs ATO sign-off, max 1 wave/week" |

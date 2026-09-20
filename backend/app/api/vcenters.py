@@ -236,7 +236,7 @@ def auto_match_vcenters(payload: dict, db: Session = Depends(get_db)) -> dict:
       1. **Exact** — normalized hostname equals row.hostname (normalized).
       2. **Fuzzy** — the detected hostname is a prefix of a registered
          hostname (or vice versa). Covers ``vc-east-01`` vs
-         ``vc-east-01.dha.mil`` mismatches the operator routinely
+         ``vc-east-01.corp.local`` mismatches the operator routinely
          creates by trimming the FQDN on registration.
 
     Returns:

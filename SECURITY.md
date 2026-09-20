@@ -15,7 +15,7 @@ If you discover a security vulnerability in VirtValidate, please report it respo
 
 ### How to Report
 
-Send details privately via GitHub's [Private Vulnerability Reporting](https://github.com/cmalafis/virtvalidation/security/advisories/new) feature, or email the maintainer directly at: chris@example.com (replace with your actual email)
+Send details privately via GitHub's [Private Vulnerability Reporting](https://github.com/cmalafis/virtvalidation/security/advisories/new) feature. This is the preferred and only supported channel — it keeps the report private until a fix ships.
 
 Please include:
 

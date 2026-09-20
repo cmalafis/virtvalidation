@@ -33,7 +33,7 @@ def _build_payload(*, vm_count: int, vcenter_count: int) -> dict:
     """Construct a payload mirroring what the parser produces for the
     generated test XLSX — same field set, same per-VM hostname
     distribution."""
-    vcenter_hosts = [f"vc-east-{i:02d}.dha.mil" for i in range(1, vcenter_count + 1)]
+    vcenter_hosts = [f"vc-east-{i:02d}.corp.local" for i in range(1, vcenter_count + 1)]
     vms: list[dict] = []
     for i in range(vm_count):
         host = vcenter_hosts[i % vcenter_count]
