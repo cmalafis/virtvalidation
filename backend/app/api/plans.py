@@ -26,6 +26,7 @@ from app.core.mtv import (
     generate_wave_yaml,
 )
 from app.core.plan_generation import run_simple_plan_generation
+from app.core.plan_pipeline import _vm_payload
 from app.core.preclassifier import PreClassifier
 from app.core.reporter import ReporterError, WaveReporter, render_pdf
 from app.core.target_resolution import resolve_vms_iter
@@ -263,6 +264,7 @@ def create_plan(
             waves=[],
             model="",
             mapping_ids=[m.id for m in mapping_rows],
+            migration_type=payload.migration_type,
             status="pending",
             progress_message="Queued",
             progress_percent=0,
@@ -696,20 +698,7 @@ def wave_mtv_yaml(
     if missing:
         raise HTTPException(status_code=409, detail=f"Unknown vm_ids in wave: {missing}")
 
-    vm_payloads = [
-        {
-            "name": vms_by_id[vid].name,
-            "vsphere_networks": list(vms_by_id[vid].vsphere_networks or []),
-            "vsphere_datastores": list(vms_by_id[vid].vsphere_datastores or []),
-            "environment": vms_by_id[vid].environment or "",
-            "application_hint": vms_by_id[vid].application_hint or "",
-            # target_namespace fed from the per-VM override so the
-            # MappingResolver's fallback ("vm has no namespace strategy
-            # match" path) lands on the operator's declared namespace.
-            "target_namespace": vms_by_id[vid].target_namespace_override or "",
-        }
-        for vid in vm_ids
-    ]
+    vm_payloads = [_vm_payload(vms_by_id[vid]) for vid in vm_ids]
 
     # Pick the mapping whose vcenter covers this wave's VMs. Per the
     # CLAUDE.md partition rule, every VM in a wave shares one
@@ -784,6 +773,7 @@ def wave_mtv_yaml(
         rationale=wave.get("rationale", ""),
         source_provider=source_provider_name,
         destination_provider=destination_provider_name,
+        migration_type=plan.migration_type or "cold",
     )
     try:
         yaml_text = generate_wave_yaml(ctx, vm_payloads, resolver=resolver)
@@ -828,6 +818,7 @@ def plan_yaml_bundle(plan_id: int, db: Session = Depends(get_db)) -> Response:
     # surfacing). We collect into an in-memory zip rather than
     # streaming because the YAML payload is small.
     buf = io.BytesIO()
+    bundled: list[tuple[int, int, str | None, str | None]] = []
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for wave in sorted(plan.waves, key=lambda w: w.get("wave_number", 0)):
             wave_number = wave.get("wave_number")
@@ -837,18 +828,7 @@ def plan_yaml_bundle(plan_id: int, db: Session = Depends(get_db)) -> Response:
             if not vm_ids:
                 continue
             vms_by_id = {vm.id: vm for vm in db.scalars(select(VM).where(VM.id.in_(vm_ids))).all()}
-            vm_payloads = [
-                {
-                    "name": vms_by_id[vid].name,
-                    "vsphere_networks": list(vms_by_id[vid].vsphere_networks or []),
-                    "vsphere_datastores": list(vms_by_id[vid].vsphere_datastores or []),
-                    "environment": vms_by_id[vid].environment or "",
-                    "application_hint": vms_by_id[vid].application_hint or "",
-                    "target_namespace": vms_by_id[vid].target_namespace_override or "",
-                }
-                for vid in vm_ids
-                if vid in vms_by_id
-            ]
+            vm_payloads = [_vm_payload(vms_by_id[vid]) for vid in vm_ids if vid in vms_by_id]
             wave_vcenter_ids = sorted(
                 {
                     vms_by_id[vid].source_vcenter_id
@@ -885,6 +865,7 @@ def plan_yaml_bundle(plan_id: int, db: Session = Depends(get_db)) -> Response:
                 rationale=wave.get("rationale", ""),
                 source_provider=source_name,
                 destination_provider=destination_name,
+                migration_type=plan.migration_type or "cold",
             )
             try:
                 yaml_text = generate_wave_yaml(ctx, vm_payloads, resolver=resolver)
@@ -894,6 +875,8 @@ def plan_yaml_bundle(plan_id: int, db: Session = Depends(get_db)) -> Response:
                     detail=f"Wave {wave_number}: {e}",
                 ) from e
             zf.writestr(f"plan-{plan_id}-wave-{wave_number}.yaml", yaml_text)
+            bundled.append((wave_number, len(vm_payloads), source_name, destination_name))
+        zf.writestr("README.md", _bundle_readme(plan, bundled))
 
     body = buf.getvalue()
     filename = f"plan-{plan_id}-mtv-bundle.zip"
@@ -902,6 +885,92 @@ def plan_yaml_bundle(plan_id: int, db: Session = Depends(get_db)) -> Response:
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+def _bundle_readme(plan: MigrationPlan, bundled: list[tuple]) -> str:
+    """Apply instructions shipped inside the YAML bundle.
+
+    VirtValidate never touches the cluster: the operator applies these with
+    their own ``oc`` and their own credentials, so the bundle has to stand on
+    its own — prerequisites, order, and how to check it before it counts.
+    """
+    ns = _app_settings.mtv_namespace
+    sources = sorted({b[2] for b in bundled if b[2]})
+    destinations = sorted({b[3] for b in bundled if b[3]})
+    lines = [
+        f"# MTV bundle — plan {plan.id}: {plan.name}",
+        "",
+        f"Generated by VirtValidate. {len(bundled)} wave(s), "
+        f"{sum(b[1] for b in bundled)} VM(s), migration type **{plan.migration_type}**.",
+        "Every document here passed offline validation against the forklift "
+        "v2.12.1 CRD schemas (MTV 2.12). That proves shape, not that the things "
+        "it references exist on your cluster — step 2 does that.",
+        "",
+        "## 1. Prerequisites on the target cluster",
+        "",
+        f"- MTV operator installed; these resources go in namespace `{ns}`.",
+        "- Provider CRs **already created by you** (they hold vCenter credentials, "
+        "which VirtValidate never sees):",
+        *[f"  - source provider `{name}` in `{ns}`" for name in sources],
+        *[f"  - destination provider `{name}` in `{ns}`" for name in destinations],
+        "- Every target namespace, NetworkAttachmentDefinition and StorageClass "
+        "named in the maps exists. A NAD must be in the VM's target namespace "
+        "(or `default`).",
+    ]
+    if plan.migration_type == "warm":
+        lines += [
+            "- **Warm migration:** Changed Block Tracking enabled on every VM *and* "
+            "every disk, VMware Tools running, and on Windows the VSS and VMware "
+            "Snapshot Provider services set to Manual or Automatic. Do not take "
+            "snapshots once a migration has started.",
+        ]
+    lines += [
+        "- More than 10 VMs from one ESXi host in a plan requires raising that "
+        "host's NFC service memory.",
+        "",
+        "## 2. Validate against your cluster (changes nothing)",
+        "",
+        "```bash",
+        f'for f in plan-{plan.id}-wave-*.yaml; do oc apply --dry-run=server -f "$f" || break; done',
+        "```",
+        "",
+        "## 3. Apply one wave at a time, in order",
+        "",
+        "Each file holds a NetworkMap, a StorageMap and a Plan. Applying it "
+        "creates the plan; it does **not** start a migration.",
+        "",
+        "```bash",
+        f"oc apply -f plan-{plan.id}-wave-1.yaml",
+        f"oc get plan -n {ns} vv-plan-{plan.id}-wave-1 -o jsonpath='{{.status.conditions}}'",
+        "```",
+        "",
+        "Wait for the plan's `Ready` condition, review any `Warning`/`Critical` "
+        "concerns MTV reports on its VMs, then start it from the MTV console, or:",
+        "",
+        "```bash",
+        "cat <<EOF | oc apply -f -",
+        "apiVersion: forklift.konveyor.io/v1beta1",
+        "kind: Migration",
+        "metadata:",
+        f"  name: vv-plan-{plan.id}-wave-1-run",
+        f"  namespace: {ns}",
+        "spec:",
+        "  plan:",
+        f"    name: vv-plan-{plan.id}-wave-1",
+        f"    namespace: {ns}",
+        "EOF",
+        "```",
+        "",
+        "Validate the wave in VirtValidate before moving to the next one.",
+        "",
+        "## Waves",
+        "",
+        "| Wave | VMs | File |",
+        "|---:|---:|---|",
+        *[f"| {b[0]} | {b[1]} | `plan-{plan.id}-wave-{b[0]}.yaml` |" for b in bundled],
+        "",
+    ]
+    return "\n".join(lines)
 
 
 # ===========================================================================

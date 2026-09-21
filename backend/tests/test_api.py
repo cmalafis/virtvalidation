@@ -269,7 +269,8 @@ def test_wave_mtv_yaml_endpoint_renders_three_documents(client, db_session):
     assert "kind: NetworkMap" in body
     assert "kind: StorageMap" in body
     assert "kind: Plan" in body
-    assert "warm: true" in body
+    # ``type`` supersedes the deprecated ``warm`` boolean; cold is the default.
+    assert "type: cold" in body and "warm:" not in body
     assert "DB Backend" in body
     assert "nfs-prod-fast" in body
     # Provider names come from the mapping's vcenter + target rows.
@@ -277,8 +278,9 @@ def test_wave_mtv_yaml_endpoint_renders_three_documents(client, db_session):
     assert "name: ocp-east" in body
     # VM names emitted lowercase (RFC1123).
     assert "name: db-prod-01" in body
-    # Original VM names preserved on ``id`` for traceback.
-    assert "id: db-prod-01" in body
+    # These VMs were added by hand (no MoRef) → name only. A display name in
+    # ``id`` would make MTV fail the lookup rather than fall back to name.
+    assert "- name: db-prod-01" in body and "id: db-prod-01" not in body
 
 
 def test_plan_yaml_bundle_returns_zip(client, db_session):
@@ -352,7 +354,9 @@ def test_plan_yaml_bundle_returns_zip(client, db_session):
     assert r.headers["content-type"].startswith("application/zip")
     assert "attachment" in r.headers["content-disposition"]
     with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
-        names = sorted(zf.namelist())
+        # README.md (apply order, prerequisites, dry-run) ships alongside the waves.
+        assert "README.md" in zf.namelist()
+        names = sorted(n for n in zf.namelist() if n.endswith(".yaml"))
         assert names == [
             f"plan-{plan.id}-wave-1.yaml",
             f"plan-{plan.id}-wave-2.yaml",

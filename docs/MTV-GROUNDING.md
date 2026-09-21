@@ -310,15 +310,23 @@ DRS/DPM/FT, USB/SR-IOV/passthrough devices, NIC names (guest-dependent).
 
 ---
 
-## 13. Current generator vs this reference (`backend/app/core/mtv.py`)
+## 13. Generator vs this reference (`backend/app/core/mtv.py`)
 
-| Line | Today | Grounded verdict |
-|---|---|---|
-| `:337` | `vms[].id` = vSphere **display name** | **Wrong.** `id` is the MoRef. Emit `name` only until MoRef is ingested. |
-| `:337` | `vms[].name` = RFC1123-slugified name | **Wrong.** `name` is the *source* qualified name; the slug belongs in `targetName` (or omit — MTV renames automatically). |
-| `:355` | `warm: True` hardcoded | Deprecated field; and forces CBT/Tools prerequisites on every VM. Emit `type: cold\|warm` from an operator choice. |
-| `:295` | StorageMap emits `storageClass` only | `accessMode`/`volumeMode` are valid and the operator's choice is dropped. |
-| `:237-255` | unmapped network → silent `type: pod` | Valid YAML, wrong migration. Should be an error or explicit `ignored`. |
-| — | `cudn`/`udn` catalog types all emit `multus` | Primary UDN must emit `type: pod`; only secondary CUDN/NAD emit `multus`. |
-| — | `preserveStaticIPs` not set | Defaults true; fine, but should be explicit + surfaced. |
-| — | apiVersion `forklift.konveyor.io/v1beta1`, three kinds, provider refs by name | Correct. |
+Status as of 2026-09-20, after the emission fixes. Every document the
+generator returns is validated offline against the vendored v2.12.1 CRD
+schemas plus semantic checks (`app/core/mtv_validate.py`); a violation
+raises instead of emitting.
+
+| Finding (at `b9493f8`) | Status |
+|---|---|
+| `vms[].id` held the vSphere **display name** | **Fixed.** `id` = MoRef from the RVTools `VM ID` column; VMs without one emit `name` only. The validator rejects any `id` that isn't `vm-<n>`. |
+| `vms[].name` was a slugified name | **Fixed.** Source name verbatim; MTV adjusts the target name itself. |
+| `vms[].namespace` used as a per-VM target override | **Fixed.** It is the *source* namespace (OpenShift providers only). A wave resolving to two namespaces is now refused. |
+| `warm: True` hardcoded (deprecated field) | **Fixed.** `type: cold\|warm` from `migration_plans.migration_type`; default cold. |
+| StorageMap dropped the operator's `access_mode` | **Fixed.** `accessMode` emitted when set and in the CRD enum. |
+| Unmapped network → silent `type: pod` | **Fixed.** Refused with the network and a VM that uses it. |
+| Mapped NAD with no namespace → `multus` with empty namespace | **Fixed** (found by the validator). Defaults to the VM's resolved target namespace. |
+| `cudn`/`udn` catalog types all emit `multus` | **Open.** A *primary* UDN must emit `type: pod` (§2.1). Needs a primary/secondary role on `TargetNetwork`. Until then, map VMs bound for a primary-UDN namespace to a catalog entry of type `pod`. |
+| `volumeMode` | **Open.** Not modelled on `TargetStorageClass`; not emitted. |
+| Source `id` (moRef) for networks / datastores | **Open.** Maps reference sources by `name`, which the CRD allows; RVTools carries no network/datastore MoRefs in the sheets read today. Ambiguous only if two source networks share a name in one vCenter. |
+| `preserveStaticIPs` not set | Unchanged — CRD default is `true`. |

@@ -280,7 +280,7 @@ LLM-driven wave planning + MTV/Forklift YAML generation.
 <details><summary><strong><code>app.api.plans</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/plans.py`  
-Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_generation`, `app.core.preclassifier`, `app.core.reporter`, `app.core.target_resolution`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
+Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_generation`, `app.core.plan_pipeline`, `app.core.preclassifier`, `app.core.reporter`, `app.core.target_resolution`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
 
 **Routes**
 
@@ -320,10 +320,11 @@ Depends on: `app.core.config`
   - Methods:
     - `resolve_network(self, source_network)`
     - `resolve_storage(self, source_datastore)`
+    - `resolve_access_mode(self, source_datastore)` — The operator's access-mode choice for this datastore, or None to
     - `resolve_namespace(self, vm)` — Dispatch on the namespace_mappings shape.
 - **`WaveContext`** (Class)
   - Inputs the YAML generator needs in addition to the per-VM rows.
-  - Fields: `plan_id`, `wave_number`, `rationale`, `namespace`, `source_provider`, `destination_provider`, `default_target_namespace`
+  - Fields: `plan_id`, `wave_number`, `rationale`, `namespace`, `source_provider`, `destination_provider`, `default_target_namespace`, `migration_type`
   - Methods:
     - `from_settings(cls, plan_id, wave_number, rationale)`
 
@@ -365,7 +366,7 @@ Depends on: `app.core.db`
   - Customer intent captured by the planning wizard.
   - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
 - **`MigrationPlan`** (SQLAlchemy model · table `migration_plans`)
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `created_at`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `status`, `progress_message`, `migration_type`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `created_at`
 
 </details>
 
@@ -386,9 +387,9 @@ Depends on: `app.models.plan`
   - Fields: `wave_number`, `name`, `vm_ids`, `vm_names`, `rationale`, `estimated_duration`, `estimated_risk`, `risk_level`, `considerations`, `applications_included`, `applications_split_warning`
 - **`PlanRead`** (Pydantic schema)
   - API response shape for a stored plan.
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`, `plans`, `plan_count`
+  - Fields: `id`, `name`, `migration_type`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`, `plans`, `plan_count`
 - **`PlanCreate`** (Pydantic schema)
-  - Fields: `vm_ids`, `name`, `mapping_ids`, `preclassification_enabled`, `ha_strategy`
+  - Fields: `vm_ids`, `name`, `mapping_ids`, `migration_type`, `preclassification_enabled`, `ha_strategy`
 - **`PreviewGroupsResponse`** (Pydantic schema)
   - Result of POST /api/plans/preview-groups — no plan persisted.
   - Fields: `vm_count`, `groups_formed`, `groups`, `over_ceiling`, `ceiling`
@@ -1517,6 +1518,17 @@ Path: `backend/app/core/migrations.py`
 
 </details>
 
+<details><summary><strong><code>app.core.mtv_validate</code></strong> — <em>Business logic</em> · Offline validation of generated MTV documents against the real CRD schemas.</summary>
+
+Path: `backend/app/core/mtv_validate.py`  
+
+**Functions**
+
+- `validate_documents(yaml_text)` — Every problem found, as ``"<Kind>/<name>: <path>: <message>"``. Empty = valid.
+- `assert_valid(yaml_text)`
+
+</details>
+
 <details><summary><strong><code>app.core.network_review</code></strong> — <em>Business logic</em> · Network Design Review — gap analysis between source VMware networking and</summary>
 
 Path: `backend/app/core/network_review.py`  
@@ -1589,7 +1601,7 @@ Depends on: `app.core.concurrency`, `app.core.family`, `app.core.mapping_validat
 
 **Functions**
 
-- `emit_wave_yaml(plan_id, wave, description, vm_by_id, resolver)` — Stage 7 — render one wave's MTV YAML.
+- `emit_wave_yaml(plan_id, wave, description, vm_by_id, resolver, migration_type)` — Stage 7 — render one wave's MTV YAML.
 - `run_pipeline(vms, mappings)` — Walk the seven stages and return an end-to-end annotated plan.
 
 </details>

@@ -1429,6 +1429,7 @@ const DATA = {
           "app.core.mapping_validation",
           "app.core.mtv",
           "app.core.plan_generation",
+          "app.core.plan_pipeline",
           "app.core.preclassifier",
           "app.core.reporter",
           "app.core.target_resolution",
@@ -1478,6 +1479,10 @@ const DATA = {
                 "summary": ""
               },
               {
+                "name": "resolve_access_mode",
+                "summary": "The operator's access-mode choice for this datastore, or None to"
+              },
+              {
                 "name": "resolve_namespace",
                 "summary": "Dispatch on the namespace_mappings shape."
               }
@@ -1495,7 +1500,8 @@ const DATA = {
               "namespace",
               "source_provider",
               "destination_provider",
-              "default_target_namespace"
+              "default_target_namespace",
+              "migration_type"
             ],
             "methods": [
               {
@@ -1643,6 +1649,7 @@ const DATA = {
               "mapping_ids",
               "status",
               "progress_message",
+              "migration_type",
               "progress_percent",
               "error_message",
               "started_at",
@@ -1749,6 +1756,7 @@ const DATA = {
             "fields": [
               "id",
               "name",
+              "migration_type",
               "vm_ids",
               "waves",
               "summary",
@@ -1779,6 +1787,7 @@ const DATA = {
               "vm_ids",
               "name",
               "mapping_ids",
+              "migration_type",
               "preclassification_enabled",
               "ha_strategy"
             ],
@@ -4988,6 +4997,27 @@ const DATA = {
           {
             "name": "apply_migrations",
             "summary": "Drive the full migration flow at startup."
+          }
+        ],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.core.mtv_validate",
+        "title": "app.core.mtv_validate",
+        "subtitle": "backend/app/core/mtv_validate.py",
+        "summary": "Offline validation of generated MTV documents against the real CRD schemas.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "validate_documents",
+            "summary": "Every problem found, as ``\"<Kind>/<name>: <path>: <message>\"``. Empty = valid."
+          },
+          {
+            "name": "assert_valid",
+            "summary": ""
           }
         ],
         "depends_on": []

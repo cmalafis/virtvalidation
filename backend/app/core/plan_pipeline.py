@@ -139,6 +139,7 @@ def _vm_payload(vm: VM) -> dict[str, Any]:
     """
     return {
         "name": vm.name,
+        "moref": vm.moref or "",
         "vsphere_networks": list(vm.vsphere_networks or []),
         "vsphere_datastores": list(vm.vsphere_datastores or []),
         "environment": vm.environment or "",
@@ -189,6 +190,7 @@ def emit_wave_yaml(
     description: str,
     vm_by_id: dict[int, VM],
     resolver: MappingResolver | None,
+    migration_type: str = "cold",
 ) -> str:
     """Stage 7 — render one wave's MTV YAML.
 
@@ -213,6 +215,7 @@ def emit_wave_yaml(
         plan_id=plan_id,
         wave_number=wave.wave_number,
         rationale=description,
+        migration_type=migration_type,
     )
     return generate_wave_yaml(ctx, vm_payloads, resolver=resolver)
 
@@ -225,6 +228,7 @@ async def run_pipeline(
     backend=None,
     max_llm_attempts: int = 3,
     progress_cb=None,
+    migration_type: str = "cold",
 ) -> PlanPipelineResult:
     """Walk the seven stages and return an end-to-end annotated plan.
 
@@ -297,7 +301,9 @@ async def run_pipeline(
         wave_mapping = _mapping_for_wave(aw.wave, mappings, vm_by_id)
         resolver = _build_resolver(wave_mapping)
         try:
-            aw.mtv_yaml = emit_wave_yaml(plan_id, aw.wave, aw.description, vm_by_id, resolver)
+            aw.mtv_yaml = emit_wave_yaml(
+                plan_id, aw.wave, aw.description, vm_by_id, resolver, migration_type
+            )
         except MTVGenerationError as exc:
             # Surface as the verbatim error; the background task wraps
             # this into the plan.error_message field. We deliberately
