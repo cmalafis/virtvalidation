@@ -21,6 +21,8 @@ svglib<1.6.0              # xhtml2pdf hard-requires svglib; 1.6.0+ added
                           # the dep tree cairo-free. Our reports don't
                           # use SVG, so the older renderer suffices.
 pyyaml==6.0.1
+openpyxl==3.1.5           # server-side RVTools parsing (read-only streaming mode)
+python-multipart==0.0.20  # FastAPI UploadFile / Form for POST /api/imports/rvtools
 filelock==3.20.3          # explicit pin — fixes GHSA-w853-jp5j-5j7f, GHSA-qmgc-5h2g-mvrw
 
 # --- dev / CI only (kept here per project convention) ---

@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.audit import router as audit_router
 from app.api.command_audits import router as command_audits_router
 from app.api.health import router as health_router
+from app.api.imports import router as imports_router
 from app.api.inference_logs import router as inference_logs_router
 from app.api.network_reviews import router as network_reviews_router
 from app.api.plans import router as plans_router
@@ -32,6 +33,7 @@ from app.api.waves import (
 )
 from app.core.db import engine
 from app.core.fips import log_startup_warning as _fips_startup_log
+from app.core.import_jobs import fail_orphan_imports
 from app.core.llm.runtime import get_active_backend
 from app.core.migrations import MigrationError, apply_migrations
 from app.core.scheduler import shutdown_scheduler, start_scheduler
@@ -136,6 +138,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001 — startup must not block API serving
         logger.error("startup.fail_orphan_plans error=%s", e)
 
+    # Same story for inventory imports that were mid-flight.
+    try:
+        fail_orphan_imports()
+    except Exception as e:  # noqa: BLE001 — startup must not block API serving
+        logger.error("startup.fail_orphan_imports error=%s", e)
+
     # Log the FIPS posture at boot so federal deployments leave a clear
     # breadcrumb in container logs about whether the application is
     # actually running in compliance mode.
@@ -189,6 +197,7 @@ app.include_router(command_audits_router, prefix="/api/command-audits")
 app.include_router(templates_router, prefix="/api/templates")
 app.include_router(reports_router, prefix="/api/reports")
 app.include_router(rvtools_router, prefix="/api/rvtools")
+app.include_router(imports_router, prefix="/api/imports")
 app.include_router(network_reviews_router, prefix="/api/network-reviews")
 app.include_router(storage_reviews_router, prefix="/api/storage-reviews")
 app.include_router(ocp_targets_router, prefix="/api/sources/targets")

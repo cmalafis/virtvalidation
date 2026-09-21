@@ -96,11 +96,15 @@ MAX_VMS_PER_PLAN_SCOPE: int = _env_int("MAX_VMS_PER_PLAN_SCOPE", 10_000)
 #: a single bulk request.
 MAX_VMS_PER_RVTOOLS_IMPORT: int = _env_int("MAX_VMS_PER_RVTOOLS_IMPORT", 10_000)
 
-#: Recommended chunk size for streaming/chunked import flows. Not
-#: enforced on any current endpoint (chunked uploads were deferred
-#: past the 10K cap), but documented here so the eventual streaming
-#: importer has a default to use.
+#: Batch size for the server-side streaming importer
+#: (``app.core.import_jobs``): VMs upserted per transaction. One commit
+#: per batch means a late failure keeps the completed batches.
 MAX_VMS_PER_CHUNK: int = _env_int("MAX_VMS_PER_CHUNK", 500)
+
+#: Largest inventory file the upload endpoint will spool to disk. A
+#: 5,000-VM all-sheets RVTools export is ~10 MB; this leaves headroom
+#: without letting a mis-click fill the pod's emptyDir.
+MAX_IMPORT_UPLOAD_BYTES: int = _env_int("MAX_IMPORT_UPLOAD_BYTES", 100 * 1024 * 1024)
 
 
 # ---------------------------------------------------------------------------
@@ -120,5 +124,6 @@ __all__ = [
     "MAX_VMS_PER_PLAN_SCOPE",
     "MAX_VMS_PER_RVTOOLS_IMPORT",
     "MAX_VMS_PER_CHUNK",
+    "MAX_IMPORT_UPLOAD_BYTES",
     "MAX_AUDIT_LOG_PAGE_SIZE",
 ]
