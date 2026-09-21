@@ -1,7 +1,18 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base, JSONType
@@ -48,7 +59,14 @@ class VM(Base):
     __tablename__ = "vms"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # NOT unique. vSphere only requires a VM name to be unique within its
+    # folder, so one vCenter can legitimately hold two "web01"s, and two
+    # vCenters routinely do. Identity is ``(source_vcenter_id, moref)``
+    # (``uq_vms_vcenter_moref``). For rows without a MoRef — manually
+    # added VMs, exports that lost the column — name-within-vCenter is
+    # the match key, enforced in code: ``api.vms.create_vm`` and
+    # ``core.import_jobs._VCenterIndex``.
+    name: Mapped[str] = mapped_column(String(255), index=True)
     source_hostname: Mapped[str] = mapped_column(String(255))
     target_hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
@@ -153,6 +171,37 @@ class VM(Base):
     # ``last_seen_in_upload_at`` records when the row was last
     # observed in any RVTools import; together these support a "stale
     # inventory" filter without auto-deleting rows.
+    # vSphere identity. ``moref`` is the managed object ID ("vm-1234") —
+    # the value MTV expects in ``plan.spec.vms[].id`` (docs/MTV-GROUNDING.md
+    # §4). It is only unique within one vCenter, hence the composite
+    # ``uq_vms_vcenter_moref``. ``vm_uuid`` is the vCenter instance UUID,
+    # kept for reconciliation when a VM is re-registered and its MoRef
+    # changes. Both NULL for manually added VMs and for exports that lost
+    # the columns.
+    moref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    vm_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Sizing + placement facts from the RVTools vInfo sheet. Relational
+    # because the planner and list filters query them: ``esxi_host`` and
+    # ``disk_count`` bound wave size (MTV limits are per ESXi host and per
+    # plan disk count — MTV-GROUNDING.md §8); cpu/memory/provisioned feed
+    # capacity fit.
+    power_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    esxi_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    vsphere_datacenter: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    guest_os_full: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    num_cpus: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    disk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    nic_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    provisioned_mb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Everything else the export says about the VM's hardware — firmware,
+    # HW version, CBT, FT state, per-disk mode/sharing/RDM, snapshots,
+    # NICs, hot-add. Read only by the migratability assessment, never
+    # filtered on, so it stays a JSON document. Shape is produced by
+    # ``app.core.rvtools_parser`` and versioned via its ``"v"`` key.
+    hardware_facts: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+
     missing_from_last_upload: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -182,6 +231,15 @@ class VM(Base):
     __table_args__ = (
         Index("ix_vms_source_vcenter_status", "source_vcenter_id", "status"),
         Index("ix_vms_app_env", "application_hint", "environment"),
+        # Facet + filter columns the inventory and plan selector group by.
+        # ``environment`` is only the trailing column of ix_vms_app_env,
+        # which the planner can't use for an environment-only predicate.
+        Index("ix_vms_environment", "environment"),
+        Index("ix_vms_vsphere_cluster", "vsphere_cluster"),
+        Index("ix_vms_os_family", "os_family"),
+        Index("ix_vms_power_state", "power_state"),
+        Index("ix_vms_esxi_host", "esxi_host"),
+        UniqueConstraint("source_vcenter_id", "moref", name="uq_vms_vcenter_moref"),
     )
 
     snapshots: Mapped[list["BaselineSnapshot"]] = relationship(

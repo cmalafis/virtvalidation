@@ -5,6 +5,7 @@ from app.models.baseline_run import (
     BaselineRunStatus,
     VMCollectionStatus,
 )
+from app.models.import_job import ImportJob, ImportJobReject
 from app.models.network_review import (
     FindingCategory,
     FindingConfidence,
@@ -27,6 +28,8 @@ from app.models.validation_run import (
 from app.models.vm import VM, BaselineSnapshot, VMStatus
 
 __all__ = [
+    "ImportJob",
+    "ImportJobReject",
     "VM",
     "BaselineSnapshot",
     "VMStatus",

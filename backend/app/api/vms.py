@@ -161,6 +161,21 @@ def _decorate_with_resolution(vms: list[VM], db: Session) -> list[dict]:
 @router.post("", response_model=VMRead, status_code=status.HTTP_201_CREATED)
 def create_vm(payload: VMCreate, db: Session = Depends(get_db)) -> VM:
     vm = VM(**payload.model_dump())
+    # Name uniqueness is per source vCenter (``uq_vms_vcenter_name``). SQL
+    # treats NULLs as distinct in a unique constraint, so a manually added
+    # VM with no vCenter needs this explicit check to keep its 409.
+    clash = db.scalar(
+        select(VM.id).where(
+            VM.name == vm.name,
+            VM.source_vcenter_id.is_(None)
+            if vm.source_vcenter_id is None
+            else VM.source_vcenter_id == vm.source_vcenter_id,
+        )
+    )
+    if clash is not None:
+        raise HTTPException(
+            status_code=409, detail=f"VM with name '{payload.name}' already exists"
+        )
     _apply_environment_detection(vm)
     db.add(vm)
     try:
