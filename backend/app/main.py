@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.assessment import router as assessment_router
 from app.api.audit import router as audit_router
 from app.api.command_audits import router as command_audits_router
 from app.api.health import router as health_router
@@ -198,6 +199,7 @@ app.include_router(templates_router, prefix="/api/templates")
 app.include_router(reports_router, prefix="/api/reports")
 app.include_router(rvtools_router, prefix="/api/rvtools")
 app.include_router(imports_router, prefix="/api/imports")
+app.include_router(assessment_router, prefix="/api/assessment")
 app.include_router(network_reviews_router, prefix="/api/network-reviews")
 app.include_router(storage_reviews_router, prefix="/api/storage-reviews")
 app.include_router(ocp_targets_router, prefix="/api/sources/targets")

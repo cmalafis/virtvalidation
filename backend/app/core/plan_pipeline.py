@@ -94,6 +94,10 @@ class AnnotatedWave:
     inference_backend_type: str | None = None
     inference_model: str = ""
     inference_latency_ms: int = 0
+    # Migratability findings across this wave's VMs, rolled up by rule —
+    # [{id, category, label, vm_count, vm_names}]. Deterministic (from
+    # app.core.assessment); never produced or seen by the LLM.
+    considerations: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Render to the JSON shape persisted in MigrationPlan.waves[]."""
@@ -110,6 +114,7 @@ class AnnotatedWave:
             "risk_rationale": self.risk_rationale,
             "notable_concerns": list(self.notable_concerns),
             "method": self.method,
+            "considerations": list(self.considerations),
             "rationale": self.description,  # legacy field name; kept for UI back-compat
             "mtv_yaml_available": bool(self.mtv_yaml),
         }
@@ -127,6 +132,27 @@ class PlanPipelineResult:
 
 def _vm_name_lookup(vms: list[VM]) -> dict[int, str]:
     return {vm.id: vm.name for vm in vms}
+
+
+def _wave_considerations(vms: list[VM], migration_type: str) -> list[dict[str, Any]]:
+    """What the operator must know about this wave before starting it:
+    each migratability finding present, and which VMs carry it. Warm-only
+    findings are dropped from a cold plan, where they don't apply."""
+    rollup: dict[str, dict[str, Any]] = {}
+    for vm in vms:
+        for f in (vm.assessment or {}).get("findings") or []:
+            if f.get("applies_to") == "warm" and migration_type != "warm":
+                continue
+            row = rollup.setdefault(
+                f["id"],
+                {"id": f["id"], "category": f["category"], "label": f["label"], "vm_names": []},
+            )
+            row["vm_names"].append(vm.name)
+    order = {"Critical": 0, "Warning": 1, "Information": 2}
+    out = sorted(rollup.values(), key=lambda r: (order.get(r["category"], 9), r["id"]))
+    for row in out:
+        row["vm_count"] = len(row["vm_names"])
+    return out
 
 
 def _vm_payload(vm: VM) -> dict[str, Any]:
@@ -298,6 +324,9 @@ async def run_pipeline(
     vm_by_id = {vm.id: vm for vm in vms}
     for aw in annotated:
         aw.vm_names = [name_lookup.get(vid, f"vm-{vid}") for vid in aw.wave.vm_ids]
+        aw.considerations = _wave_considerations(
+            [vm_by_id[vid] for vid in aw.wave.vm_ids if vid in vm_by_id], migration_type
+        )
         wave_mapping = _mapping_for_wave(aw.wave, mappings, vm_by_id)
         resolver = _build_resolver(wave_mapping)
         try:

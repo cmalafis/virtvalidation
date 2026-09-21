@@ -202,6 +202,21 @@ class VM(Base):
     # ``app.core.rvtools_parser`` and versioned via its ``"v"`` key.
     hardware_facts: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
 
+    # Migratability assessment (app.core.assessment) — recomputed on every
+    # import and by POST /api/assessment/run. ``assessment_status`` is its
+    # own column so inventory can filter on it; the findings document is
+    # only read per VM.
+    assessment_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
+    assessment: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    # Ids of the findings only, for the inventory's "VMs with finding X"
+    # filter. The full document can't serve that: a rule id also appears
+    # under ``not_evaluated`` when the rule couldn't run.
+    assessment_finding_ids: Mapped[list[str]] = mapped_column(
+        JSONType, nullable=False, default=list
+    )
+
     missing_from_last_upload: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -242,6 +257,15 @@ class VM(Base):
         Index("ix_vms_esxi_host", "esxi_host"),
         UniqueConstraint("source_vcenter_id", "moref", name="uq_vms_vcenter_moref"),
     )
+
+    @property
+    def assessment_findings(self) -> list[dict[str, str]]:
+        """Compact findings for list payloads; the full document (text,
+        remediation, evidence) is served per VM."""
+        return [
+            {"id": f.get("id", ""), "category": f.get("category", ""), "label": f.get("label", "")}
+            for f in (self.assessment or {}).get("findings") or []
+        ]
 
     snapshots: Mapped[list["BaselineSnapshot"]] = relationship(
         back_populates="vm",

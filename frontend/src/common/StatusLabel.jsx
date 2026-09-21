@@ -57,6 +57,14 @@ const LIFECYCLE = {
   rolled_back: { color: "orange", label: "Rolled back" },
 };
 
+// Migratability assessment roll-up (app.core.assessment).
+const ASSESSMENT = {
+  blocked: { color: "red", icon: ExclamationCircleIcon, label: "Cannot migrate" },
+  warning: { color: "orange", icon: ExclamationTriangleIcon, label: "Needs attention" },
+  ok: { color: "green", icon: CheckCircleIcon, label: "Ready" },
+  unknown: { color: "grey", icon: OutlinedClockIcon, label: "Not assessed" },
+};
+
 // Design-review + generic record states.
 const RECORD = {
   complete: { color: "green", label: "Complete" },
@@ -73,6 +81,7 @@ const TABLES = {
   status: STATUS,
   severity: SEVERITY,
   lifecycle: LIFECYCLE,
+  assessment: ASSESSMENT,
   record: RECORD,
 };
 

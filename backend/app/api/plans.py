@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.assessment import blocks_migration_type
 from app.core.audit import record_audit
 from app.core.config import settings as _app_settings
 from app.core.db import get_db
@@ -135,6 +136,7 @@ def _compose_plan_name(
     status_code=status.HTTP_202_ACCEPTED,
 )
 def create_plan(
+    request: Request,
     payload: PlanCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -168,6 +170,42 @@ def create_plan(
     missing = [vid for vid in unique_ids if vid not in known_ids]
     if missing:
         raise HTTPException(status_code=404, detail=f"Unknown vm_ids: {missing}")
+
+    # Migratability gate. Finding a blocker here costs a re-selection;
+    # finding it in the MTV console on cutover night costs the window.
+    unfit = [(vm, blocks_migration_type(vm.assessment, payload.migration_type)) for vm in vms]
+    unfit = [(vm, ids) for vm, ids in unfit if ids]
+    if unfit and not payload.override_assessment:
+        shown = "; ".join(f"{vm.name} ({', '.join(ids)})" for vm, ids in unfit[:8])
+        more = f" (+{len(unfit) - 8} more)" if len(unfit) > 8 else ""
+        warm_hint = (
+            " For the warm-only findings, generate a cold plan for these VMs or enable "
+            "Changed Block Tracking and re-import."
+            if payload.migration_type == "warm"
+            else ""
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{len(unfit)} selected VM(s) cannot migrate as a {payload.migration_type} plan: "
+                f"{shown}{more}. Deselect them (inventory filter: assessment_status=blocked), "
+                f"fix them in vSphere and re-import, or resend with override_assessment=true."
+                f"{warm_hint}"
+            ),
+        )
+    if unfit:
+        record_audit(
+            db,
+            action="plan.assessment_overridden",
+            actor=request.headers.get("x-actor", "user"),
+            resource_type="plan",
+            resource_id=None,
+            details={
+                "migration_type": payload.migration_type,
+                "vms": {vm.name: ids for vm, ids in unfit[:200]},
+                "count": len(unfit),
+            },
+        )
 
     # Partition by (vcenter, cluster, namespace). Unresolvable VMs
     # surface immediately as a 422 so the operator fixes the

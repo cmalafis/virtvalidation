@@ -254,6 +254,8 @@ def _apply_vm_filters(
     networks: list[str] | None = None,
     datastores: list[str] | None = None,
     missing_from_last_upload: bool | None = None,
+    assessment_statuses: list[str] | None = None,
+    assessment_findings: list[str] | None = None,
 ) -> Select:
     """Compose the WHERE clause for the inventory listing and its facets.
 
@@ -300,6 +302,18 @@ def _apply_vm_filters(
             )
     if missing_from_last_upload is not None:
         stmt = stmt.where(VM.missing_from_last_upload.is_(missing_from_last_upload))
+    if assessment_statuses:
+        stmt = stmt.where(VM.assessment_status.in_(assessment_statuses))
+    if assessment_findings:
+        doc = cast(VM.assessment_finding_ids, String)
+        stmt = stmt.where(
+            or_(
+                *[
+                    doc.like(f"%{_json_string_literal(i)}%", escape="\\")
+                    for i in assessment_findings
+                ]
+            )
+        )
     if search:
         # Case-insensitive contains on the three free-form columns the
         # operator is likely to recognize: VM name, owner, app hint.
@@ -354,6 +368,8 @@ def list_vms(
     network: list[str] | None = Query(default=None),
     datastore: list[str] | None = Query(default=None),
     missing_from_last_upload: bool | None = Query(default=None),
+    assessment_status: list[str] | None = Query(default=None),
+    assessment_finding: list[str] | None = Query(default=None),
     search: str | None = Query(default=None, max_length=255),
     # ``offset`` accepted as an alias for ``skip`` so older clients
     # (and tests) that pre-date the pagination overhaul keep working.
@@ -386,6 +402,8 @@ def list_vms(
         networks=network,
         datastores=datastore,
         missing_from_last_upload=missing_from_last_upload,
+        assessment_statuses=assessment_status,
+        assessment_findings=assessment_finding,
     )
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
 
@@ -421,6 +439,8 @@ def vm_facets(
     network: list[str] | None = Query(default=None),
     datastore: list[str] | None = Query(default=None),
     missing_from_last_upload: bool | None = Query(default=None),
+    assessment_status: list[str] | None = Query(default=None),
+    assessment_finding: list[str] | None = Query(default=None),
     search: str | None = Query(default=None, max_length=255),
 ) -> dict:
     """Per-dimension counts so the filter UI can show "Production (600)".
@@ -448,6 +468,8 @@ def vm_facets(
         networks=network,
         datastores=datastore,
         missing_from_last_upload=missing_from_last_upload,
+        assessment_statuses=assessment_status,
+        assessment_findings=assessment_finding,
     )
     subq = base.subquery()
     total = db.scalar(select(func.count()).select_from(subq)) or 0
@@ -494,6 +516,7 @@ def vm_facets(
         "classification_level": classification_facet,
         "vsphere_cluster": _facet("vsphere_cluster"),
         "power_state": _facet("power_state"),
+        "assessment_status": _facet("assessment_status"),
         "total": total,
     }
 
@@ -539,6 +562,8 @@ def delete_all_vms(
     network: list[str] | None = Query(default=None),
     datastore: list[str] | None = Query(default=None),
     missing_from_last_upload: bool | None = Query(default=None),
+    assessment_status: list[str] | None = Query(default=None),
+    assessment_finding: list[str] | None = Query(default=None),
     search: str | None = Query(default=None, max_length=255),
 ) -> dict:
     """Bulk-delete every VM that matches the given filters.
@@ -583,6 +608,8 @@ def delete_all_vms(
         networks=network,
         datastores=datastore,
         missing_from_last_upload=missing_from_last_upload,
+        assessment_statuses=assessment_status,
+        assessment_findings=assessment_finding,
     )
     vms = list(db.scalars(base).all())
     deleted_count = len(vms)
@@ -948,6 +975,22 @@ def set_vm_environment(
 def get_vm(vm_id: int, db: Session = Depends(get_db)) -> dict:
     vm = _get_vm_or_404(db, vm_id)
     return _vm_with_resolution(vm, resolve_vm_target(vm, db))
+
+
+@router.get("/{vm_id}/assessment")
+def get_vm_assessment(vm_id: int, db: Session = Depends(get_db)) -> dict:
+    """Full migratability findings for one VM: what MTV will flag, what
+    is lost, how to fix it, and which rules could not be evaluated."""
+    vm = _get_vm_or_404(db, vm_id)
+    doc = dict(vm.assessment or {})
+    return {
+        "vm_id": vm.id,
+        "name": vm.name,
+        "status": vm.assessment_status,
+        "ruleset": doc.get("ruleset"),
+        "findings": doc.get("findings") or [],
+        "not_evaluated": doc.get("not_evaluated") or [],
+    }
 
 
 def _diff_for_audit(before: dict, after: dict) -> dict:

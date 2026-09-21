@@ -416,6 +416,12 @@ const DATA = {
             "summary": ""
           },
           {
+            "method": "GET",
+            "path": "/api/vms/{vm_id}/assessment",
+            "handler": "get_vm_assessment",
+            "summary": "Full migratability findings for one VM: what MTV will flag, what"
+          },
+          {
             "method": "PATCH",
             "path": "/api/vms/{vm_id}",
             "handler": "update_vm",
@@ -580,6 +586,9 @@ const DATA = {
               "nic_count",
               "provisioned_mb",
               "hardware_facts",
+              "assessment_status",
+              "assessment",
+              "assessment_finding_ids",
               "missing_from_last_upload",
               "last_seen_in_upload_at",
               "created_at",
@@ -587,7 +596,12 @@ const DATA = {
               "snapshots",
               "validations"
             ],
-            "methods": [],
+            "methods": [
+              {
+                "name": "assessment_findings",
+                "summary": "Compact findings for list payloads; the full document (text,"
+              }
+            ],
             "summary": ""
           },
           {
@@ -735,6 +749,8 @@ const DATA = {
               "nic_count",
               "provisioned_mb",
               "missing_from_last_upload",
+              "assessment_status",
+              "assessment_findings",
               "created_at",
               "updated_at",
               "resolved_target_cluster_id",
@@ -776,6 +792,7 @@ const DATA = {
               "classification_level",
               "vsphere_cluster",
               "power_state",
+              "assessment_status",
               "total"
             ],
             "methods": [],
@@ -1423,6 +1440,7 @@ const DATA = {
         "classes": [],
         "functions": [],
         "depends_on": [
+          "app.core.assessment",
           "app.core.audit",
           "app.core.config",
           "app.core.db",
@@ -1788,6 +1806,7 @@ const DATA = {
               "name",
               "mapping_ids",
               "migration_type",
+              "override_assessment",
               "preclassification_enabled",
               "ha_strategy"
             ],
@@ -2243,6 +2262,36 @@ const DATA = {
       }
     ],
     "system": [
+      {
+        "kind": "module",
+        "id": "app.api.assessment",
+        "title": "app.api.assessment",
+        "subtitle": "backend/app/api/assessment.py",
+        "summary": "Fleet-level migratability assessment.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/assessment/summary",
+            "handler": "assessment_summary",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/assessment/run",
+            "handler": "run_assessment",
+            "summary": "Re-assess every VM against the current rule set. Cheap and"
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.assessment",
+          "app.core.audit",
+          "app.core.db",
+          "app.models.vm"
+        ]
+      },
       {
         "kind": "module",
         "id": "app.api.command_audits",
@@ -3405,6 +3454,179 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.assessment",
+        "title": "app.core.assessment",
+        "subtitle": "backend/app/core/assessment.py",
+        "summary": "Migratability assessment \u2014 can this VM migrate, and what will it lose?",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "Finding",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "id",
+              "category",
+              "label",
+              "assessment",
+              "remediation",
+              "evidence",
+              "applies_to"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "Skipped",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "id",
+              "label",
+              "reason"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "Assessment",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "status",
+              "findings",
+              "not_evaluated"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "VMFacts",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "name",
+              "source_hostname",
+              "ip_address",
+              "power_state",
+              "guest_os_full",
+              "vsphere_datastores",
+              "disk_count",
+              "hardware"
+            ],
+            "methods": [
+              {
+                "name": "disks",
+                "summary": ""
+              },
+              {
+                "name": "has_disk_detail",
+                "summary": ""
+              },
+              {
+                "name": "powered_on",
+                "summary": ""
+              }
+            ],
+            "summary": "The slice of a VM the rules read. Built from the ORM row by"
+          }
+        ],
+        "functions": [
+          {
+            "name": "facts_from_vm",
+            "summary": ""
+          },
+          {
+            "name": "datastore_missing",
+            "summary": ""
+          },
+          {
+            "name": "rdm_disk",
+            "summary": ""
+          },
+          {
+            "name": "independent_disk",
+            "summary": ""
+          },
+          {
+            "name": "shared_disk",
+            "summary": ""
+          },
+          {
+            "name": "nvme_disk",
+            "summary": ""
+          },
+          {
+            "name": "changed_block_tracking",
+            "summary": ""
+          },
+          {
+            "name": "consolidation_needed",
+            "summary": ""
+          },
+          {
+            "name": "snapshot",
+            "summary": ""
+          },
+          {
+            "name": "guest_os",
+            "summary": ""
+          },
+          {
+            "name": "windows_2012_no_virtio",
+            "summary": ""
+          },
+          {
+            "name": "vm_name",
+            "summary": ""
+          },
+          {
+            "name": "hostname",
+            "summary": ""
+          },
+          {
+            "name": "missing_ip",
+            "summary": ""
+          },
+          {
+            "name": "hotplug",
+            "summary": ""
+          },
+          {
+            "name": "fault_tolerance",
+            "summary": ""
+          },
+          {
+            "name": "cluster_rules",
+            "summary": ""
+          },
+          {
+            "name": "secure_boot",
+            "summary": ""
+          },
+          {
+            "name": "disk_serials",
+            "summary": ""
+          },
+          {
+            "name": "assess",
+            "summary": ""
+          },
+          {
+            "name": "blocks_migration_type",
+            "summary": "Finding ids that make this VM unfit for the given plan type."
+          }
+        ],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
         "id": "app.core.bulk_capture",
         "title": "app.core.bulk_capture",
         "subtitle": "backend/app/core/bulk_capture.py",
@@ -4277,6 +4499,7 @@ const DATA = {
         ],
         "depends_on": [
           "app.core",
+          "app.core.assessment",
           "app.core.audit",
           "app.core.environment",
           "app.core.limits",
@@ -5177,7 +5400,8 @@ const DATA = {
               "inference_response",
               "inference_backend_type",
               "inference_model",
-              "inference_latency_ms"
+              "inference_latency_ms",
+              "considerations"
             ],
             "methods": [
               {
@@ -6183,6 +6407,7 @@ const DATA = {
           }
         ],
         "depends_on": [
+          "app.api.assessment",
           "app.api.audit",
           "app.api.command_audits",
           "app.api.health",
@@ -9685,6 +9910,7 @@ const DATA = {
         "api_calls": [
           "/api/audit?resource_type=vm&limit=50",
           "/api/vms/{id}",
+          "/api/vms/{id}/assessment",
           "/api/vms/{id}/baseline/profile",
           "/api/vms/{id}/snapshots",
           "/api/vms/{id}/validation/latest",
@@ -9804,6 +10030,21 @@ const DATA = {
         "title": "mappingAuthoring.test.jsx",
         "subtitle": "frontend/src/test/mappingAuthoring.test.jsx",
         "summary": "Behavior tests for authoring mapping rows without inventory.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "stub",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/test/migratability.test.jsx",
+        "title": "migratability.test.jsx",
+        "subtitle": "frontend/src/test/migratability.test.jsx",
+        "summary": "The assessment is only useful if the operator can read it: what is wrong,",
         "category": "frontend",
         "api_calls": [],
         "members": [

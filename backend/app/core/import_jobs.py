@@ -36,6 +36,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core import db as _db_module
+from app.core.assessment import assess, facts_from_vm
 from app.core.audit import record_audit
 from app.core.environment import Environment, detect_environment
 from app.core.limits import MAX_VMS_PER_CHUNK, MAX_VMS_PER_RVTOOLS_IMPORT
@@ -219,6 +220,14 @@ def _apply_environment(vm: VM) -> None:
         vm.environment_source = "auto_detected"
 
 
+def _apply_assessment(vm: VM) -> None:
+    result = assess(facts_from_vm(vm)).to_dict()
+    if vm.assessment != result:  # don't dirty the row (and updated_at) for nothing
+        vm.assessment = result
+        vm.assessment_status = result["status"]
+        vm.assessment_finding_ids = [f["id"] for f in result["findings"]]
+
+
 def _apply_fields(vm: VM, fields: dict[str, Any]) -> dict[str, Any]:
     """Apply incoming values; missing/empty incoming keeps the current
     value (a thinner re-export must not blank good data). Returns the
@@ -276,6 +285,7 @@ class _Importer:
                 last_seen_in_upload_at=self.now,
             )
             _apply_environment(vm)
+            _apply_assessment(vm)
             self.db.add(vm)
             idx.add(vm)
             created.append(vm)
@@ -294,6 +304,7 @@ class _Importer:
             idx.by_name.pop(old_name, None)
             idx.by_name[vm.name] = vm
         _apply_environment(vm)
+        _apply_assessment(vm)
         reappeared = vm.missing_from_last_upload
         vm.missing_from_last_upload = False
         vm.last_seen_in_upload_at = self.now

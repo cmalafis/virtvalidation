@@ -167,7 +167,17 @@ def test_warm_plan_emits_type_warm_and_warns_in_the_readme(planned):
     client = planned["client"]
     first = planned["plans"][0]
     client.delete(f"/api/plans/{first['id']}")
-    ids = [i for w in first["waves"][:2] for i in w["vm_ids"]]
+    # Warm needs CBT — take VMs the assessment says can do it.
+    fit = {
+        v["id"]
+        for v in planned["vms"].values()
+        if "vmware.changed_block_tracking.disabled"
+        not in {f["id"] for f in v["assessment_findings"]}
+    }
+    ids = [i for w in first["waves"] for i in w["vm_ids"] if i in fit][:15]
+    unfit = [i for w in first["waves"] for i in w["vm_ids"] if i not in fit][:1]
+    refused = client.post("/api/plans", json={"vm_ids": unfit, "migration_type": "warm"})
+    assert refused.status_code == 422 and "changed_block_tracking" in refused.json()["detail"]
     r = client.post("/api/plans", json={"name": "warm", "vm_ids": ids, "migration_type": "warm"})
     assert r.status_code == 202, r.text
     plan = client.get(f"/api/plans/{r.json()['plans'][0]['id']}").json()

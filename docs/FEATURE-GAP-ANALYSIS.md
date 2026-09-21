@@ -56,6 +56,12 @@ work is therefore one dependency chain rooted in ingestion.
 
 ## Tier 1 — build next (ranked)
 
+**Status 2026-09-21:** #1 GAP-21 done (Phase A). #2 GAP-02 done. #3 GAP-01 done
+(Phase B — see [MIGRATABILITY_ASSESSMENT.md](MIGRATABILITY_ASSESSMENT.md)); GAP-16 is
+reported as *not evaluated* until `vSource` is ingested and targets carry a FIPS
+flag. #4: GAP-03 and GAP-05 (`accessMode`) done, offline CRD validation done;
+GAP-04 primary-UDN role and `volumeMode` remain. #5-#7 not started.
+
 | # | Gap | Why here |
 |---|---|---|
 | 1 | **GAP-21** Server-side multi-sheet ingestion (fix the broken path, keep all columns, wire `detect_environment`) | Root of the dependency chain. Nothing below is possible from `vInfo`-only, and today's UI path is broken outright. Absorbs Prompt R2 Phase 2. |

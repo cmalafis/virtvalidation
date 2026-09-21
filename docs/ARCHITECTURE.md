@@ -37,10 +37,10 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core
 |---|---|---|---|
 | `POST` | `/api/vms` | `create_vm(payload, db)` | — |
 | `POST` | `/api/vms/bulk` | `create_vms_bulk(payload, db)` | Best-effort batch enrollment. |
-| `GET` | `/api/vms` | `list_vms(db, skip, limit, sort_by, sort_order, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, search, offset)` | Paginated, filterable inventory listing. |
-| `GET` | `/api/vms/facets` | `vm_facets(db, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, search)` | Per-dimension counts so the filter UI can show &quot;Production (600)&quot;. |
+| `GET` | `/api/vms` | `list_vms(db, skip, limit, sort_by, sort_order, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, assessment_status, assessment_finding, search, offset)` | Paginated, filterable inventory listing. |
+| `GET` | `/api/vms/facets` | `vm_facets(db, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, assessment_status, assessment_finding, search)` | Per-dimension counts so the filter UI can show &quot;Production (600)&quot;. |
 | `GET` | `/api/vms/stats` | `vm_stats(db)` | Cheap dashboard counters — no filter set, no row reads. |
-| `DELETE` | `/api/vms/all` | `delete_all_vms(request, db, confirm, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, search)` | Bulk-delete every VM that matches the given filters. |
+| `DELETE` | `/api/vms/all` | `delete_all_vms(request, db, confirm, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, assessment_status, assessment_finding, search)` | Bulk-delete every VM that matches the given filters. |
 | `POST` | `/api/vms/bulk-set-environment` | `bulk_set_environment(request, payload, db)` | Atomically set the environment of N VMs. |
 | `POST` | `/api/vms/bulk-set-target-cluster` | `bulk_set_target_cluster(request, payload, db)` | — |
 | `POST` | `/api/vms/bulk-clear-target-cluster` | `bulk_clear_target_cluster(request, payload, db)` | — |
@@ -49,6 +49,7 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core
 | `POST` | `/api/vms/redetect-environment` | `redetect_environment(request, payload, db)` | Re-run the detection cascade on the fleet (or one vCenter). |
 | `PATCH` | `/api/vms/{vm_id}/environment` | `set_vm_environment(request, vm_id, payload, db)` | Operator override of one VM&#x27;s environment. |
 | `GET` | `/api/vms/{vm_id}` | `get_vm(vm_id, db)` | — |
+| `GET` | `/api/vms/{vm_id}/assessment` | `get_vm_assessment(vm_id, db)` | Full migratability findings for one VM: what MTV will flag, what |
 | `PATCH` | `/api/vms/{vm_id}` | `update_vm(request, vm_id, payload, db)` | — |
 | `DELETE` | `/api/vms/{vm_id}` | `delete_vm(request, vm_id, db)` | — |
 | `DELETE` | `/api/vms` | `delete_vms_bulk(request, payload, db)` | Delete multiple VMs in one round-trip. |
@@ -76,7 +77,9 @@ Depends on: `app.core.db`
 - **`VMLifecycleState`** (Class)
   - Plan-membership lifecycle, orthogonal to ``VMStatus``.
 - **`VM`** (SQLAlchemy model · table `vms`)
-  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_cluster_id_override`, `target_namespace_override`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`, `environment_source`, `moref`, `vm_uuid`, `power_state`, `esxi_host`, `vsphere_datacenter`, `guest_os_full`, `num_cpus`, `memory_mb`, `disk_count`, `nic_count`, `provisioned_mb`, `hardware_facts`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
+  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_cluster_id_override`, `target_namespace_override`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`, `environment_source`, `moref`, `vm_uuid`, `power_state`, `esxi_host`, `vsphere_datacenter`, `guest_os_full`, `num_cpus`, `memory_mb`, `disk_count`, `nic_count`, `provisioned_mb`, `hardware_facts`, `assessment_status`, `assessment`, `assessment_finding_ids`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
+  - Methods:
+    - `assessment_findings(self)` — Compact findings for list payloads; the full document (text,
 - **`BaselineSnapshot`** (SQLAlchemy model · table `baseline_snapshots`)
   - Fields: `id`, `vm_id`, `snapshot_number`, `ssh_user`, `raw_data`, `checksum`, `collected_at`, `vm`
 
@@ -100,13 +103,13 @@ Depends on: `app.core.limits`, `app.models.vm`
 - **`ResolvedStorageRead`** (Pydantic schema)
   - Fields: `source`, `target_storage_class_name`, `access_mode`
 - **`VMRead`** (Class)
-  - Fields: `id`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `moref`, `vm_uuid`, `power_state`, `esxi_host`, `vsphere_datacenter`, `guest_os_full`, `num_cpus`, `memory_mb`, `disk_count`, `nic_count`, `provisioned_mb`, `missing_from_last_upload`, `created_at`, `updated_at`, `resolved_target_cluster_id`, `resolved_target_cluster_name`, `resolved_target_namespace`, `resolved_networks`, `resolved_storage`, `resolution_is_complete`, `resolution_reasons`, `resolution_mapping_id`
+  - Fields: `id`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `moref`, `vm_uuid`, `power_state`, `esxi_host`, `vsphere_datacenter`, `guest_os_full`, `num_cpus`, `memory_mb`, `disk_count`, `nic_count`, `provisioned_mb`, `missing_from_last_upload`, `assessment_status`, `assessment_findings`, `created_at`, `updated_at`, `resolved_target_cluster_id`, `resolved_target_cluster_name`, `resolved_target_namespace`, `resolved_networks`, `resolved_storage`, `resolution_is_complete`, `resolution_reasons`, `resolution_mapping_id`
 - **`VMListResponse`** (Pydantic schema)
   - Paginated wrapper for the inventory listing.
   - Fields: `items`, `total`, `skip`, `limit`
 - **`VMFacetsResponse`** (Pydantic schema)
   - Per-dimension counts driven by the same filter set as list_vms.
-  - Fields: `status`, `lifecycle_state`, `environment`, `os_family`, `application_hint`, `vcenter_source_id`, `classification_level`, `vsphere_cluster`, `power_state`, `total`
+  - Fields: `status`, `lifecycle_state`, `environment`, `os_family`, `application_hint`, `vcenter_source_id`, `classification_level`, `vsphere_cluster`, `power_state`, `assessment_status`, `total`
 - **`VMStats`** (Pydantic schema)
   - Cheap aggregate counters for dashboard headers.
   - Fields: `total`, `by_status`, `missing_from_last_upload`
@@ -280,13 +283,13 @@ LLM-driven wave planning + MTV/Forklift YAML generation.
 <details><summary><strong><code>app.api.plans</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/plans.py`  
-Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_generation`, `app.core.plan_pipeline`, `app.core.preclassifier`, `app.core.reporter`, `app.core.target_resolution`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
+Depends on: `app.core.assessment`, `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_generation`, `app.core.plan_pipeline`, `app.core.preclassifier`, `app.core.reporter`, `app.core.target_resolution`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
 
 **Routes**
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
-| `POST` | `/api/plans` | `create_plan(payload, background_tasks, db)` | Kick off async migration plan generation. |
+| `POST` | `/api/plans` | `create_plan(request, payload, background_tasks, db)` | Kick off async migration plan generation. |
 | `POST` | `/api/plans/preview` | `preview_plan_partitions(payload, db)` | Show how the selection will fan out into Plan CRs without |
 | `POST` | `/api/plans/preview-groups` | `preview_groups(payload, db)` | Show how the pre-classifier WOULD group these VMs — no LLM, no plan. |
 | `GET` | `/api/plans` | `list_plans(db, limit)` | — |
@@ -389,7 +392,7 @@ Depends on: `app.models.plan`
   - API response shape for a stored plan.
   - Fields: `id`, `name`, `migration_type`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`, `plans`, `plan_count`
 - **`PlanCreate`** (Pydantic schema)
-  - Fields: `vm_ids`, `name`, `mapping_ids`, `migration_type`, `preclassification_enabled`, `ha_strategy`
+  - Fields: `vm_ids`, `name`, `mapping_ids`, `migration_type`, `override_assessment`, `preclassification_enabled`, `ha_strategy`
 - **`PreviewGroupsResponse`** (Pydantic schema)
   - Result of POST /api/plans/preview-groups — no plan persisted.
   - Fields: `vm_count`, `groups_formed`, `groups`, `over_ceiling`, `ceiling`
@@ -586,6 +589,20 @@ Path: `backend/app/schemas/audit.py`
 ### System Operations
 
 Settings, scheduler config, health probes, app bootstrap.
+
+<details><summary><strong><code>app.api.assessment</code></strong> — <em>API endpoints</em> · Fleet-level migratability assessment.</summary>
+
+Path: `backend/app/api/assessment.py`  
+Depends on: `app.core.assessment`, `app.core.audit`, `app.core.db`, `app.models.vm`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `GET` | `/api/assessment/summary` | `assessment_summary(vcenter_source_id, environment, db)` | — |
+| `POST` | `/api/assessment/run` | `run_assessment(request, db)` | Re-assess every VM against the current rule set. Cheap and |
+
+</details>
 
 <details><summary><strong><code>app.api.command_audits</code></strong> — <em>API endpoints</em> · Read-only per-command SSH audit endpoint.</summary>
 
@@ -922,6 +939,54 @@ Depends on: `app.core`, `app.core.audit`, `app.core.collection.wave_jobs`, `app.
 
 </details>
 
+<details><summary><strong><code>app.core.assessment</code></strong> — <em>Business logic</em> · Migratability assessment — can this VM migrate, and what will it lose?</summary>
+
+Path: `backend/app/core/assessment.py`  
+
+**Classes**
+
+- **`Finding`** (Class)
+  - Fields: `id`, `category`, `label`, `assessment`, `remediation`, `evidence`, `applies_to`
+- **`Skipped`** (Class)
+  - Fields: `id`, `label`, `reason`
+- **`Assessment`** (Class)
+  - Fields: `status`, `findings`, `not_evaluated`
+  - Methods:
+    - `to_dict(self)`
+- **`VMFacts`** (Class)
+  - The slice of a VM the rules read. Built from the ORM row by
+  - Fields: `name`, `source_hostname`, `ip_address`, `power_state`, `guest_os_full`, `vsphere_datastores`, `disk_count`, `hardware`
+  - Methods:
+    - `disks(self)`
+    - `has_disk_detail(self)`
+    - `powered_on(self)`
+
+**Functions**
+
+- `facts_from_vm(vm)`
+- `datastore_missing(f)`
+- `rdm_disk(f)`
+- `independent_disk(f)`
+- `shared_disk(f)`
+- `nvme_disk(f)`
+- `changed_block_tracking(f)`
+- `consolidation_needed(f)`
+- `snapshot(f)`
+- `guest_os(f)`
+- `windows_2012_no_virtio(f)`
+- `vm_name(f)`
+- `hostname(f)`
+- `missing_ip(f)`
+- `hotplug(f)`
+- `fault_tolerance(f)`
+- `cluster_rules(f)`
+- `secure_boot(f)`
+- `disk_serials(f)`
+- `assess(facts)`
+- `blocks_migration_type(assessment, migration_type)` — Finding ids that make this VM unfit for the given plan type.
+
+</details>
+
 <details><summary><strong><code>app.core.bulk_capture</code></strong> — <em>Business logic</em> · Bulk baseline-capture orchestrator.</summary>
 
 Path: `backend/app/core/bulk_capture.py`  
@@ -1200,7 +1265,7 @@ Depends on: `app.core.config`
 <details><summary><strong><code>app.core.import_jobs</code></strong> — <em>Business logic</em> · Background runner for server-side inventory imports.</summary>
 
 Path: `backend/app/core/import_jobs.py`  
-Depends on: `app.core`, `app.core.audit`, `app.core.environment`, `app.core.limits`, `app.core.rvtools_parser`, `app.models.import_job`, `app.models.vcenter`, `app.models.vm`
+Depends on: `app.core`, `app.core.assessment`, `app.core.audit`, `app.core.environment`, `app.core.limits`, `app.core.rvtools_parser`, `app.models.import_job`, `app.models.vcenter`, `app.models.vm`
 
 **Classes**
 
@@ -1592,7 +1657,7 @@ Depends on: `app.core.concurrency`, `app.core.family`, `app.core.mapping_validat
   - Raised by Stage 0 when mapping coverage is incomplete.
 - **`AnnotatedWave`** (Class)
   - A wave plus its Stage-6 annotation and Stage-7 YAML.
-  - Fields: `wave`, `description`, `risk_score`, `risk_rationale`, `notable_concerns`, `method`, `mtv_yaml`, `vm_names`, `inference_messages`, `inference_response`, `inference_backend_type`, `inference_model`, `inference_latency_ms`
+  - Fields: `wave`, `description`, `risk_score`, `risk_rationale`, `notable_concerns`, `method`, `mtv_yaml`, `vm_names`, `inference_messages`, `inference_response`, `inference_backend_type`, `inference_model`, `inference_latency_ms`, `considerations`
   - Methods:
     - `to_dict(self)` — Render to the JSON shape persisted in MigrationPlan.waves[].
 - **`PlanPipelineResult`** (Class)
@@ -1944,7 +2009,7 @@ Depends on: `app.core.config`, `app.core.preclassifier`
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.audit`, `app.api.command_audits`, `app.api.health`, `app.api.imports`, `app.api.inference_logs`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.import_jobs`, `app.core.llm.runtime`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.assessment`, `app.api.audit`, `app.api.command_audits`, `app.api.health`, `app.api.imports`, `app.api.inference_logs`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.import_jobs`, `app.core.llm.runtime`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -2968,6 +3033,7 @@ Exports / inner components:
 API calls:
 - `/api/audit?resource_type=vm&limit=50`
 - `/api/vms/{id}`
+- `/api/vms/{id}/assessment`
 - `/api/vms/{id}/baseline/profile`
 - `/api/vms/{id}/snapshots`
 - `/api/vms/{id}/validation/latest`
@@ -3034,6 +3100,13 @@ Exports / inner components:
 </details>
 
 <details><summary><strong><code>frontend/src/test/mappingAuthoring.test.jsx</code></strong> — <em>Frontend component</em> · Behavior tests for authoring mapping rows without inventory.</summary>
+
+Exports / inner components:
+- **`stub`** (helper)
+
+</details>
+
+<details><summary><strong><code>frontend/src/test/migratability.test.jsx</code></strong> — <em>Frontend component</em> · The assessment is only useful if the operator can read it: what is wrong,</summary>
 
 Exports / inner components:
 - **`stub`** (helper)

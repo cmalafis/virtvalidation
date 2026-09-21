@@ -29,6 +29,7 @@ import {
   ToolbarFilter,
   ToolbarGroup,
   ToolbarItem,
+  Tooltip,
   ToolbarToggleGroup,
 } from "@patternfly/react-core";
 import { Table, Tbody, Td, Th, Thead, Tr } from "@patternfly/react-table";
@@ -50,12 +51,13 @@ import AddVMModal from "./inventory/AddVMModal";
 // the flexible columns that "Environment" renders as "Enviro...".
 const COLUMNS = [
   { key: "name", label: "Name", sortable: true, width: 20 },
-  { key: "status", label: "Status", sortable: true, width: 15 },
+  { key: "status", label: "Status", sortable: true, width: 10 },
   { key: "lifecycle_state", label: "Plan", sortable: true, width: 10 },
+  { key: "assessment_status", label: "Migratability", sortable: false, width: 15 },
   { key: "environment", label: "Environment", sortable: true, width: 15 },
   { key: "os_family", label: "OS", sortable: true, width: 10 },
-  { key: "ip_address", label: "IP address", sortable: false, width: 15 },
-  { key: "target_namespace", label: "Namespace", sortable: false, width: 15 },
+  { key: "ip_address", label: "IP address", sortable: false, width: 10 },
+  { key: "target_namespace", label: "Namespace", sortable: false, width: 10 },
 ];
 
 // Filter dimensions the backend exposes as repeatable query params and
@@ -63,6 +65,7 @@ const COLUMNS = [
 const FILTERS = [
   { key: "status", label: "Status" },
   { key: "lifecycle_state", label: "Plan state" },
+  { key: "assessment_status", label: "Migratability" },
   { key: "environment", label: "Environment" },
   { key: "os_family", label: "OS family" },
 ];
@@ -436,10 +439,25 @@ export default function InventoryPage() {
         <Td dataLabel="Plan">
           <StatusLabel kind="lifecycle" value={vm.lifecycle_state} />
         </Td>
+        <Td dataLabel="Migratability">
+          <Tooltip
+            content={
+              asArray(vm.assessment_findings).length > 0
+                ? asArray(vm.assessment_findings)
+                    .map((f) => `${f?.category}: ${f?.label}`)
+                    .join(" · ")
+                : vm.assessment_status === "unknown"
+                  ? "No RVTools facts for this VM — import it to assess."
+                  : "No findings."
+            }
+          >
+            <StatusLabel kind="assessment" value={vm.assessment_status ?? "unknown"} />
+          </Tooltip>
+        </Td>
         <Td dataLabel="Environment">{vm.environment ?? "—"}</Td>
         <Td dataLabel="OS">{vm.os_family ?? "—"}</Td>
         <Td dataLabel="IP address">{vm.ip_address ?? "—"}</Td>
-        <Td dataLabel="Target namespace">{vm.target_namespace ?? "—"}</Td>
+        <Td dataLabel="Target namespace">{vm.resolved_target_namespace ?? "—"}</Td>
       </Tr>
     ));
   };

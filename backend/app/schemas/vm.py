@@ -115,6 +115,17 @@ class VMRead(VMBase):
     nic_count: int | None = None
     provisioned_mb: int | None = None
     missing_from_last_upload: bool = False
+    # Migratability roll-up. The full findings document (assessment text,
+    # remediation, evidence, not-evaluated rules) is at
+    # GET /api/vms/{id}/assessment; the list carries just enough to badge
+    # a row. ``assessment`` is excluded from serialization on purpose.
+    assessment_status: str = "unknown"
+    # [{id, category, label}] — read from the ``VM.assessment_findings``
+    # property. A plain field, not a computed one: the API serializes a VM
+    # to a dict and FastAPI validates that dict again, which would
+    # recompute a computed field from a document that is no longer there.
+    assessment_findings: list[dict[str, str]] = Field(default_factory=list)
+
     created_at: datetime
     updated_at: datetime
 
@@ -165,6 +176,7 @@ class VMFacetsResponse(BaseModel):
     classification_level: dict[str, int]
     vsphere_cluster: dict[str, int] = Field(default_factory=dict)
     power_state: dict[str, int] = Field(default_factory=dict)
+    assessment_status: dict[str, int] = Field(default_factory=dict)
     total: int
 
 
