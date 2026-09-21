@@ -18,7 +18,8 @@
 //     thrown as an Error with `isTimeout === true`.
 //
 // JSON request body is auto-stringified + content-type set when the
-// caller passes a non-string `body`.
+// caller passes a non-string `body`. A `FormData` body (file upload) is
+// passed through untouched so the browser sets the multipart boundary.
 //
 // Options beyond fetch's own: `timeoutMs` (0 disables). A caller-supplied
 // `signal` still works and composes with the timeout.
@@ -40,7 +41,8 @@ const DEFAULT_TIMEOUT_MS = 60000;
 export async function fetchJSON(url, opts = {}) {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, signal: callerSignal, ...rest } = opts;
   const init = { method: "GET", ...rest };
-  if (init.body !== undefined && typeof init.body !== "string") {
+  const isForm = typeof FormData !== "undefined" && init.body instanceof FormData;
+  if (init.body !== undefined && typeof init.body !== "string" && !isForm) {
     init.headers = { "Content-Type": "application/json", ...(init.headers || {}) };
     init.body = JSON.stringify(init.body);
   }

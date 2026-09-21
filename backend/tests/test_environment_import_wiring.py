@@ -259,3 +259,22 @@ def test_single_create_unknown_remains_unset(client, db_session):
     vm = db_session.get(VM, r.json()["id"])
     assert not vm.environment
     assert vm.environment_source == "unset"
+
+
+def test_legacy_json_rvtools_endpoint_detects_environment(client):
+    """The JSON endpoint used to drop cluster/folder at the schema boundary
+    and never ran detection, so RVTools VMs landed with environment=NULL."""
+    vc = client.post(
+        "/api/sources/vcenters", json={"name": "vc-a", "hostname": "vc-a.example"}
+    ).json()["id"]
+    r = client.post(
+        "/api/rvtools/upload-multi-vcenter",
+        json={
+            "vms": [{"name": "app-01", "vsphere_folder": "/site/staging/app"}],
+            "default_vcenter_id": vc,
+        },
+    )
+    assert r.status_code == 200, r.text
+    vm = client.get("/api/vms?search=app-01").json()["items"][0]
+    assert vm["environment"] == "staging"
+    assert vm["vsphere_folder"] == "/site/staging/app"

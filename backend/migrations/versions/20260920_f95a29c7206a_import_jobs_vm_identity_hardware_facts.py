@@ -15,7 +15,7 @@ Server-side RVTools ingestion:
     index). vSphere names are only unique per folder; identity is
     ``uq_vms_vcenter_moref``, with name-within-vCenter enforced in code
     for MoRef-less rows.
-  - Filter/facet indexes for 1,000-5,000 row inventories.
+  - Indexes on environment / vsphere_cluster / esxi_host.
 
 Downgrade note: restoring the global unique index on ``vms.name`` fails
 if two VMs now share a name. Resolve the duplicates
@@ -131,8 +131,6 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f("ix_vms_name"), ["name"], unique=False)
         batch_op.create_index("ix_vms_environment", ["environment"], unique=False)
         batch_op.create_index("ix_vms_esxi_host", ["esxi_host"], unique=False)
-        batch_op.create_index("ix_vms_os_family", ["os_family"], unique=False)
-        batch_op.create_index("ix_vms_power_state", ["power_state"], unique=False)
         batch_op.create_index("ix_vms_vsphere_cluster", ["vsphere_cluster"], unique=False)
         batch_op.create_unique_constraint("uq_vms_vcenter_moref", ["source_vcenter_id", "moref"])
 
@@ -140,8 +138,6 @@ def downgrade() -> None:
     with op.batch_alter_table("vms", schema=None) as batch_op:
         batch_op.drop_constraint("uq_vms_vcenter_moref", type_="unique")
         batch_op.drop_index("ix_vms_vsphere_cluster")
-        batch_op.drop_index("ix_vms_power_state")
-        batch_op.drop_index("ix_vms_os_family")
         batch_op.drop_index("ix_vms_esxi_host")
         batch_op.drop_index("ix_vms_environment")
         batch_op.drop_index(batch_op.f("ix_vms_name"))

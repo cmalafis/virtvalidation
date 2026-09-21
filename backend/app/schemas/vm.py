@@ -100,6 +100,21 @@ class VMRead(VMBase):
     status: VMStatus
     lifecycle_state: VMLifecycleState
     lifecycle_state_changed_at: datetime
+    # vSphere identity + sizing, populated by the RVTools importer.
+    # ``hardware_facts`` is deliberately not on the list payload — it is
+    # a per-VM document (disks, snapshots, NICs); fetch it per VM.
+    moref: str | None = None
+    vm_uuid: str | None = None
+    power_state: str | None = None
+    esxi_host: str | None = None
+    vsphere_datacenter: str | None = None
+    guest_os_full: str | None = None
+    num_cpus: int | None = None
+    memory_mb: int | None = None
+    disk_count: int | None = None
+    nic_count: int | None = None
+    provisioned_mb: int | None = None
+    missing_from_last_upload: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -148,6 +163,8 @@ class VMFacetsResponse(BaseModel):
     application_hint: dict[str, int]
     vcenter_source_id: dict[str, int]
     classification_level: dict[str, int]
+    vsphere_cluster: dict[str, int] = Field(default_factory=dict)
+    power_state: dict[str, int] = Field(default_factory=dict)
     total: int
 
 

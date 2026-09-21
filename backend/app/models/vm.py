@@ -231,13 +231,14 @@ class VM(Base):
     __table_args__ = (
         Index("ix_vms_source_vcenter_status", "source_vcenter_id", "status"),
         Index("ix_vms_app_env", "application_hint", "environment"),
-        # Facet + filter columns the inventory and plan selector group by.
-        # ``environment`` is only the trailing column of ix_vms_app_env,
-        # which the planner can't use for an environment-only predicate.
+        # Filter columns with enough distinct values to be selective.
+        # Measured on Postgres 16 at 5,000 VMs (Phase A report): every
+        # inventory query is < 4 ms with or without these, so they are
+        # cheap insurance for the 5,000+ case rather than a fix. Low-
+        # cardinality columns (os_family, power_state) are deliberately
+        # NOT indexed — the planner ignores such indexes and seq-scans.
         Index("ix_vms_environment", "environment"),
         Index("ix_vms_vsphere_cluster", "vsphere_cluster"),
-        Index("ix_vms_os_family", "os_family"),
-        Index("ix_vms_power_state", "power_state"),
         Index("ix_vms_esxi_host", "esxi_host"),
         UniqueConstraint("source_vcenter_id", "moref", name="uq_vms_vcenter_moref"),
     )

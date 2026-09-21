@@ -37,10 +37,10 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core
 |---|---|---|---|
 | `POST` | `/api/vms` | `create_vm(payload, db)` | — |
 | `POST` | `/api/vms/bulk` | `create_vms_bulk(payload, db)` | Best-effort batch enrollment. |
-| `GET` | `/api/vms` | `list_vms(db, skip, limit, sort_by, sort_order, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, search, offset)` | Paginated, filterable inventory listing. |
-| `GET` | `/api/vms/facets` | `vm_facets(db, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Per-dimension counts so the filter UI can show &quot;Production (600)&quot;. |
+| `GET` | `/api/vms` | `list_vms(db, skip, limit, sort_by, sort_order, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, search, offset)` | Paginated, filterable inventory listing. |
+| `GET` | `/api/vms/facets` | `vm_facets(db, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, search)` | Per-dimension counts so the filter UI can show &quot;Production (600)&quot;. |
 | `GET` | `/api/vms/stats` | `vm_stats(db)` | Cheap dashboard counters — no filter set, no row reads. |
-| `DELETE` | `/api/vms/all` | `delete_all_vms(request, db, confirm, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, search)` | Bulk-delete every VM that matches the given filters. |
+| `DELETE` | `/api/vms/all` | `delete_all_vms(request, db, confirm, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, search)` | Bulk-delete every VM that matches the given filters. |
 | `POST` | `/api/vms/bulk-set-environment` | `bulk_set_environment(request, payload, db)` | Atomically set the environment of N VMs. |
 | `POST` | `/api/vms/bulk-set-target-cluster` | `bulk_set_target_cluster(request, payload, db)` | — |
 | `POST` | `/api/vms/bulk-clear-target-cluster` | `bulk_clear_target_cluster(request, payload, db)` | — |
@@ -76,7 +76,7 @@ Depends on: `app.core.db`
 - **`VMLifecycleState`** (Class)
   - Plan-membership lifecycle, orthogonal to ``VMStatus``.
 - **`VM`** (SQLAlchemy model · table `vms`)
-  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_cluster_id_override`, `target_namespace_override`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`, `environment_source`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
+  - Fields: `id`, `name`, `source_hostname`, `target_hostname`, `ip_address`, `os_family`, `role`, `ssh_user`, `ssh_port`, `current_platform`, `environment`, `owner`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `notes`, `vsphere_networks`, `vsphere_datastores`, `target_cluster_id_override`, `target_namespace_override`, `source_vcenter_id`, `application_hint`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`, `environment_source`, `moref`, `vm_uuid`, `power_state`, `esxi_host`, `vsphere_datacenter`, `guest_os_full`, `num_cpus`, `memory_mb`, `disk_count`, `nic_count`, `provisioned_mb`, `hardware_facts`, `missing_from_last_upload`, `last_seen_in_upload_at`, `created_at`, `updated_at`, `snapshots`, `validations`
 - **`BaselineSnapshot`** (SQLAlchemy model · table `baseline_snapshots`)
   - Fields: `id`, `vm_id`, `snapshot_number`, `ssh_user`, `raw_data`, `checksum`, `collected_at`, `vm`
 
@@ -100,13 +100,13 @@ Depends on: `app.core.limits`, `app.models.vm`
 - **`ResolvedStorageRead`** (Pydantic schema)
   - Fields: `source`, `target_storage_class_name`, `access_mode`
 - **`VMRead`** (Class)
-  - Fields: `id`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `created_at`, `updated_at`, `resolved_target_cluster_id`, `resolved_target_cluster_name`, `resolved_target_namespace`, `resolved_networks`, `resolved_storage`, `resolution_is_complete`, `resolution_reasons`, `resolution_mapping_id`
+  - Fields: `id`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `moref`, `vm_uuid`, `power_state`, `esxi_host`, `vsphere_datacenter`, `guest_os_full`, `num_cpus`, `memory_mb`, `disk_count`, `nic_count`, `provisioned_mb`, `missing_from_last_upload`, `created_at`, `updated_at`, `resolved_target_cluster_id`, `resolved_target_cluster_name`, `resolved_target_namespace`, `resolved_networks`, `resolved_storage`, `resolution_is_complete`, `resolution_reasons`, `resolution_mapping_id`
 - **`VMListResponse`** (Pydantic schema)
   - Paginated wrapper for the inventory listing.
   - Fields: `items`, `total`, `skip`, `limit`
 - **`VMFacetsResponse`** (Pydantic schema)
   - Per-dimension counts driven by the same filter set as list_vms.
-  - Fields: `status`, `lifecycle_state`, `environment`, `os_family`, `application_hint`, `vcenter_source_id`, `classification_level`, `total`
+  - Fields: `status`, `lifecycle_state`, `environment`, `os_family`, `application_hint`, `vcenter_source_id`, `classification_level`, `vsphere_cluster`, `power_state`, `total`
 - **`VMStats`** (Pydantic schema)
   - Cheap aggregate counters for dashboard headers.
   - Fields: `total`, `by_status`, `missing_from_last_upload`
@@ -613,6 +613,25 @@ Depends on: `app.core.db`, `app.core.fips`, `app.core.llm.runtime`, `app.core.mi
 | `GET` | `/api/health/postgres` | `postgres_health(db)` | Run a SELECT 1 against the configured database. |
 | `GET` | `/api/health/schema` | `schema_health()` | Report the database&#x27;s Alembic migration state. |
 | `GET` | `/api/health/full` | `full_health(db)` | Combined status across the API and every backing dependency. |
+
+</details>
+
+<details><summary><strong><code>app.api.imports</code></strong> — <em>API endpoints</em> · Server-side inventory import: upload → scan → route → import.</summary>
+
+Path: `backend/app/api/imports.py`  
+Depends on: `app.core.db`, `app.core.import_jobs`, `app.core.limits`, `app.core.rvtools_parser`, `app.models.import_job`, `app.models.vcenter`, `app.schemas.import_job`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `POST` | `/api/imports/rvtools` | `upload_rvtools(request, background_tasks, file, mode, vcenter_mapping, default_vcenter_id, db)` | — |
+| `GET` | `/api/imports` | `list_imports(skip, limit, db)` | — |
+| `GET` | `/api/imports/{job_id}` | `get_import(job_id, db)` | — |
+| `POST` | `/api/imports/{job_id}/start` | `start_import(job_id, payload, background_tasks, db)` | — |
+| `POST` | `/api/imports/{job_id}/cancel` | `cancel_import(job_id, db)` | — |
+| `GET` | `/api/imports/{job_id}/rejects` | `list_rejects(job_id, severity, skip, limit, db)` | — |
+| `GET` | `/api/imports/{job_id}/rejects.csv` | `download_rejects(job_id, db)` | — |
 
 </details>
 
@@ -1177,6 +1196,36 @@ Depends on: `app.core.config`
 
 </details>
 
+<details><summary><strong><code>app.core.import_jobs</code></strong> — <em>Business logic</em> · Background runner for server-side inventory imports.</summary>
+
+Path: `backend/app/core/import_jobs.py`  
+Depends on: `app.core`, `app.core.audit`, `app.core.environment`, `app.core.limits`, `app.core.rvtools_parser`, `app.models.import_job`, `app.models.vcenter`, `app.models.vm`
+
+**Classes**
+
+- **`_Cancelled`** (Class)
+- **`_VCenterIndex`** (Class)
+  - Existing VMs of one vCenter, keyed both ways, loaded once.
+  - Methods:
+    - `add(self, vm)`
+    - `match(self, fields)`
+- **`_Importer`** (Class)
+  - Methods:
+    - `route(self, item)`
+    - `index(self, vcenter_id)`
+    - `upsert(self, vcenter_id, item, delta, created)`
+    - `flush_batch(self, batch, issues)`
+    - `mark_missing(self)`
+
+**Functions**
+
+- `spool_dir()`
+- `run_scan(job_id)` — BackgroundTask body. Opens its own session (the request is gone).
+- `run_import(job_id)`
+- `fail_orphan_imports(session_factory)` — In-process BackgroundTasks don't survive a restart. Mark anything
+
+</details>
+
 <details><summary><strong><code>app.core.limits</code></strong> — <em>Business logic</em> · Centralized limits for bulk operations and pagination.</summary>
 
 Path: `backend/app/core/limits.py`  
@@ -1589,7 +1638,7 @@ Depends on: `app.models.vm`
 
 </details>
 
-<details><summary><strong><code>app.core.rvtools_import</code></strong> — <em>Business logic</em> · RVTools delta-import core.</summary>
+<details><summary><strong><code>app.core.rvtools_import</code></strong> — <em>Business logic</em> · RVTools delta-import core for the JSON endpoints (pre-parsed rows).</summary>
 
 Path: `backend/app/core/rvtools_import.py`  
 Depends on: `app.core`, `app.core.audit`, `app.models.vm`
@@ -1613,6 +1662,39 @@ Depends on: `app.core`, `app.core.audit`, `app.models.vm`
 
 - `run_rvtools_import(db)` — Apply an RVTools delta against a vCenter scope.
 - `run_rvtools_import_async(task_id)` — BackgroundTask body. Opens its own session because the request
+
+</details>
+
+<details><summary><strong><code>app.core.rvtools_parser</code></strong> — <em>Business logic</em> · Streaming RVTools workbook parser. Pure: no DB, no FastAPI.</summary>
+
+Path: `backend/app/core/rvtools_parser.py`  
+
+**Classes**
+
+- **`RowIssue`** (Class)
+  - Fields: `sheet`, `row_number`, `vm_name`, `reason`, `severity`
+- **`ParsedVM`** (Class)
+  - Fields: `row_number`, `vcenter_hostname`, `fields`
+- **`ParseStats`** (Class)
+  - Fields: `sheets_found`, `rows_total`, `rows_read`, `current_sheet`
+- **`ScanResult`** (Class)
+  - Fields: `detected_vcenters`, `vm_rows`, `sheets_found`
+- **`RVToolsParseError`** (Class)
+  - The file can't be treated as an inventory export at all.
+- **`_Source`** (Class)
+  - Uniform row stream over an .xlsx workbook or a single-sheet CSV.
+  - Methods:
+    - `close(self)`
+    - `sheet_names(self)` — normalized name → actual name.
+    - `declared_rows(self, actual_name)`
+    - `rows(self, actual_name)` — Yield (1-based sheet row number, {normalized header: value}).
+
+**Functions**
+
+- `normalize_hostname(raw)`
+- `shorten_os_family(raw)`
+- `scan(path)` — Cheap first pass: which vCenter hostnames does the file contain, and
+- `iter_vms(path, stats, on_progress, progress_every)` — Stream the workbook as ParsedVM / RowIssue items.
 
 </details>
 
@@ -1850,7 +1932,7 @@ Depends on: `app.core.config`, `app.core.preclassifier`
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.audit`, `app.api.command_audits`, `app.api.health`, `app.api.inference_logs`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.llm.runtime`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.audit`, `app.api.command_audits`, `app.api.health`, `app.api.imports`, `app.api.inference_logs`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.import_jobs`, `app.core.llm.runtime`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -1861,7 +1943,7 @@ Depends on: `app.api.audit`, `app.api.command_audits`, `app.api.health`, `app.ap
 <details><summary><strong><code>app.models.__init__</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/models/__init__.py`  
-Depends on: `app.models.audit`, `app.models.baseline_run`, `app.models.network_review`, `app.models.plan`, `app.models.settings`, `app.models.ssh_key`, `app.models.validation`, `app.models.validation_run`, `app.models.vm`
+Depends on: `app.models.audit`, `app.models.baseline_run`, `app.models.import_job`, `app.models.network_review`, `app.models.plan`, `app.models.settings`, `app.models.ssh_key`, `app.models.validation`, `app.models.validation_run`, `app.models.vm`
 
 </details>
 
@@ -1912,6 +1994,21 @@ Depends on: `app.core.db`
 - **`MigrationProgram`** (SQLAlchemy model · table `migration_programs`)
   - A migration program is the top-level container an operator runs.
   - Fields: `id`, `name`, `description`, `source_vcenter_ids`, `strategy`, `created_at`, `updated_at`
+
+</details>
+
+<details><summary><strong><code>app.models.import_job</code></strong> — <em>Data models / schemas</em> · Server-side inventory import jobs.</summary>
+
+Path: `backend/app/models/import_job.py`  
+Depends on: `app.core.db`
+
+**Classes**
+
+- **`ImportJob`** (SQLAlchemy model · table `import_jobs`)
+  - Fields: `id`, `kind`, `filename`, `file_path`, `file_size`, `file_sha256`, `mode`, `status`, `current_sheet`, `progress_message`, `rows_total`, `rows_read`, `rows_valid`, `rows_rejected`, `rows_warned`, `created_count`, `updated_count`, `unchanged_count`, `marked_missing_count`, `detected_vcenters`, `vcenter_mapping`, `default_vcenter_id`, `result`, `error_message`, `cancel_requested`, `actor`, `created_at`, `started_at`, `completed_at`
+- **`ImportJobReject`** (SQLAlchemy model · table `import_job_rejects`)
+  - One problem row. A table rather than JSON on the job so a badly
+  - Fields: `id`, `job_id`, `sheet`, `row_number`, `vm_name`, `severity`, `reason`
 
 </details>
 
@@ -2149,6 +2246,28 @@ Path: `backend/app/schemas/command_audit.py`
 - **`CommandAuditRead`** (Pydantic schema)
   - Fields: `id`, `vm_id`, `host`, `run_type`, `run_id`, `command`, `exit_status`, `stdout_byte_count`, `stdout_sha256`, `stdout_truncated`, `duration_ms`, `blocked`, `started_at`
 - **`CommandAuditListResponse`** (Pydantic schema)
+  - Fields: `items`, `total`, `skip`, `limit`
+
+</details>
+
+<details><summary><strong><code>app.schemas.import_job</code></strong> — <em>Data models / schemas</em></summary>
+
+Path: `backend/app/schemas/import_job.py`  
+
+**Classes**
+
+- **`ImportJobRead`** (Pydantic schema)
+  - Fields: `id`, `kind`, `filename`, `file_size`, `file_sha256`, `mode`, `status`, `current_sheet`, `progress_message`, `rows_total`, `rows_read`, `rows_valid`, `rows_rejected`, `rows_warned`, `created_count`, `updated_count`, `unchanged_count`, `marked_missing_count`, `detected_vcenters`, `vcenter_mapping`, `default_vcenter_id`, `result`, `error_message`, `cancel_requested`, `actor`, `created_at`, `started_at`, `completed_at`
+  - Methods:
+    - `progress_percent(self)` — NULL when the workbook doesn't declare its row counts — the UI
+    - `elapsed_seconds(self)`
+- **`ImportJobListResponse`** (Pydantic schema)
+  - Fields: `items`, `total`, `skip`, `limit`
+- **`ImportStartRequest`** (Pydantic schema)
+  - Fields: `vcenter_mapping`, `default_vcenter_id`, `mode`
+- **`ImportRejectRead`** (Pydantic schema)
+  - Fields: `sheet`, `row_number`, `vm_name`, `severity`, `reason`
+- **`ImportRejectListResponse`** (Pydantic schema)
   - Fields: `items`, `total`, `skip`, `limit`
 
 </details>
@@ -2428,7 +2547,7 @@ Depends on: `app.core.limits`, `app.models.vcenter`
   - Fields: `id`, `created_at`, `updated_at`, `vm_count`
 - **`RVToolsVMRow`** (Pydantic schema)
   - The minimal shape the delta-detector reads.
-  - Fields: `name`, `source_hostname`, `ip_address`, `os_family`, `role`, `environment`, `owner`, `application_hint`, `vsphere_networks`, `vsphere_datastores`, `source_vcenter_hostname`
+  - Fields: `name`, `source_hostname`, `ip_address`, `os_family`, `role`, `environment`, `owner`, `application_hint`, `vsphere_networks`, `vsphere_datastores`, `source_vcenter_hostname`, `vsphere_cluster`, `vsphere_folder`, `custom_attributes`
 - **`RVToolsDeltaRequest`** (Pydantic schema)
   - Fields: `vms`
 - **`RVToolsDeltaItem`** (Pydantic schema)
@@ -2742,7 +2861,11 @@ Exports / inner components:
 <details><summary><strong><code>frontend/src/pages/RVToolsUploadPage.jsx</code></strong> — <em>Frontend component</em> · Import inventory from an RVTools export.</summary>
 
 API calls:
-- `/api/rvtools/upload-multi-vcenter`
+- `/api/imports/rvtools`
+- `/api/imports/{id}`
+- `/api/imports/{id}/cancel`
+- `/api/imports/{id}/rejects?limit={id}`
+- `/api/imports/{id}/start`
 - `/api/sources/vcenters`
 
 Exports / inner components:
@@ -2915,6 +3038,13 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/test/rvtoolsImport.test.jsx</code></strong> — <em>Frontend component</em> · Behavior tests for the server-side import flow.</summary>
+
+Exports / inner components:
+- **`stub`** (helper)
+
+</details>
+
 <details><summary><strong><code>frontend/src/theme.js</code></strong> — <em>Frontend component</em> · Theme handling for the PatternFly 6 shell.</summary>
 
 Exports / inner components:
@@ -2946,21 +3076,6 @@ Exports / inner components:
 
 Exports / inner components:
 - **`fetchJSON`** (helper)
-
-</details>
-
-<details><summary><strong><code>frontend/src/utils/parseRVTools.js</code></strong> — <em>Frontend component</em> · Shared RVTools / CSV parser. Two surfaces consume this:</summary>
-
-Exports / inner components:
-- **`shortenOSFamily`** (helper)
-- **`rowToPayload`** (helper)
-- **`_collectCustomAttributes`** (helper)
-- **`normalizeHostname`** (helper)
-- **`groupByVCenter`** (helper)
-- **`parseCSV`** (helper)
-- **`_loadXLSX`** (helper)
-- **`parseXLSXRows`** (helper)
-- **`parseRVToolsXLSX`** (helper)
 
 </details>
 

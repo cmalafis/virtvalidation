@@ -69,7 +69,10 @@ work is therefore one dependency chain rooted in ingestion.
 Sequencing: **1 → 2 → 3 → 4** is strictly ordered. **5 → 6** is an
 independent track that can interleave. **7** needs only #1.
 
-### Decision needed for GAP-06
+### GAP-06 decision — APPROVED 2026-09-20
+
+Approved by the project owner along with the Tier 1 list. Implementation is
+Phase D; Phase A already ingests the `esxi_host` and `disk_count` it needs.
 
 Replace the fixed `MAX_VMS_PER_WAVE = 10` with constraints MTV actually
 documents — **≤10 VMs per ESXi host per wave** (NFC), **≤500 disks per

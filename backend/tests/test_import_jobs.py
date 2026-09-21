@@ -356,3 +356,45 @@ def test_orphaned_jobs_are_failed_at_startup(client, db_session, engine):
     db_session.expire_all()
     job = db_session.get(ImportJob, "stuck")
     assert job.status == "failed" and "idempotent" in job.error_message
+
+
+# --------------------------------------------------------------------------
+# Server-side filters over imported data
+# --------------------------------------------------------------------------
+def test_inventory_filters_on_imported_columns(client):
+    vc = _register(client, "vc-a.example")
+    header = [*HEADER, "Cluster", "Powerstate", "Primary IP Address"]
+    rows = [
+        [*_row("web-01", "vm-1"), "prod-cl01", "poweredOn", "10.1.1.10"],
+        [*_row("web-02", "vm-2"), "prod-cl01", "poweredOff", "10.1.1.11"],
+        [
+            "db-01",
+            "vm-3",
+            "vc-a.example",
+            4,
+            "[tier_1] db-01/db-01.vmx",
+            "vlan-100",
+            "/s/prod",
+            "dev-cl02",
+            "poweredOn",
+            "10.9.9.9",
+        ],
+    ]
+    _upload(client, _workbook(rows, header), default_vcenter_id=vc)
+
+    def names(qs):
+        return sorted(v["name"] for v in client.get(f"/api/vms?{qs}").json()["items"])
+
+    assert names("vsphere_cluster=prod-cl01") == ["web-01", "web-02"]
+    assert names("power_state=poweredOff") == ["web-02"]
+    # "vlan-10" must not match "vlan-100"; "_" in a datastore name is literal
+    assert names("network=vlan-10") == ["web-01", "web-02"]
+    assert names("datastore=tier_1") == ["db-01"]
+    assert names("datastore=tierX1") == []
+    assert names("search=10.9.9") == ["db-01"]  # IP search, as the UI placeholder promises
+
+    facets = client.get("/api/vms/facets").json()
+    assert facets["vsphere_cluster"] == {"prod-cl01": 2, "dev-cl02": 1}
+    assert facets["power_state"] == {"poweredOn": 2, "poweredOff": 1}
+    item = client.get("/api/vms?search=db-01").json()["items"][0]
+    assert item["moref"] == "vm-3" and item["num_cpus"] == 4

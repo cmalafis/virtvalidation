@@ -568,6 +568,18 @@ const DATA = {
               "vsphere_folder",
               "custom_attributes",
               "environment_source",
+              "moref",
+              "vm_uuid",
+              "power_state",
+              "esxi_host",
+              "vsphere_datacenter",
+              "guest_os_full",
+              "num_cpus",
+              "memory_mb",
+              "disk_count",
+              "nic_count",
+              "provisioned_mb",
+              "hardware_facts",
               "missing_from_last_upload",
               "last_seen_in_upload_at",
               "created_at",
@@ -711,6 +723,18 @@ const DATA = {
               "status",
               "lifecycle_state",
               "lifecycle_state_changed_at",
+              "moref",
+              "vm_uuid",
+              "power_state",
+              "esxi_host",
+              "vsphere_datacenter",
+              "guest_os_full",
+              "num_cpus",
+              "memory_mb",
+              "disk_count",
+              "nic_count",
+              "provisioned_mb",
+              "missing_from_last_upload",
               "created_at",
               "updated_at",
               "resolved_target_cluster_id",
@@ -750,6 +774,8 @@ const DATA = {
               "application_hint",
               "vcenter_source_id",
               "classification_level",
+              "vsphere_cluster",
+              "power_state",
               "total"
             ],
             "methods": [],
@@ -2278,6 +2304,69 @@ const DATA = {
           "app.core.fips",
           "app.core.llm.runtime",
           "app.core.migrations"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.api.imports",
+        "title": "app.api.imports",
+        "subtitle": "backend/app/api/imports.py",
+        "summary": "Server-side inventory import: upload \u2192 scan \u2192 route \u2192 import.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/api/imports/rvtools",
+            "handler": "upload_rvtools",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/imports",
+            "handler": "list_imports",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/imports/{job_id}",
+            "handler": "get_import",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/imports/{job_id}/start",
+            "handler": "start_import",
+            "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/imports/{job_id}/cancel",
+            "handler": "cancel_import",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/imports/{job_id}/rejects",
+            "handler": "list_rejects",
+            "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/imports/{job_id}/rejects.csv",
+            "handler": "download_rejects",
+            "summary": ""
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.db",
+          "app.core.import_jobs",
+          "app.core.limits",
+          "app.core.rvtools_parser",
+          "app.models.import_job",
+          "app.models.vcenter",
+          "app.schemas.import_job"
         ]
       },
       {
@@ -4097,6 +4186,99 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.import_jobs",
+        "title": "app.core.import_jobs",
+        "subtitle": "backend/app/core/import_jobs.py",
+        "summary": "Background runner for server-side inventory imports.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "_Cancelled",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "_VCenterIndex",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "add",
+                "summary": ""
+              },
+              {
+                "name": "match",
+                "summary": ""
+              }
+            ],
+            "summary": "Existing VMs of one vCenter, keyed both ways, loaded once."
+          },
+          {
+            "name": "_Importer",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "route",
+                "summary": ""
+              },
+              {
+                "name": "index",
+                "summary": ""
+              },
+              {
+                "name": "upsert",
+                "summary": ""
+              },
+              {
+                "name": "flush_batch",
+                "summary": ""
+              },
+              {
+                "name": "mark_missing",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "spool_dir",
+            "summary": ""
+          },
+          {
+            "name": "run_scan",
+            "summary": "BackgroundTask body. Opens its own session (the request is gone)."
+          },
+          {
+            "name": "run_import",
+            "summary": ""
+          },
+          {
+            "name": "fail_orphan_imports",
+            "summary": "In-process BackgroundTasks don't survive a restart. Mark anything"
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.core.environment",
+          "app.core.limits",
+          "app.core.rvtools_parser",
+          "app.models.import_job",
+          "app.models.vcenter",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.limits",
         "title": "app.core.limits",
         "subtitle": "backend/app/core/limits.py",
@@ -5155,7 +5337,7 @@ const DATA = {
         "id": "app.core.rvtools_import",
         "title": "app.core.rvtools_import",
         "subtitle": "backend/app/core/rvtools_import.py",
-        "summary": "RVTools delta-import core.",
+        "summary": "RVTools delta-import core for the JSON endpoints (pre-parsed rows).",
         "category": "logic",
         "routes": [],
         "classes": [
@@ -5236,6 +5418,120 @@ const DATA = {
           "app.core.audit",
           "app.models.vm"
         ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.rvtools_parser",
+        "title": "app.core.rvtools_parser",
+        "subtitle": "backend/app/core/rvtools_parser.py",
+        "summary": "Streaming RVTools workbook parser. Pure: no DB, no FastAPI.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "RowIssue",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "sheet",
+              "row_number",
+              "vm_name",
+              "reason",
+              "severity"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ParsedVM",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "row_number",
+              "vcenter_hostname",
+              "fields"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ParseStats",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "sheets_found",
+              "rows_total",
+              "rows_read",
+              "current_sheet"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ScanResult",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "detected_vcenters",
+              "vm_rows",
+              "sheets_found"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "RVToolsParseError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "The file can't be treated as an inventory export at all."
+          },
+          {
+            "name": "_Source",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "close",
+                "summary": ""
+              },
+              {
+                "name": "sheet_names",
+                "summary": "normalized name \u2192 actual name."
+              },
+              {
+                "name": "declared_rows",
+                "summary": ""
+              },
+              {
+                "name": "rows",
+                "summary": "Yield (1-based sheet row number, {normalized header: value})."
+              }
+            ],
+            "summary": "Uniform row stream over an .xlsx workbook or a single-sheet CSV."
+          }
+        ],
+        "functions": [
+          {
+            "name": "normalize_hostname",
+            "summary": ""
+          },
+          {
+            "name": "shorten_os_family",
+            "summary": ""
+          },
+          {
+            "name": "scan",
+            "summary": "Cheap first pass: which vCenter hostnames does the file contain, and"
+          },
+          {
+            "name": "iter_vms",
+            "summary": "Stream the workbook as ParsedVM / RowIssue items."
+          }
+        ],
+        "depends_on": []
       },
       {
         "kind": "module",
@@ -5860,6 +6156,7 @@ const DATA = {
           "app.api.audit",
           "app.api.command_audits",
           "app.api.health",
+          "app.api.imports",
           "app.api.inference_logs",
           "app.api.network_reviews",
           "app.api.plans",
@@ -5879,6 +6176,7 @@ const DATA = {
           "app.api.waves",
           "app.core.db",
           "app.core.fips",
+          "app.core.import_jobs",
           "app.core.llm.runtime",
           "app.core.migrations",
           "app.core.scheduler",
@@ -5900,6 +6198,7 @@ const DATA = {
         "depends_on": [
           "app.models.audit",
           "app.models.baseline_run",
+          "app.models.import_job",
           "app.models.network_review",
           "app.models.plan",
           "app.models.settings",
@@ -6087,6 +6386,75 @@ const DATA = {
             ],
             "methods": [],
             "summary": "A migration program is the top-level container an operator runs."
+          }
+        ],
+        "functions": [],
+        "depends_on": [
+          "app.core.db"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.models.import_job",
+        "title": "app.models.import_job",
+        "subtitle": "backend/app/models/import_job.py",
+        "summary": "Server-side inventory import jobs.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ImportJob",
+            "kind": "model",
+            "table": "import_jobs",
+            "fields": [
+              "id",
+              "kind",
+              "filename",
+              "file_path",
+              "file_size",
+              "file_sha256",
+              "mode",
+              "status",
+              "current_sheet",
+              "progress_message",
+              "rows_total",
+              "rows_read",
+              "rows_valid",
+              "rows_rejected",
+              "rows_warned",
+              "created_count",
+              "updated_count",
+              "unchanged_count",
+              "marked_missing_count",
+              "detected_vcenters",
+              "vcenter_mapping",
+              "default_vcenter_id",
+              "result",
+              "error_message",
+              "cancel_requested",
+              "actor",
+              "created_at",
+              "started_at",
+              "completed_at"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ImportJobReject",
+            "kind": "model",
+            "table": "import_job_rejects",
+            "fields": [
+              "id",
+              "job_id",
+              "sheet",
+              "row_number",
+              "vm_name",
+              "severity",
+              "reason"
+            ],
+            "methods": [],
+            "summary": "One problem row. A table rather than JSON on the job so a badly"
           }
         ],
         "functions": [],
@@ -6943,6 +7311,117 @@ const DATA = {
           },
           {
             "name": "CommandAuditListResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "items",
+              "total",
+              "skip",
+              "limit"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.schemas.import_job",
+        "title": "app.schemas.import_job",
+        "subtitle": "backend/app/schemas/import_job.py",
+        "summary": "",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "ImportJobRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "kind",
+              "filename",
+              "file_size",
+              "file_sha256",
+              "mode",
+              "status",
+              "current_sheet",
+              "progress_message",
+              "rows_total",
+              "rows_read",
+              "rows_valid",
+              "rows_rejected",
+              "rows_warned",
+              "created_count",
+              "updated_count",
+              "unchanged_count",
+              "marked_missing_count",
+              "detected_vcenters",
+              "vcenter_mapping",
+              "default_vcenter_id",
+              "result",
+              "error_message",
+              "cancel_requested",
+              "actor",
+              "created_at",
+              "started_at",
+              "completed_at"
+            ],
+            "methods": [
+              {
+                "name": "progress_percent",
+                "summary": "NULL when the workbook doesn't declare its row counts \u2014 the UI"
+              },
+              {
+                "name": "elapsed_seconds",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "ImportJobListResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "items",
+              "total",
+              "skip",
+              "limit"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ImportStartRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vcenter_mapping",
+              "default_vcenter_id",
+              "mode"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ImportRejectRead",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "sheet",
+              "row_number",
+              "vm_name",
+              "severity",
+              "reason"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ImportRejectListResponse",
             "kind": "schema",
             "table": "",
             "fields": [
@@ -8232,7 +8711,10 @@ const DATA = {
               "application_hint",
               "vsphere_networks",
               "vsphere_datastores",
-              "source_vcenter_hostname"
+              "source_vcenter_hostname",
+              "vsphere_cluster",
+              "vsphere_folder",
+              "custom_attributes"
             ],
             "methods": [],
             "summary": "The minimal shape the delta-detector reads."
@@ -9000,7 +9482,11 @@ const DATA = {
         "summary": "Import inventory from an RVTools export.",
         "category": "frontend",
         "api_calls": [
-          "/api/rvtools/upload-multi-vcenter",
+          "/api/imports/rvtools",
+          "/api/imports/{id}",
+          "/api/imports/{id}/cancel",
+          "/api/imports/{id}/rejects?limit={id}",
+          "/api/imports/{id}/start",
           "/api/sources/vcenters"
         ],
         "members": [
@@ -9326,6 +9812,21 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/test/rvtoolsImport.test.jsx",
+        "title": "rvtoolsImport.test.jsx",
+        "subtitle": "frontend/src/test/rvtoolsImport.test.jsx",
+        "summary": "Behavior tests for the server-side import flow.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "stub",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/theme.js",
         "title": "theme.js",
         "subtitle": "frontend/src/theme.js",
@@ -9404,53 +9905,6 @@ const DATA = {
         "members": [
           {
             "name": "fetchJSON",
-            "kind": "helper"
-          }
-        ]
-      },
-      {
-        "kind": "frontend",
-        "id": "frontend/src/utils/parseRVTools.js",
-        "title": "parseRVTools.js",
-        "subtitle": "frontend/src/utils/parseRVTools.js",
-        "summary": "Shared RVTools / CSV parser. Two surfaces consume this:",
-        "category": "frontend",
-        "api_calls": [],
-        "members": [
-          {
-            "name": "shortenOSFamily",
-            "kind": "helper"
-          },
-          {
-            "name": "rowToPayload",
-            "kind": "helper"
-          },
-          {
-            "name": "_collectCustomAttributes",
-            "kind": "helper"
-          },
-          {
-            "name": "normalizeHostname",
-            "kind": "helper"
-          },
-          {
-            "name": "groupByVCenter",
-            "kind": "helper"
-          },
-          {
-            "name": "parseCSV",
-            "kind": "helper"
-          },
-          {
-            "name": "_loadXLSX",
-            "kind": "helper"
-          },
-          {
-            "name": "parseXLSXRows",
-            "kind": "helper"
-          },
-          {
-            "name": "parseRVToolsXLSX",
             "kind": "helper"
           }
         ]
