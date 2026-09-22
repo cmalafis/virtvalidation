@@ -1,7 +1,18 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base, JSONType
@@ -48,7 +59,14 @@ class VM(Base):
     __tablename__ = "vms"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # NOT unique. vSphere only requires a VM name to be unique within its
+    # folder, so one vCenter can legitimately hold two "web01"s, and two
+    # vCenters routinely do. Identity is ``(source_vcenter_id, moref)``
+    # (``uq_vms_vcenter_moref``). For rows without a MoRef — manually
+    # added VMs, exports that lost the column — name-within-vCenter is
+    # the match key, enforced in code: ``api.vms.create_vm`` and
+    # ``core.import_jobs._VCenterIndex``.
+    name: Mapped[str] = mapped_column(String(255), index=True)
     source_hostname: Mapped[str] = mapped_column(String(255))
     target_hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
@@ -153,6 +171,52 @@ class VM(Base):
     # ``last_seen_in_upload_at`` records when the row was last
     # observed in any RVTools import; together these support a "stale
     # inventory" filter without auto-deleting rows.
+    # vSphere identity. ``moref`` is the managed object ID ("vm-1234") —
+    # the value MTV expects in ``plan.spec.vms[].id`` (docs/MTV-GROUNDING.md
+    # §4). It is only unique within one vCenter, hence the composite
+    # ``uq_vms_vcenter_moref``. ``vm_uuid`` is the vCenter instance UUID,
+    # kept for reconciliation when a VM is re-registered and its MoRef
+    # changes. Both NULL for manually added VMs and for exports that lost
+    # the columns.
+    moref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    vm_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Sizing + placement facts from the RVTools vInfo sheet. Relational
+    # because the planner and list filters query them: ``esxi_host`` and
+    # ``disk_count`` bound wave size (MTV limits are per ESXi host and per
+    # plan disk count — MTV-GROUNDING.md §8); cpu/memory/provisioned feed
+    # capacity fit.
+    power_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    esxi_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    vsphere_datacenter: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    guest_os_full: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    num_cpus: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    disk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    nic_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    provisioned_mb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Everything else the export says about the VM's hardware — firmware,
+    # HW version, CBT, FT state, per-disk mode/sharing/RDM, snapshots,
+    # NICs, hot-add. Read only by the migratability assessment, never
+    # filtered on, so it stays a JSON document. Shape is produced by
+    # ``app.core.rvtools_parser`` and versioned via its ``"v"`` key.
+    hardware_facts: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+
+    # Migratability assessment (app.core.assessment) — recomputed on every
+    # import and by POST /api/assessment/run. ``assessment_status`` is its
+    # own column so inventory can filter on it; the findings document is
+    # only read per VM.
+    assessment_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
+    assessment: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    # Ids of the findings only, for the inventory's "VMs with finding X"
+    # filter. The full document can't serve that: a rule id also appears
+    # under ``not_evaluated`` when the rule couldn't run.
+    assessment_finding_ids: Mapped[list[str]] = mapped_column(
+        JSONType, nullable=False, default=list
+    )
+
     missing_from_last_upload: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -182,7 +246,26 @@ class VM(Base):
     __table_args__ = (
         Index("ix_vms_source_vcenter_status", "source_vcenter_id", "status"),
         Index("ix_vms_app_env", "application_hint", "environment"),
+        # Filter columns with enough distinct values to be selective.
+        # Measured on Postgres 16 at 5,000 VMs (Phase A report): every
+        # inventory query is < 4 ms with or without these, so they are
+        # cheap insurance for the 5,000+ case rather than a fix. Low-
+        # cardinality columns (os_family, power_state) are deliberately
+        # NOT indexed — the planner ignores such indexes and seq-scans.
+        Index("ix_vms_environment", "environment"),
+        Index("ix_vms_vsphere_cluster", "vsphere_cluster"),
+        Index("ix_vms_esxi_host", "esxi_host"),
+        UniqueConstraint("source_vcenter_id", "moref", name="uq_vms_vcenter_moref"),
     )
+
+    @property
+    def assessment_findings(self) -> list[dict[str, str]]:
+        """Compact findings for list payloads; the full document (text,
+        remediation, evidence) is served per VM."""
+        return [
+            {"id": f.get("id", ""), "category": f.get("category", ""), "label": f.get("label", "")}
+            for f in (self.assessment or {}).get("findings") or []
+        ]
 
     snapshots: Mapped[list["BaselineSnapshot"]] = relationship(
         back_populates="vm",

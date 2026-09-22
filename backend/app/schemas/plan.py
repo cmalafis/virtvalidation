@@ -99,6 +99,7 @@ class PlanRead(BaseModel):
 
     id: int
     name: str = "Untitled plan"
+    migration_type: str = "cold"
     vm_ids: list[int]
     waves: list[dict]
     summary: str | None = None
@@ -168,6 +169,14 @@ class PlanCreate(BaseModel):
     #   * ``[id1, id2, ...]``    → use these mappings, route per-VM by
     #     resolved (vcenter, cluster)
     mapping_ids: list[int] | None = Field(default=None)
+    # MTV migration type for every wave in the plan. Cold is the default:
+    # warm requires Changed Block Tracking on each VM and disk, and VMware
+    # Tools, which an RVTools-driven plan cannot assume.
+    migration_type: str = Field(default="cold", pattern=r"^(cold|warm)$")
+    # Plan anyway despite VMs the migratability assessment says cannot
+    # migrate as-is (or cannot migrate warm). Audited. For the operator who
+    # has already fixed the VM in vSphere and hasn't re-exported yet.
+    override_assessment: bool = False
     # Retained for back-compat with the synchronous tests; the new
     # pipeline ignores them. The mechanical pre-classifier always
     # runs, and HA spreading is enforced by the family-aware Stage 3

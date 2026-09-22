@@ -207,6 +207,12 @@ class MigrationPlan(Base):
         String(32), default="pending", server_default="pending", nullable=False
     )
     progress_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # MTV Plan.spec.type for every wave of this plan. ``cold`` (default) has
+    # no source-side prerequisites; ``warm`` needs CBT on the VM and every
+    # disk plus VMware Tools — docs/MTV-GROUNDING.md §7.
+    migration_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="cold", server_default="cold"
+    )
     progress_percent: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", nullable=False
     )

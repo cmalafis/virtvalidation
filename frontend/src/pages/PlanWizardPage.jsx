@@ -32,6 +32,7 @@ import {
   Progress,
   SearchInput,
   Skeleton,
+  Radio,
   TextInput,
   Wizard,
   WizardStep,
@@ -81,6 +82,7 @@ export default function PlanWizardPage() {
   const navigate = useNavigate();
 
   const [name, setName] = useState("");
+  const [migrationType, setMigrationType] = useState("cold");
   const [maxVms, setMaxVms] = useState(MAX_VMS_FALLBACK);
   const [mappings, setMappings] = useState([]);
   const [mappingIds, setMappingIds] = useState(() => new Set());
@@ -190,25 +192,42 @@ export default function PlanWizardPage() {
           // Always send the list, even empty, so the backend can tell
           // "operator opted out" from "field omitted".
           mapping_ids: [...mappingIds],
+          migration_type: migrationType,
         },
       });
 
-      toast("Generating plan…", { icon: "🤖" });
+      // A selection spanning several (vCenter, cluster, namespace) partitions
+      // fans out into one plan each — MTV allows one source provider per
+      // Plan CR. Follow all of them; the first finishing is not "done".
+      const planIds = asArray(plan?.plans).map((p) => p?.id).filter((id) => id != null);
+      if (planIds.length === 0 && plan?.id != null) planIds.push(plan.id);
+
+      toast(planIds.length > 1 ? `Generating ${planIds.length} plans…` : "Generating plan…", { icon: "🤖" });
       const deadline = Date.now() + POLL_TIMEOUT_MS;
 
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, POLL_MS));
-        const status = await fetchJSON(`/api/plans/${plan.id}`);
-        setProgress(status);
+        const statuses = await Promise.all(planIds.map((id) => fetchJSON(`/api/plans/${id}`)));
+        const failed = statuses.find((st) => st?.status === "failed");
+        const pending = statuses.filter((st) => st?.status !== "complete" && st?.status !== "failed");
+        // Show the slowest plan's stage, and how many are done.
+        setProgress({
+          ...(pending[0] ?? statuses[0]),
+          doneCount: statuses.length - pending.length,
+          planCount: statuses.length,
+        });
 
-        if (status?.status === "complete") {
-          toast.success("Migration plan ready");
-          navigate(`/plans/${status.id}`);
+        if (failed) {
+          setError(
+            `${failed?.name ?? "A plan"} failed: ${failed?.error_message || "plan generation failed."}` +
+              (statuses.length > 1 ? " Other plans from this selection may have completed — check the plans list." : ""),
+          );
+          setGenerating(false);
           return;
         }
-        if (status?.status === "failed") {
-          setError(status?.error_message || "Plan generation failed.");
-          setGenerating(false);
+        if (pending.length === 0) {
+          toast.success(statuses.length > 1 ? `${statuses.length} migration plans ready` : "Migration plan ready");
+          navigate(statuses.length > 1 ? "/plans" : `/plans/${statuses[0]?.id}`);
           return;
         }
       }
@@ -359,7 +378,11 @@ export default function PlanWizardPage() {
                 <>
                   <Progress
                     value={stagePercent(progress?.status)}
-                    title={stageLabel(progress?.status)}
+                    title={
+                      (progress?.planCount ?? 1) > 1
+                        ? `${stageLabel(progress?.status)} — ${progress?.doneCount ?? 0} of ${progress?.planCount} plans done`
+                        : stageLabel(progress?.status)
+                    }
                     aria-label="Plan generation progress"
                   />
                   <Content component="small" className="pf-v6-u-color-200">
@@ -409,6 +432,24 @@ export default function PlanWizardPage() {
                     </HelperTextItem>
                   </HelperText>
                 </FormHelperText>
+              </FormGroup>
+              <FormGroup label="Migration type" role="radiogroup" fieldId="migration-type" isStack>
+                <Radio
+                  id="migration-type-cold"
+                  name="migration-type"
+                  label="Cold — VMs are shut down for the copy"
+                  description="No source-side prerequisites. Downtime lasts for the whole disk transfer."
+                  isChecked={migrationType === "cold"}
+                  onChange={() => setMigrationType("cold")}
+                />
+                <Radio
+                  id="migration-type-warm"
+                  name="migration-type"
+                  label="Warm — disks pre-copy while VMs run; short cutover"
+                  description="Every VM needs Changed Block Tracking enabled on the VM and each disk, and VMware Tools running. Windows also needs the VSS and VMware Snapshot Provider services. A VM that lacks these fails at pre-copy."
+                  isChecked={migrationType === "warm"}
+                  onChange={() => setMigrationType("warm")}
+                />
               </FormGroup>
             </Form>
           </WizardStep>

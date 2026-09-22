@@ -18,6 +18,7 @@ import {
   CardBody,
   CardTitle,
   Content,
+  ExpandableSection,
   DescriptionList,
   DescriptionListDescription,
   DescriptionListGroup,
@@ -77,7 +78,7 @@ export default function VMDetailPage() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [tab, setTab] = useState("validation");
+  const [tab, setTab] = useState("migratability");
 
   // Cleared on unmount so a poll started for this VM can't keep running
   // after the operator has navigated away.
@@ -91,8 +92,9 @@ export default function VMDetailPage() {
 
   const load = useCallback(async () => {
     try {
-      const [vm, snapshots, profile, validation, audit] = await Promise.allSettled([
+      const [vm, assessment, snapshots, profile, validation, audit] = await Promise.allSettled([
         fetchJSON(`/api/vms/${id}`),
+        fetchJSON(`/api/vms/${id}/assessment`),
         fetchJSON(`/api/vms/${id}/snapshots`),
         fetchJSON(`/api/vms/${id}/baseline/profile`),
         fetchJSON(`/api/vms/${id}/validation/latest`),
@@ -105,6 +107,7 @@ export default function VMDetailPage() {
       const val = (r) => (r.status === "fulfilled" ? r.value : null);
       setData({
         vm: vm.value,
+        assessment: val(assessment),
         snapshots: asArray(val(snapshots)),
         profile: val(profile),
         validation: val(validation)?.validation ?? null,
@@ -203,6 +206,7 @@ export default function VMDetailPage() {
   }
 
   const validation = data.validation;
+  const assessment = data.assessment ?? null;
   const snapshots = data.snapshots ?? [];
 
   return (
@@ -275,7 +279,16 @@ export default function VMDetailPage() {
               <CardBody>
                 <Rows
                   items={[
-                    ["Platform", fmt(vm?.current_platform)],
+                    ["MoRef", fmt(vm?.moref)],
+                    ["Power", fmt(vm?.power_state)],
+                    ["Guest OS", fmt(vm?.guest_os_full)],
+                    [
+                      "Size",
+                      vm?.num_cpus
+                        ? `${vm.num_cpus} vCPU · ${Math.round((vm?.memory_mb ?? 0) / 1024)} GiB · ${vm?.disk_count ?? "?"} disk(s)`
+                        : "—",
+                    ],
+                    ["ESXi host", fmt(vm?.esxi_host)],
                     ["Cluster", fmt(vm?.vsphere_cluster)],
                     ["Folder", fmt(vm?.vsphere_folder)],
                     ["Networks", fmt(vm?.vsphere_networks)],
@@ -309,6 +322,89 @@ export default function VMDetailPage() {
 
       <PageSection hasBodyWrapper={false}>
         <Tabs activeKey={tab} onSelect={(_e, k) => setTab(k)} aria-label="VM detail">
+          <Tab
+            eventKey="migratability"
+            title={
+              <TabTitleText>
+                Migratability{" "}
+                <StatusLabel kind="assessment" value={assessment?.status ?? "unknown"} />
+              </TabTitleText>
+            }
+          >
+            <div className="pf-v6-u-mt-md">
+              {assessment?.status === "unknown" || !assessment ? (
+                <Alert variant="info" isInline title="This VM has not been assessed">
+                  Migratability is assessed from an RVTools export. This VM was added by hand,
+                  so nothing is known about its disks, snapshots or firmware. Import an export
+                  that contains it to find migration blockers before migration day.
+                </Alert>
+              ) : (
+                <>
+                  {asArray(assessment?.findings).length === 0 && (
+                    <Alert variant="success" isInline title="No findings from the rules that could run" />
+                  )}
+                  {asArray(assessment?.findings).map((f) => (
+                    <Card key={f?.id} className="pf-v6-u-mb-md">
+                      <CardTitle>
+                        <StatusLabel
+                          kind="severity"
+                          value={
+                            f?.category === "Critical" ? "critical" : f?.category === "Warning" ? "warn" : "info"
+                          }
+                        >
+                          {f?.category}
+                        </StatusLabel>{" "}
+                        {f?.label}
+                        {f?.applies_to === "warm" && (
+                          <Content component="small"> — warm migration only</Content>
+                        )}
+                      </CardTitle>
+                      <CardBody>
+                        <Content component="p">{f?.assessment}</Content>
+                        <Content component="p">
+                          <strong>What to do:</strong> {f?.remediation}
+                        </Content>
+                        {Object.keys(f?.evidence ?? {}).length > 0 && (
+                          <Content component="small">
+                            Evidence: <code>{JSON.stringify(f.evidence)}</code>
+                          </Content>
+                        )}
+                        <Content component="small" className="pf-v6-u-display-block pf-v6-u-mt-sm">
+                          MTV concern id: <code>{f?.id}</code>
+                        </Content>
+                      </CardBody>
+                    </Card>
+                  ))}
+                  {asArray(assessment?.not_evaluated).length > 0 && (
+                    <ExpandableSection
+                      toggleText={`${asArray(assessment?.not_evaluated).length} check(s) could not be evaluated from the export`}
+                    >
+                      <Content component="p">
+                        No finding for these does not mean the VM is clear of them. MTV will
+                        still check them when the plan is created on the cluster.
+                      </Content>
+                      <Table aria-label="Checks not evaluated" variant="compact">
+                        <Thead>
+                          <Tr>
+                            <Th width={35}>Check</Th>
+                            <Th>Why it could not run</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody>
+                          {asArray(assessment?.not_evaluated).map((n) => (
+                            <Tr key={n?.id}>
+                              <Td dataLabel="Check">{n?.label}</Td>
+                              <Td dataLabel="Why">{n?.reason}</Td>
+                            </Tr>
+                          ))}
+                        </Tbody>
+                      </Table>
+                    </ExpandableSection>
+                  )}
+                </>
+              )}
+            </div>
+          </Tab>
           <Tab eventKey="validation" title={<TabTitleText>Validation</TabTitleText>}>
             <div className="pf-v6-u-mt-md">
               {!validation ? (

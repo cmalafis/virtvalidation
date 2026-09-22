@@ -1,7 +1,8 @@
+import json
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
@@ -64,6 +65,9 @@ SortableColumn = Literal[
     "os_family",
     "application_hint",
     "source_vcenter_id",
+    "vsphere_cluster",
+    "power_state",
+    "provisioned_mb",
     "created_at",
     "updated_at",
 ]
@@ -161,6 +165,19 @@ def _decorate_with_resolution(vms: list[VM], db: Session) -> list[dict]:
 @router.post("", response_model=VMRead, status_code=status.HTTP_201_CREATED)
 def create_vm(payload: VMCreate, db: Session = Depends(get_db)) -> VM:
     vm = VM(**payload.model_dump())
+    # Name uniqueness is per source vCenter (``uq_vms_vcenter_name``). SQL
+    # treats NULLs as distinct in a unique constraint, so a manually added
+    # VM with no vCenter needs this explicit check to keep its 409.
+    clash = db.scalar(
+        select(VM.id).where(
+            VM.name == vm.name,
+            VM.source_vcenter_id.is_(None)
+            if vm.source_vcenter_id is None
+            else VM.source_vcenter_id == vm.source_vcenter_id,
+        )
+    )
+    if clash is not None:
+        raise HTTPException(status_code=409, detail=f"VM with name '{payload.name}' already exists")
     _apply_environment_detection(vm)
     db.add(vm)
     try:
@@ -213,6 +230,13 @@ def create_vms_bulk(payload: BulkVMCreate, db: Session = Depends(get_db)) -> dic
     }
 
 
+def _json_string_literal(value: str) -> str:
+    """``value`` as it appears inside a serialized JSON array, with LIKE
+    wildcards escaped so a datastore named ``tier_1`` matches literally."""
+    literal = json.dumps(value, ensure_ascii=False)
+    return literal.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _apply_vm_filters(
     stmt: Select,
     *,
@@ -224,6 +248,14 @@ def _apply_vm_filters(
     os_families: list[str] | None,
     classification_levels: list[str] | None,
     search: str | None,
+    vsphere_clusters: list[str] | None = None,
+    power_states: list[str] | None = None,
+    esxi_hosts: list[str] | None = None,
+    networks: list[str] | None = None,
+    datastores: list[str] | None = None,
+    missing_from_last_upload: bool | None = None,
+    assessment_statuses: list[str] | None = None,
+    assessment_findings: list[str] | None = None,
 ) -> Select:
     """Compose the WHERE clause for the inventory listing and its facets.
 
@@ -252,6 +284,36 @@ def _apply_vm_filters(
         stmt = stmt.join(VCenterSource, VM.source_vcenter_id == VCenterSource.id).where(
             VCenterSource.classification_level.in_(classification_levels)
         )
+    if vsphere_clusters:
+        stmt = stmt.where(VM.vsphere_cluster.in_(vsphere_clusters))
+    if power_states:
+        stmt = stmt.where(VM.power_state.in_(power_states))
+    if esxi_hosts:
+        stmt = stmt.where(VM.esxi_host.in_(esxi_hosts))
+    for column, wanted in ((VM.vsphere_networks, networks), (VM.vsphere_datastores, datastores)):
+        if wanted:
+            # The column is a JSON array of strings. Matching the quoted
+            # element in its text form is the one spelling that behaves
+            # the same on Postgres JSONB and SQLite JSON; the quotes keep
+            # "vlan-10" from matching "vlan-100".
+            as_text = cast(column, String)
+            stmt = stmt.where(
+                or_(*[as_text.like(f"%{_json_string_literal(w)}%", escape="\\") for w in wanted])
+            )
+    if missing_from_last_upload is not None:
+        stmt = stmt.where(VM.missing_from_last_upload.is_(missing_from_last_upload))
+    if assessment_statuses:
+        stmt = stmt.where(VM.assessment_status.in_(assessment_statuses))
+    if assessment_findings:
+        doc = cast(VM.assessment_finding_ids, String)
+        stmt = stmt.where(
+            or_(
+                *[
+                    doc.like(f"%{_json_string_literal(i)}%", escape="\\")
+                    for i in assessment_findings
+                ]
+            )
+        )
     if search:
         # Case-insensitive contains on the three free-form columns the
         # operator is likely to recognize: VM name, owner, app hint.
@@ -264,6 +326,7 @@ def _apply_vm_filters(
                 VM.name.ilike(pattern),
                 VM.owner.ilike(pattern),
                 VM.application_hint.ilike(pattern),
+                VM.ip_address.ilike(pattern),
             )
         )
     return stmt
@@ -277,6 +340,9 @@ _SORT_COLUMNS = {
     "os_family": VM.os_family,
     "application_hint": VM.application_hint,
     "source_vcenter_id": VM.source_vcenter_id,
+    "vsphere_cluster": VM.vsphere_cluster,
+    "power_state": VM.power_state,
+    "provisioned_mb": VM.provisioned_mb,
     "created_at": VM.created_at,
     "updated_at": VM.updated_at,
 }
@@ -296,6 +362,14 @@ def list_vms(
     application_hint: list[str] | None = Query(default=None),
     os_family: list[str] | None = Query(default=None),
     classification_level: list[str] | None = Query(default=None),
+    vsphere_cluster: list[str] | None = Query(default=None),
+    power_state: list[str] | None = Query(default=None),
+    esxi_host: list[str] | None = Query(default=None),
+    network: list[str] | None = Query(default=None),
+    datastore: list[str] | None = Query(default=None),
+    missing_from_last_upload: bool | None = Query(default=None),
+    assessment_status: list[str] | None = Query(default=None),
+    assessment_finding: list[str] | None = Query(default=None),
     search: str | None = Query(default=None, max_length=255),
     # ``offset`` accepted as an alias for ``skip`` so older clients
     # (and tests) that pre-date the pagination overhaul keep working.
@@ -322,6 +396,14 @@ def list_vms(
         os_families=os_family,
         classification_levels=classification_level,
         search=search,
+        vsphere_clusters=vsphere_cluster,
+        power_states=power_state,
+        esxi_hosts=esxi_host,
+        networks=network,
+        datastores=datastore,
+        missing_from_last_upload=missing_from_last_upload,
+        assessment_statuses=assessment_status,
+        assessment_findings=assessment_finding,
     )
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
 
@@ -351,6 +433,14 @@ def vm_facets(
     application_hint: list[str] | None = Query(default=None),
     os_family: list[str] | None = Query(default=None),
     classification_level: list[str] | None = Query(default=None),
+    vsphere_cluster: list[str] | None = Query(default=None),
+    power_state: list[str] | None = Query(default=None),
+    esxi_host: list[str] | None = Query(default=None),
+    network: list[str] | None = Query(default=None),
+    datastore: list[str] | None = Query(default=None),
+    missing_from_last_upload: bool | None = Query(default=None),
+    assessment_status: list[str] | None = Query(default=None),
+    assessment_finding: list[str] | None = Query(default=None),
     search: str | None = Query(default=None, max_length=255),
 ) -> dict:
     """Per-dimension counts so the filter UI can show "Production (600)".
@@ -372,6 +462,14 @@ def vm_facets(
         os_families=os_family,
         classification_levels=classification_level,
         search=search,
+        vsphere_clusters=vsphere_cluster,
+        power_states=power_state,
+        esxi_hosts=esxi_host,
+        networks=network,
+        datastores=datastore,
+        missing_from_last_upload=missing_from_last_upload,
+        assessment_statuses=assessment_status,
+        assessment_findings=assessment_finding,
     )
     subq = base.subquery()
     total = db.scalar(select(func.count()).select_from(subq)) or 0
@@ -416,6 +514,9 @@ def vm_facets(
         "application_hint": _facet("application_hint"),
         "vcenter_source_id": _facet("source_vcenter_id"),
         "classification_level": classification_facet,
+        "vsphere_cluster": _facet("vsphere_cluster"),
+        "power_state": _facet("power_state"),
+        "assessment_status": _facet("assessment_status"),
         "total": total,
     }
 
@@ -455,6 +556,14 @@ def delete_all_vms(
     application_hint: list[str] | None = Query(default=None),
     os_family: list[str] | None = Query(default=None),
     classification_level: list[str] | None = Query(default=None),
+    vsphere_cluster: list[str] | None = Query(default=None),
+    power_state: list[str] | None = Query(default=None),
+    esxi_host: list[str] | None = Query(default=None),
+    network: list[str] | None = Query(default=None),
+    datastore: list[str] | None = Query(default=None),
+    missing_from_last_upload: bool | None = Query(default=None),
+    assessment_status: list[str] | None = Query(default=None),
+    assessment_finding: list[str] | None = Query(default=None),
     search: str | None = Query(default=None, max_length=255),
 ) -> dict:
     """Bulk-delete every VM that matches the given filters.
@@ -493,6 +602,14 @@ def delete_all_vms(
         os_families=os_family,
         classification_levels=classification_level,
         search=search,
+        vsphere_clusters=vsphere_cluster,
+        power_states=power_state,
+        esxi_hosts=esxi_host,
+        networks=network,
+        datastores=datastore,
+        missing_from_last_upload=missing_from_last_upload,
+        assessment_statuses=assessment_status,
+        assessment_findings=assessment_finding,
     )
     vms = list(db.scalars(base).all())
     deleted_count = len(vms)
@@ -858,6 +975,22 @@ def set_vm_environment(
 def get_vm(vm_id: int, db: Session = Depends(get_db)) -> dict:
     vm = _get_vm_or_404(db, vm_id)
     return _vm_with_resolution(vm, resolve_vm_target(vm, db))
+
+
+@router.get("/{vm_id}/assessment")
+def get_vm_assessment(vm_id: int, db: Session = Depends(get_db)) -> dict:
+    """Full migratability findings for one VM: what MTV will flag, what
+    is lost, how to fix it, and which rules could not be evaluated."""
+    vm = _get_vm_or_404(db, vm_id)
+    doc = dict(vm.assessment or {})
+    return {
+        "vm_id": vm.id,
+        "name": vm.name,
+        "status": vm.assessment_status,
+        "ruleset": doc.get("ruleset"),
+        "findings": doc.get("findings") or [],
+        "not_evaluated": doc.get("not_evaluated") or [],
+    }
 
 
 def _diff_for_audit(before: dict, after: dict) -> dict:

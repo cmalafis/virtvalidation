@@ -33,6 +33,11 @@ import yaml
 
 from app.core.config import settings
 
+# Enums copied from the forklift v2.12.1 CRDs — docs/MTV-GROUNDING.md §3, §4.
+# If a value isn't in that document, it doesn't get emitted.
+STORAGE_ACCESS_MODES = ("ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany")
+MIGRATION_TYPES = ("cold", "warm")
+
 
 class MTVGenerationError(ValueError):
     """Raised when the wave is missing data required to produce a valid plan."""
@@ -75,6 +80,15 @@ class MappingResolver:
         for entry in self.storage_mappings:
             if entry.get("source_datastore") == source_datastore:
                 return entry.get("target_storage_class") or None
+        return None
+
+    def resolve_access_mode(self, source_datastore: str) -> str | None:
+        """The operator's access-mode choice for this datastore, or None to
+        let the storage class's StorageProfile decide."""
+        for entry in self.storage_mappings:
+            if entry.get("source_datastore") == source_datastore:
+                mode = entry.get("access_mode") or None
+                return mode if mode in STORAGE_ACCESS_MODES else None
         return None
 
     def resolve_namespace(self, vm: dict) -> str | None:
@@ -154,15 +168,6 @@ def _slugify(value: str) -> str:
     return slug or "unassigned"
 
 
-def _rfc1123_name(value: str) -> str:
-    """Lowercase, RFC1123-compliant, ≤63 chars. MTV's Plan CR rejects
-    VM names that aren't DNS-1123 labels — operator vSphere hostnames
-    often have uppercase or dots, so we slugify on emission and leave
-    the original on ``id`` for traceback."""
-    slug = _slugify(value)
-    return slug[:63] or "vm"
-
-
 @dataclass(frozen=True)
 class WaveContext:
     """Inputs the YAML generator needs in addition to the per-VM rows.
@@ -181,6 +186,10 @@ class WaveContext:
     source_provider: str
     destination_provider: str
     default_target_namespace: str
+    # Plan.spec.type. Cold is the default because it has no source-side
+    # prerequisites; warm needs CBT on the VM and every disk plus VMware
+    # Tools (MTV-GROUNDING.md §7), which VirtValidate can't assume.
+    migration_type: str = "cold"
 
     @classmethod
     def from_settings(
@@ -191,6 +200,7 @@ class WaveContext:
         *,
         source_provider: str | None = None,
         destination_provider: str | None = None,
+        migration_type: str = "cold",
     ) -> WaveContext:
         return cls(
             plan_id=plan_id,
@@ -200,6 +210,7 @@ class WaveContext:
             source_provider=source_provider or settings.mtv_source_provider,
             destination_provider=destination_provider or settings.mtv_destination_provider,
             default_target_namespace=settings.mtv_default_target_namespace,
+            migration_type=migration_type if migration_type in MIGRATION_TYPES else "cold",
         )
 
 
@@ -228,7 +239,15 @@ def _build_network_map(
     seen: dict[str, dict[str, Any]] = {}
     for vm in vms:
         nad_fallback = vm.get("target_network_attachment") or ""
-        ns_fallback = vm.get("target_namespace") or ctx.default_target_namespace
+        # A mapped NAD with no namespace of its own lives where the VM
+        # lands: a NAD is only usable from its own namespace (or
+        # ``default``), so the VM's resolved target namespace is the only
+        # sensible default.
+        ns_fallback = (
+            (resolver.resolve_namespace(vm) if resolver else None)
+            or vm.get("target_namespace")
+            or ctx.default_target_namespace
+        )
         for src in vm.get("vsphere_networks") or []:
             if not src or src in seen:
                 continue
@@ -249,10 +268,14 @@ def _build_network_map(
                     "namespace": ns_fallback,
                 }
             else:
-                # No mapping entry and no per-VM NAD — fall back to the
-                # pod network so the YAML stays valid; operators can edit
-                # before applying.
-                destination = {"type": "pod"}
+                # Never guess. Quietly attaching a DMZ portgroup to the pod
+                # network produces YAML that applies cleanly and lands the
+                # VM in the wrong security zone.
+                raise MTVGenerationError(
+                    f"Source network {src!r} (used by {vm.get('name') or '<unnamed VM>'}) has "
+                    "no target. Map it in the resource mapping — to the pod network "
+                    "explicitly, if that is really what you want."
+                )
             seen[src] = {
                 "source": {"name": src},
                 "destination": destination,
@@ -290,10 +313,11 @@ def _build_storage_map(
                 # plan-level error below catches the "no entries at all"
                 # case.
                 continue
-            seen[src] = {
-                "source": {"name": src},
-                "destination": {"storageClass": sc},
-            }
+            destination: dict[str, Any] = {"storageClass": sc}
+            access_mode = resolver.resolve_access_mode(src) if resolver else None
+            if access_mode:
+                destination["accessMode"] = access_mode
+            seen[src] = {"source": {"name": src}, "destination": destination}
 
     return {
         "apiVersion": "forklift.konveyor.io/v1beta1",
@@ -326,21 +350,30 @@ def _build_plan(
     resolved_namespaces = [_ns_for(vm) for vm in vms]
     plan_target_ns = resolved_namespaces[0] if resolved_namespaces else ctx.default_target_namespace
 
+    # A Plan CR has exactly one targetNamespace. ``vms[].namespace`` is NOT
+    # a per-VM target override — per the CRD it is "the VM Namespace, only
+    # relevant for an openshift source" — so a wave that resolves to two
+    # namespaces cannot be expressed and must not be papered over.
+    distinct = sorted({ns for ns in resolved_namespaces if ns})
+    if len(distinct) > 1:
+        raise MTVGenerationError(
+            f"Wave {ctx.wave_number} resolves to {len(distinct)} target namespaces "
+            f"({', '.join(distinct[:4])}); an MTV Plan has one targetNamespace. "
+            "Re-generate the plan so the wave is split by namespace."
+        )
+
     plan_vms: list[dict[str, Any]] = []
-    for vm, vm_ns in zip(vms, resolved_namespaces, strict=True):
-        # MTV requires RFC1123-compliant VM names (lowercase letters,
-        # digits, '-'); operator hostnames in vSphere often include
-        # uppercase. ``id`` carries the original name so downstream
-        # tooling can correlate back to the vSphere inventory.
-        original = vm.get("name") or ""
-        entry: dict[str, Any] = {
-            "id": original,
-            "name": _rfc1123_name(original),
-        }
-        # Per-VM target namespace override only when it diverges from the
-        # plan-level target — keeps the YAML compact in the common case.
-        if vm_ns and vm_ns != plan_target_ns:
-            entry["namespace"] = vm_ns
+    for vm in vms:
+        # ``id`` is the vSphere managed object ID ("vm-1234") and is what
+        # MTV resolves first; ``name`` is the SOURCE name, verbatim. MTV
+        # itself adjusts the target name to DNS-1123, so nothing is
+        # slugified here. Without a MoRef (manual VMs, exports that lost
+        # the VM ID column) emit ``name`` only — a made-up ``id`` makes MTV
+        # fail the lookup instead of falling back to the name.
+        entry: dict[str, Any] = {}
+        if vm.get("moref"):
+            entry["id"] = vm["moref"]
+        entry["name"] = vm.get("name") or ""
         plan_vms.append(entry)
 
     return {
@@ -352,7 +385,8 @@ def _build_plan(
         },
         "spec": {
             "description": ctx.rationale or f"VirtValidate wave {ctx.wave_number}",
-            "warm": True,
+            # ``type`` supersedes the deprecated ``warm`` boolean.
+            "type": ctx.migration_type,
             "targetNamespace": plan_target_ns,
             "provider": _provider_pair(ctx),
             "map": {
@@ -491,8 +525,15 @@ def generate_wave_yaml(
             "set vsphere_datastores and target_storage_class on at least one VM"
         )
 
-    return yaml.safe_dump_all(
+    text = yaml.safe_dump_all(
         [netmap, storagemap, plan],
         sort_keys=False,
         default_flow_style=False,
+        allow_unicode=True,
     )
+    # Nothing leaves this function unless it passes the real forklift CRD
+    # schemas — see app.core.mtv_validate.
+    from app.core.mtv_validate import assert_valid
+
+    assert_valid(text)
+    return text

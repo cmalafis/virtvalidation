@@ -35,6 +35,7 @@ import {
 import PageFrame from "../common/PageFrame";
 import ConfirmModal from "../common/ConfirmModal";
 import { ErrorEmptyState } from "../common/EmptyStates";
+import { asArray } from "../utils/asArray";
 import { fetchJSON } from "../utils/fetchJSON";
 import WaveRunPanel from "./plan/WaveRunPanel";
 
@@ -73,6 +74,9 @@ function WaveCard({ plan, wave }) {
   const number = wave?.wave_number ?? wave?.wave ?? 0;
   const vmIds = wave?.vm_ids ?? [];
   const concerns = wave?.notable_concerns ?? [];
+  // Deterministic migratability findings rolled up across this wave's VMs
+  // (not LLM output) — what MTV will flag when this plan is created.
+  const considerations = asArray(wave?.considerations);
 
   const downloadYaml = async () => {
     try {
@@ -134,6 +138,29 @@ function WaveCard({ plan, wave }) {
             </Content>
             <Content component="p">{wave.risk_rationale}</Content>
           </div>
+        )}
+
+        {considerations.length > 0 && (
+          <Alert
+            variant={considerations.some((c) => c?.category === "Critical") ? "danger" : "warning"}
+            isInline
+            title="Before you start this wave"
+            className="pf-v6-u-mt-md"
+          >
+            <ul>
+              {considerations.map((c) => (
+                <li key={c?.id}>
+                  <strong>{c?.label}</strong> — {c?.vm_count ?? 0} VM(s):{" "}
+                  {asArray(c?.vm_names).slice(0, 6).join(", ")}
+                  {asArray(c?.vm_names).length > 6 ? ` (+${asArray(c?.vm_names).length - 6} more)` : ""}
+                </li>
+              ))}
+            </ul>
+            <Content component="small">
+              From the migratability assessment. Open a VM for the fix; MTV reports the same
+              concerns when the plan is created on the cluster.
+            </Content>
+          </Alert>
         )}
 
         {concerns.length > 0 && (

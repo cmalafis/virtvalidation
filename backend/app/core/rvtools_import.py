@@ -1,4 +1,11 @@
-"""RVTools delta-import core.
+"""RVTools delta-import core for the JSON endpoints (pre-parsed rows).
+
+The UI no longer uses this path: file uploads go through
+``app.core.import_jobs`` (server-side streaming parse, batched commits,
+MoRef identity, multi-sheet hardware facts). This module stays for API
+clients that POST already-parsed rows to ``/api/rvtools/upload-multi-vcenter``
+or ``/api/sources/vcenters/{id}/rvtools/import``; it matches by name only
+and captures none of the hardware facts.
 
 Splits the work the import endpoint does into a pure function that can
 run synchronously (small uploads) or inside a BackgroundTask (large
@@ -50,6 +57,8 @@ IMPORT_TRACKED_FIELDS = (
     "application_hint",
     "vsphere_networks",
     "vsphere_datastores",
+    "vsphere_cluster",
+    "vsphere_folder",
 )
 
 
@@ -86,6 +95,25 @@ def _apply_incoming_value(vm: VM, field_name: str, incoming) -> bool:
         return False
     setattr(vm, field_name, incoming)
     return True
+
+
+def _detect_environment(vm: VM, *, explicit: bool) -> None:
+    from app.core.environment import Environment, detect_environment
+
+    if explicit:
+        vm.environment_source = "user_set"
+        return
+    if vm.environment or vm.environment_source == "user_set":
+        return
+    found = detect_environment(
+        name=vm.name,
+        folder_path=vm.vsphere_folder,
+        cluster=vm.vsphere_cluster,
+        custom_attributes=vm.custom_attributes,
+    )
+    if found.environment != Environment.UNKNOWN:
+        vm.environment = found.environment.value
+        vm.environment_source = "auto_detected"
 
 
 def run_rvtools_import(
@@ -146,11 +174,15 @@ def run_rvtools_import(
                 application_hint=data.get("application_hint"),
                 vsphere_networks=list(data.get("vsphere_networks") or []),
                 vsphere_datastores=list(data.get("vsphere_datastores") or []),
+                vsphere_cluster=data.get("vsphere_cluster"),
+                vsphere_folder=data.get("vsphere_folder"),
+                custom_attributes=dict(data.get("custom_attributes") or {}),
                 source_vcenter_id=vcenter_id,
                 status=VMStatus.discovered,
                 missing_from_last_upload=False,
                 last_seen_in_upload_at=now,
             )
+            _detect_environment(vm, explicit=bool(data.get("environment")))
             db.add(vm)
             summary.created += 1
             db.flush()

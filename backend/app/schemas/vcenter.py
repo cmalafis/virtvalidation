@@ -75,6 +75,12 @@ class RVToolsVMRow(BaseModel):
     # upload-multi-vcenter endpoint auto-route VMs without an
     # operator-supplied per-row override.
     source_vcenter_hostname: str | None = Field(default=None, max_length=255)
+    # Placement metadata the environment detector reads. These used to be
+    # dropped here (``extra="ignore"``), which left every VM imported
+    # through the JSON endpoints with ``environment = NULL``.
+    vsphere_cluster: str | None = Field(default=None, max_length=255)
+    vsphere_folder: str | None = Field(default=None, max_length=512)
+    custom_attributes: dict[str, str] = Field(default_factory=dict)
 
 
 class RVToolsDeltaRequest(BaseModel):

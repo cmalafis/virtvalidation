@@ -176,6 +176,7 @@ def run_simple_plan_generation(
                     plan_id=plan_id,
                     backend=backend,
                     progress_cb=_progress_cb,
+                    migration_type=plan_row.migration_type or "cold",
                 )
             )
         except PlanValidationError as e:

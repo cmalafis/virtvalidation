@@ -164,23 +164,64 @@ and for operators who want explicit control.
 > then had to be fixed up by hand; routing them at import time is
 > strictly better.
 
+### How the import runs (server-side, since 2026-09)
+
+The browser uploads the file and polls; it does not parse.
+`POST /api/imports/rvtools` (multipart) spools the upload and returns
+`202` with a job. The job moves through:
+
+```
+uploaded → scanning → awaiting_mapping → importing → completed | failed | cancelled
+```
+
+- **scanning** counts VM rows per vCenter hostname found in the file.
+- **awaiting_mapping** is the routing step — nothing has been written yet.
+  An upload that already carries `vcenter_mapping` / `default_vcenter_id`
+  skips it.
+- **importing** streams the workbook (openpyxl read-only mode) and upserts
+  in batches of 500, one transaction per batch. A failure or a cancel keeps
+  the batches already committed; uploading the same file again finishes the
+  job without duplicates.
+
+Sheets read: `vInfo` (required), and `vDisk`, `vSnapshot`, `vNetwork`,
+`vCPU`, `vMemory` when present. Use RVTools' **Export all to Excel** — a
+`vInfo`-only export imports fine, but disk-level migration blockers (RDM,
+independent and shared disks) can't be assessed from it.
+
+**Identity.** A VM is matched within its vCenter by **MoRef** (`VM ID`
+column) when the export has one, otherwise by name. A VM renamed in vSphere
+keeps its row. VM names are *not* unique — vSphere only requires uniqueness
+per folder.
+
+**Modes.** `upsert` (default) updates changed fields and flags VMs absent
+from the file as "no longer in export" (never deletes). `create_only` adds
+new VMs and leaves existing rows untouched. An empty cell never blanks
+existing data, and an environment label set by hand is never overwritten.
+
+**Problem rows** never abort the import. `GET /api/imports/{id}/rejects`
+(and `/rejects.csv`) lists each with sheet, row and reason:
+
+| Outcome | Examples |
+|---|---|
+| `rejected` — not imported | missing VM name; name over 255 chars (names are identity, never truncated); template; SRM placeholder; duplicate of an earlier row |
+| `warning` — imported, flagged | no datastore could be determined; no network listed |
+
+`.xls` is refused with a message — re-save as `.xlsx`. Upload size is capped
+by `MAX_IMPORT_UPLOAD_BYTES` (100 MB), VM rows by
+`MAX_VMS_PER_RVTOOLS_IMPORT` (10,000). One import runs at a time.
+
 ### Tested capacity
 
-End-to-end timing on a single-host appliance (UBI Python 3.12,
-in-process SQLite for the auto-link smoke test, real Postgres
-in production):
+Measured 2026-09-20, Postgres 16, through the real API, fixture from
+`scripts/generate-test-rvtools.py` (all six sheets):
 
-| VM count | vCenters | Parse | Auto-match | Multi-vCenter import | Total |
-|---------:|---------:|------:|-----------:|---------------------:|------:|
-| 100      | 3        | 10 ms | 5 ms       | 50 ms                | 70 ms |
-| 1,000    | 3        | 110 ms| 5 ms       | 120 ms               | 240 ms |
-| 1,000    | 3 (re-upload, all unchanged) | 110 ms | 5 ms | 90 ms | 210 ms |
+| File | Source rows | First import | Re-import (all unchanged) |
+|---|---:|---:|---:|
+| 1,000 VMs / 3 vCenters (`tests/fixtures/rvtools-1000.xlsx`) | 7,409 | 1.2 s | 1.5 s |
+| 5,000 VMs / 4 vCenters | 37,126 | 6.5 s | 8.2 s |
 
-Headroom is generous; the next ceiling (10,000 VMs) hasn't been
-exercised end-to-end. If you need it, the orchestrator already runs
-per-vCenter so the only risk is browser-side parse memory on the
-XLSX itself. The shipped parser uses streaming reads when available
-and handles 10K rows without re-architecting.
+Parser alone on the 1,000-VM file: 1.8 s, 8 MB peak. Whole-process peak RSS
+for the 5,000-VM run: ~310 MB (the API process, not just the parser).
 
 ### Generating test files
 
@@ -191,7 +232,7 @@ exports for scale testing:
 python3 scripts/generate-test-rvtools.py \
     --vm-count 1000 \
     --vcenter-count 3 \
-    --output /tmp/test-1000.xlsx
+    --output tests/fixtures/rvtools-1000.xlsx
 ```
 
 Output mirrors the production vInfo column set and distributes VMs

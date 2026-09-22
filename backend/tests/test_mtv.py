@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from app.core.mtv import MTVGenerationError, WaveContext, generate_wave_yaml
+from app.core.mtv import MappingResolver, MTVGenerationError, WaveContext, generate_wave_yaml
 
 
 @pytest.fixture
@@ -105,9 +105,12 @@ def test_multiple_distinct_networks_emit_distinct_entries(ctx):
     assert sorted(sources) == ["DB Backend", "DMZ", "VM Network"]
 
 
-def test_plan_includes_warm_true_and_provider_pair(ctx, two_vms_one_network_one_datastore):
+def test_plan_type_defaults_to_cold_and_provider_pair(ctx, two_vms_one_network_one_datastore):
+    """``warm`` is deprecated in favour of ``type`` (MTV-GROUNDING §4), and cold
+    is the default because warm needs CBT + VMware Tools on every VM."""
     plan = _docs(generate_wave_yaml(ctx, two_vms_one_network_one_datastore))[2]
-    assert plan["spec"]["warm"] is True
+    assert plan["spec"]["type"] == "cold"
+    assert "warm" not in plan["spec"]
     assert plan["spec"]["provider"]["source"]["name"] == "vmware-prod"
     assert plan["spec"]["provider"]["destination"]["name"] == "ocpv-host"
 
@@ -125,7 +128,9 @@ def test_plan_lists_wave_vms_in_input_order(ctx, two_vms_one_network_one_datasto
     assert all("namespace" not in v for v in plan["spec"]["vms"])
 
 
-def test_plan_emits_per_vm_namespace_override_when_diverging(ctx):
+def test_wave_spanning_two_target_namespaces_is_refused(ctx):
+    """``vms[].namespace`` is the SOURCE namespace for OpenShift providers, not a
+    per-VM target override (MTV-GROUNDING §4). One Plan = one targetNamespace."""
     vms = [
         {
             "name": "primary",
@@ -144,12 +149,8 @@ def test_plan_emits_per_vm_namespace_override_when_diverging(ctx):
             "target_network_attachment": "nad-a",
         },
     ]
-    plan = _docs(generate_wave_yaml(ctx, vms))[2]
-    plan_target = plan["spec"]["targetNamespace"]
-    assert plan_target == "finance-prod"
-    by_name = {v["name"]: v for v in plan["spec"]["vms"]}
-    assert "namespace" not in by_name["primary"]
-    assert by_name["side-tenant"]["namespace"] == "treasury-prod"
+    with pytest.raises(MTVGenerationError, match="2 target namespaces"):
+        generate_wave_yaml(ctx, vms)
 
 
 def test_missing_target_namespace_falls_back_to_default(ctx):
@@ -167,7 +168,7 @@ def test_missing_target_namespace_falls_back_to_default(ctx):
     assert plan["spec"]["targetNamespace"] == "finance-prod"
 
 
-def test_missing_nad_falls_back_to_pod_network(ctx):
+def test_unmapped_network_is_refused_not_sent_to_the_pod_network(ctx):
     vms = [
         {
             "name": "stray",
@@ -178,8 +179,8 @@ def test_missing_nad_falls_back_to_pod_network(ctx):
             "target_network_attachment": "",
         },
     ]
-    netmap = _docs(generate_wave_yaml(ctx, vms))[0]
-    assert netmap["spec"]["map"][0]["destination"] == {"type": "pod"}
+    with pytest.raises(MTVGenerationError, match="'VM Network'.*has no target"):
+        generate_wave_yaml(ctx, vms)
 
 
 def test_empty_wave_raises():
@@ -221,3 +222,64 @@ def test_wave_without_storage_class_raises(ctx):
         generate_wave_yaml(ctx, vms)
     assert "stray" in str(excinfo.value)
     assert "target storage class" in str(excinfo.value)
+
+
+# --------------------------------------------------------------------------
+# Identity, access mode, migration type — grounded in docs/MTV-GROUNDING.md
+# --------------------------------------------------------------------------
+def _one_vm(**over):
+    return {
+        "name": "APP-DB-01.corp.local",
+        "vsphere_networks": ["VM Network"],
+        "vsphere_datastores": ["ds1"],
+        "target_namespace": "prod",
+        "target_storage_class": "ocs",
+        "target_network_attachment": "nad-a",
+        **over,
+    }
+
+
+def test_vm_id_is_the_moref_and_name_is_the_source_name_verbatim(ctx):
+    plan = _docs(generate_wave_yaml(ctx, [_one_vm(moref="vm-4711")]))[2]
+    assert plan["spec"]["vms"] == [{"id": "vm-4711", "name": "APP-DB-01.corp.local"}]
+
+
+def test_vm_without_moref_emits_name_only(ctx):
+    """A display name in ``id`` makes MTV fail the lookup instead of falling
+    back to ``name`` — so no id at all when we don't have the real one."""
+    plan = _docs(generate_wave_yaml(ctx, [_one_vm()]))[2]
+    assert plan["spec"]["vms"] == [{"name": "APP-DB-01.corp.local"}]
+
+
+def test_warm_is_opt_in(two_vms_one_network_one_datastore):
+    warm = WaveContext.from_settings(plan_id=1, wave_number=1, rationale="", migration_type="warm")
+    plan = _docs(generate_wave_yaml(warm, two_vms_one_network_one_datastore))[2]
+    assert plan["spec"]["type"] == "warm"
+
+
+def test_storage_access_mode_reaches_the_storagemap(ctx):
+    resolver = MappingResolver(
+        network_mappings=[
+            {
+                "source_network": "VM Network",
+                "target_network_name": "nad-a",
+                "target_network_type": "nad",
+            }
+        ],
+        storage_mappings=[
+            {
+                "source_datastore": "ds1",
+                "target_storage_class": "ocs",
+                "access_mode": "ReadWriteMany",
+            },
+            {"source_datastore": "ds2", "target_storage_class": "ocs", "access_mode": "bogus"},
+        ],
+        namespace_mappings=[{"criteria": "default", "target_namespace": "prod"}],
+    )
+    vm = _one_vm(vsphere_datastores=["ds1", "ds2"])
+    netmap, storagemap, _plan = _docs(generate_wave_yaml(ctx, [vm], resolver=resolver))
+    by_src = {e["source"]["name"]: e["destination"] for e in storagemap["spec"]["map"]}
+    assert by_src["ds1"] == {"storageClass": "ocs", "accessMode": "ReadWriteMany"}
+    assert by_src["ds2"] == {"storageClass": "ocs"}  # not in the CRD enum → not emitted
+    # NAD without its own namespace lands in the VM's target namespace
+    assert netmap["spec"]["map"][0]["destination"]["namespace"] == "prod"
