@@ -250,6 +250,132 @@ template.
 
 ---
 
+## 8. Backend CrashLoopBackOff after the sandbox idler scales Postgres to zero
+
+### Symptom
+The backend pod crash-loops. `oc logs` ends with a long SQLAlchemy
+traceback whose last lines are:
+
+```
+sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to
+server at "virtvalidate-postgres" (172.30.117.64), port 5432 failed:
+Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+
+ERROR:    Application startup failed. Exiting.
+```
+
+The giveaway is that `oc get pods` shows **no Postgres pod at all** —
+only backend and frontend.
+
+### Root cause
+Not a Postgres failure and not a chart defect: there is no database
+to connect to. The `<release>-postgres` StatefulSet has been scaled
+to `replicas: 0`, so its Service has zero endpoints. A ClusterIP
+with no endpoints rejects TCP immediately, which is what psycopg2
+reports as "Connection refused".
+
+Red Hat Developer Sandbox namespaces (labelled
+`toolchain.dev.openshift.com/provider: codeready-toolchain`) run an
+auto-idler that scales workloads to zero after roughly 12 hours of
+uptime. Observed on 2026-09-22: Helm installed at 21:59:32Z, Postgres
+logged its clean shutdown at 09:59:36Z and the backend lost
+availability at 10:01:02Z — a 12h02m delta.
+
+The idler scales Deployments *and* StatefulSets. If someone then
+brings the stack back with `oc scale deploy --all --replicas=1`, the
+Deployments return but the StatefulSet stays at zero — which is the
+state that produces this symptom.
+
+Two checks distinguish this from a genuine Postgres crash:
+
+```bash
+# 1. Helm still intends 1 replica; only the live object was changed.
+helm get manifest <release> -n <ns> | grep -B8 'replicas: 1'
+oc get sts <release>-postgres -n <ns> -o jsonpath='{.spec.replicas}{"\n"}'
+# Helm says 1, the live StatefulSet says 0 -> something scaled it
+# out of band. A crashing Postgres would still report replicas: 1.
+
+# 2. The Service has nothing behind it.
+oc get endpoints <release>-postgres -n <ns>
+# ENDPOINTS column reads <none>
+```
+
+If instead the StatefulSet says `1` and the pod is CrashLoopBackOff,
+this is not your problem — see section 6.
+
+Data is safe. The chart's volumeClaimTemplate sets
+`persistentVolumeClaimRetentionPolicy.whenScaled: Retain`, so the PVC
+survives the scale-down and Postgres finds its existing database on
+the way back up.
+
+### Fix
+```bash
+# 1. Bring the database back.
+oc scale statefulset/<release>-postgres --replicas=1 -n <ns>
+oc rollout status statefulset/<release>-postgres -n <ns> --timeout=180s
+
+# 2. Confirm the Service has an endpoint. This, not pod status, is
+#    what the backend actually needs.
+oc get endpoints <release>-postgres -n <ns>
+#    Expect <pod-ip>:5432, not <none>.
+
+# 3. Kick the backend. It retries on its own, but the CrashLoopBackOff
+#    backoff may already be at ~5 minutes; deleting the pod skips it.
+oc delete pod -l app.kubernetes.io/component=backend -n <ns>
+oc rollout status deployment/<release>-backend -n <ns> --timeout=180s
+```
+
+Verify:
+
+```bash
+oc get deploy,sts -n <ns>   # every workload desired == ready
+oc exec deploy/<release>-backend -n <ns> -- \
+    curl -fsS http://127.0.0.1:8000/api/health/full
+# database.status and llm.status both "online",
+# schema.is_up_to_date true
+```
+
+On the hardened image variant `oc exec ... -- curl` will not work
+(distroless, no shell and no curl). Reach the route instead:
+`curl -k https://<route-host>/api/health/postgres`.
+
+### Prevention
+- **`oc scale deploy --all --replicas=1` silently skips
+  StatefulSets.** Postgres lives in a StatefulSet, so use
+  `oc scale deploy,sts --all --replicas=1` when reviving an idled
+  sandbox, or check `oc get deploy,sts` and look for anything `0/0`.
+- Triage any "connection refused to Postgres" report with these three
+  commands before reading application logs:
+
+  ```bash
+  oc get deploy,sts                                    # anything 0/0?
+  helm get manifest <release> -n <ns> | grep replicas  # what Helm intends
+  oc get endpoints <release>-postgres -n <ns>          # <none> == no backend
+  ```
+
+- This is a sandbox-lifecycle issue, not a template bug, so it needs
+  no `Chart.yaml` version bump and no redeploy — only a scale.
+- Note that the backend has no startup wait for the database: its
+  FastAPI lifespan calls `apply_migrations` immediately and exits on
+  failure, so it will crash-loop again after each idle cycle until
+  the StatefulSet is scaled back up. That is why the recovery is
+  manual today.
+
+#### Unrelated log line you can ignore
+
+The Postgres pod logs `FATAL: role "$(POSTGRES_USER)" does not exist`
+every 10 seconds. The liveness/readiness probes run
+`pg_isready -U $(POSTGRES_USER) -d $(POSTGRES_DB)`, and kubelet
+expands `$(VAR)` in probe commands only against *static* `env`
+entries — these arrive via `envFrom: secretRef`, so they are passed
+through literally. The probe still passes, because `pg_isready` exits
+0 whenever the server answers at all, regardless of whether the role
+or database is valid. Cosmetic noise, not a failure; it is not the
+cause of this section's symptom.
+
+---
+
 ## Verification checklist
 
 After applying any of the fixes above, run:
