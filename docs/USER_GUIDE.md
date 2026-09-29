@@ -240,11 +240,23 @@ See [DESIGN_REVIEW.md](DESIGN_REVIEW.md).
 
 Three steps: name it, choose the resource mappings that cover the estate,
 select the VMs. Only VMs not already committed to another plan appear.
+Filter the list by vCenter, environment or search, then tick rows, tick
+the header checkbox for the page, or click **Select all N matching** to
+take everything the filter returns.
 
-The cap is 1,000 VMs per plan (`max_vms_per_plan`, adjustable at deploy
-time). Well before that ceiling it's worth splitting anyway — one enormous
-plan is harder to review and to sequence than several scoped ones, and the
-wizard shows how many you've selected as you go.
+There is no limit on how many VMs you select. Plans are generated in
+batches of up to 1,000 VMs (`max_vms_per_plan`, adjustable at deploy
+time): a 3,000-VM selection becomes `name-1`, `name-2`, `name-3`, and a
+selection that spans several vCenter / cluster / namespace partitions
+keeps the partition in the name (`name-vc01-prod-1`). Before you generate,
+the wizard shows exactly which plans will be created and lists any
+selected VMs that will be **skipped** — blocked by the migratability
+assessment for the chosen migration type, or with no target cluster /
+namespace — and why. Skipped VMs stay available in the inventory and are
+listed again on each plan's detail page.
+
+A series is generated one batch after another. The wizard hands you off to
+the plans list, where each row shows **Batch n of N** and its progress.
 
 Generation runs a pipeline and reports which stage it's on. Most stages
 are deterministic and take under a second; the per-wave rationale step

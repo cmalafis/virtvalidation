@@ -585,16 +585,41 @@ Stages 0-5 + 7 are pure Python and run in well under 1s for 250 VMs.
 Stage 6 wall-clock is dominated by the slowest single LLM call,
 not their sum, because of `asyncio.gather`.
 
-Selection cap: `settings.max_vms_per_plan` (default **1000**). `POST
-/api/plans` returns 422 above the cap so the operator narrows
-filters or splits into multiple plans rather than running one
-huge black-box plan.
+Batch size, not a selection cap: `settings.max_vms_per_plan`
+(default **1000**) is the most VMs one *generated* plan holds. There
+is no limit on how many VMs the operator selects. `POST /api/plans`
+fans the selection out by `(vcenter, cluster, namespace)` partition
+as before, then cuts each partition into balanced batches of at most
+`max_vms_per_plan` VMs (`app.core.plan_chunking.chunk_partition` —
+pure Python, sorted so same-app / same-HA-family VMs stay adjacent).
+Every row from one POST shares `MigrationPlan.series_id`; names are
+`base-1`, `base-2`, … series-wide, with the partition slug kept in
+the middle when the selection spans several partitions
+(`base-vc01-prod-1`). A selection that yields exactly one plan keeps
+the operator's name verbatim. Background tasks run in series order.
 
-The cap is surfaced on `GET /api/settings` as `max_vms_per_plan` and
-the plan wizard READS it. Do not hardcode it in the frontend — this
-doc said 250 for months after `6e48f29` raised it, and a UI that
-trusted that number silently capped operators at a quarter of
-capacity.
+Why 1000 stays the default: total LLM work is one call per 10-VM
+wave regardless of batch size, but the deterministic stages are
+O(n²) inside a partition (~0.5s at 1000 VMs, ~5s at 3000, ~50s at
+10k) and the plan detail page renders every wave card without
+virtualization. It is an ergonomics threshold, not a correctness one.
+Raise it per deployment with `MAX_VMS_PER_PLAN`.
+
+The only hard ceiling is `limits.MAX_VMS_PER_PLAN_SCOPE` (default
+10,000, env-overridable) on the `vm_ids` body of one POST — a DoS
+guard, 422 above it. `PlanCreate.skip_ineligible=true` (the wizard
+sets it) drops assessment-blocked / unresolvable VMs into the
+response `excluded` list and persists them as
+`MigrationPlan.excluded_vms` on every row of the series instead of
+failing the whole call; `POST /api/plans/preview` returns the same
+`plans` (exact names + counts) and `excluded` lists so the wizard
+shows them before generation.
+
+Both numbers are surfaced on `GET /api/settings` as
+`max_vms_per_plan` / `max_vms_per_plan_request` and the plan wizard
+READS them. Do not hardcode either in the frontend — this doc said
+250 for months after `6e48f29` raised it, and a UI that trusted that
+number silently capped operators at a quarter of capacity.
 
 When adding a new pipeline stage, extend
 `plan_pipeline._PIPELINE_STAGE_TO_STATUS` so the Plan row's

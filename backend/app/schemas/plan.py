@@ -151,6 +151,25 @@ class PlanRead(BaseModel):
     plans: list[dict] = Field(default_factory=list)
     plan_count: int = 0
 
+    # Batched-series fields (persisted). A selection larger than
+    # ``settings.max_vms_per_plan`` is generated as several plans that
+    # share ``series_id``; ``series_index`` is 1-based across the series.
+    # None on rows that pre-date batching. ``excluded_vms`` lists the
+    # selected VMs the create call left out (``skip_ineligible``), the
+    # same list on every row of the series.
+    series_id: str | None = None
+    series_index: int | None = None
+    series_total: int | None = None
+    excluded_vms: list[dict] = Field(default_factory=list)
+    # Transient — only populated on the create response: the excluded
+    # list for the whole series (same content as ``excluded_vms``).
+    excluded: list[dict] = Field(default_factory=list)
+
+    @field_validator("excluded_vms", mode="before")
+    @classmethod
+    def _coerce_null_excluded(cls, v):
+        return v if v is not None else []
+
 
 # POST /api/plans payload — the canonical create path under the new
 # pipeline.
@@ -177,6 +196,14 @@ class PlanCreate(BaseModel):
     # migrate as-is (or cannot migrate warm). Audited. For the operator who
     # has already fixed the VM in vSphere and hasn't re-exported yet.
     override_assessment: bool = False
+    # Drop — instead of 422-ing on — VMs that cannot be planned as
+    # selected: assessment-blocked for ``migration_type`` (unless
+    # ``override_assessment``), or unresolvable to a target cluster +
+    # namespace. The dropped VMs stay ``available`` and are reported in
+    # the response ``excluded`` list and persisted on every plan row as
+    # ``excluded_vms``. The wizard's "select all" path sets this so one
+    # blocked VM in a 3000-VM selection doesn't block the other 2999.
+    skip_ineligible: bool = False
     # Retained for back-compat with the synchronous tests; the new
     # pipeline ignores them. The mechanical pre-classifier always
     # runs, and HA spreading is enforced by the family-aware Stage 3
@@ -228,12 +255,40 @@ class PreviewUnresolvedVM(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class PreviewPlanEntry(BaseModel):
+    """One plan row POST /api/plans will create for this selection —
+    after partitioning AND batching. The name is exactly what the row
+    will be called, so the wizard can show it before generation."""
+
+    name: str
+    vm_count: int
+    series_index: int
+    source_vcenter_id: int | None = None
+    source_vcenter_name: str | None = None
+    target_cluster_id: int | None = None
+    target_cluster_name: str | None = None
+    target_namespace: str | None = None
+
+
+class PreviewExcludedVM(BaseModel):
+    vm_id: int
+    vm_name: str
+    reason: str
+
+
 class PlanPreviewResponse(BaseModel):
     total_vms: int
     resolvable: int
     unresolvable: int
     groups: list[PreviewPartitionGroup]
     unresolved: list[PreviewUnresolvedVM]
+    # Batching view: the plan rows that would be created, series-wide
+    # numbering, plus every VM that ``skip_ineligible`` would leave out
+    # (assessment-blocked for ``migration_type`` ∪ ``unresolved``).
+    plans: list[PreviewPlanEntry] = Field(default_factory=list)
+    plan_count: int = 0
+    batch_size: int = 0
+    excluded: list[PreviewExcludedVM] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

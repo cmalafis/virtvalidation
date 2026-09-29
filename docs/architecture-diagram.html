@@ -351,6 +351,12 @@ const DATA = {
           },
           {
             "method": "GET",
+            "path": "/api/vms/ids",
+            "handler": "list_vm_ids",
+            "summary": "Every ``{id, name}`` matching the filter set \u2014 unpaginated."
+          },
+          {
+            "method": "GET",
             "path": "/api/vms/facets",
             "handler": "vm_facets",
             "summary": "Per-dimension counts so the filter UI can show \"Production (600)\"."
@@ -777,6 +783,28 @@ const DATA = {
             ],
             "methods": [],
             "summary": "Paginated wrapper for the inventory listing."
+          },
+          {
+            "name": "VMIdName",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "id",
+              "name"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "VMIdListResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "items",
+              "total"
+            ],
+            "methods": [],
+            "summary": "``GET /api/vms/ids`` \u2014 every ``{id, name}`` matching the filter"
           },
           {
             "name": "VMFacetsResponse",
@@ -1350,7 +1378,7 @@ const DATA = {
             "method": "POST",
             "path": "/api/plans/preview",
             "handler": "preview_plan_partitions",
-            "summary": "Show how the selection will fan out into Plan CRs without"
+            "summary": "Show how the selection will fan out into plan rows without"
           },
           {
             "method": "POST",
@@ -1440,12 +1468,14 @@ const DATA = {
         "classes": [],
         "functions": [],
         "depends_on": [
+          "app.core",
           "app.core.assessment",
           "app.core.audit",
           "app.core.config",
           "app.core.db",
           "app.core.mapping_validation",
           "app.core.mtv",
+          "app.core.plan_chunking",
           "app.core.plan_generation",
           "app.core.plan_pipeline",
           "app.core.preclassifier",
@@ -1670,6 +1700,10 @@ const DATA = {
               "migration_type",
               "progress_percent",
               "error_message",
+              "series_id",
+              "series_index",
+              "series_total",
+              "excluded_vms",
               "started_at",
               "completed_at",
               "created_at"
@@ -1792,7 +1826,12 @@ const DATA = {
               "method",
               "attempts",
               "plans",
-              "plan_count"
+              "plan_count",
+              "series_id",
+              "series_index",
+              "series_total",
+              "excluded_vms",
+              "excluded"
             ],
             "methods": [],
             "summary": "API response shape for a stored plan."
@@ -1807,6 +1846,7 @@ const DATA = {
               "mapping_ids",
               "migration_type",
               "override_assessment",
+              "skip_ineligible",
               "preclassification_enabled",
               "ha_strategy"
             ],
@@ -1860,6 +1900,35 @@ const DATA = {
             "summary": ""
           },
           {
+            "name": "PreviewPlanEntry",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "name",
+              "vm_count",
+              "series_index",
+              "source_vcenter_id",
+              "source_vcenter_name",
+              "target_cluster_id",
+              "target_cluster_name",
+              "target_namespace"
+            ],
+            "methods": [],
+            "summary": "One plan row POST /api/plans will create for this selection \u2014"
+          },
+          {
+            "name": "PreviewExcludedVM",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "vm_name",
+              "reason"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
             "name": "PlanPreviewResponse",
             "kind": "schema",
             "table": "",
@@ -1868,7 +1937,11 @@ const DATA = {
               "resolvable",
               "unresolvable",
               "groups",
-              "unresolved"
+              "unresolved",
+              "plans",
+              "plan_count",
+              "batch_size",
+              "excluded"
             ],
             "methods": [],
             "summary": ""
@@ -2732,6 +2805,7 @@ const DATA = {
         "classes": [],
         "functions": [],
         "depends_on": [
+          "app.core",
           "app.core.audit",
           "app.core.config",
           "app.core.db",
@@ -5340,6 +5414,33 @@ const DATA = {
           }
         ],
         "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.core.plan_chunking",
+        "title": "app.core.plan_chunking",
+        "subtitle": "backend/app/core/plan_chunking.py",
+        "summary": "Split one (vCenter, cluster, namespace) partition into plan-sized batches.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "chunk_partition",
+            "summary": "Cut ``vms`` into ``ceil(len / max_per_plan)`` balanced batches."
+          },
+          {
+            "name": "slug_for_plan_name",
+            "summary": "RFC1123-safe lowercase slug. Falls back to ``plan`` when empty."
+          },
+          {
+            "name": "compose_series_name",
+            "summary": "Name one plan of a series."
+          }
+        ],
+        "depends_on": [
+          "app.core.family"
+        ]
       },
       {
         "kind": "module",
@@ -7968,7 +8069,8 @@ const DATA = {
               "ssh_operations_enabled",
               "updated_at",
               "next_run_at",
-              "max_vms_per_plan"
+              "max_vms_per_plan",
+              "max_vms_per_plan_request"
             ],
             "methods": [],
             "summary": ""
@@ -9681,8 +9783,12 @@ const DATA = {
         "api_calls": [
           "/api/mappings",
           "/api/plans",
+          "/api/plans/preview",
           "/api/plans/{id}",
           "/api/settings",
+          "/api/sources/vcenters",
+          "/api/vms/facets?lifecycle_state=available",
+          "/api/vms/ids?{id}",
           "/api/vms?{id}"
         ],
         "members": [
@@ -9693,6 +9799,10 @@ const DATA = {
           {
             "name": "stagePercent",
             "kind": "helper"
+          },
+          {
+            "name": "ExcludedVMs",
+            "kind": "component"
           },
           {
             "name": "PlanWizardPage",
@@ -9708,7 +9818,7 @@ const DATA = {
         "summary": "Migration plans \u2014 the index.",
         "category": "frontend",
         "api_calls": [
-          "/api/plans?limit=100"
+          "/api/plans?limit=200"
         ],
         "members": [
           {

@@ -469,3 +469,41 @@ def test_bulk_set_target_cluster_unknown_vm_404(client):
         json={"vm_ids": [99999], "target_cluster_id_override": None},
     )
     assert r.status_code == 404, r.text
+
+
+# ---------------------------------------------------------------------------
+# GET /api/vms/ids — "select all N matching"
+# ---------------------------------------------------------------------------
+def test_ids_returns_every_match_unpaginated(client):
+    for i in range(7):
+        _create_vm(client, name=f"vm-{i}", source_hostname=f"vm-{i}.local")
+    body = client.get("/api/vms/ids").json()
+    assert body["total"] == 7
+    assert [v["name"] for v in body["items"]] == [f"vm-{i}" for i in range(7)]
+    assert set(body["items"][0].keys()) == {"id", "name"}
+
+
+def test_ids_honours_filters_like_the_listing(client):
+    _create_vm(client, name="prod-a", source_hostname="prod-a.local", environment="production")
+    _create_vm(client, name="dev-a", source_hostname="dev-a.local", environment="development")
+    body = client.get("/api/vms/ids?environment=production").json()
+    assert [v["name"] for v in body["items"]] == ["prod-a"]
+    assert body["total"] == 1
+    searched = client.get("/api/vms/ids?search=dev").json()
+    assert [v["name"] for v in searched["items"]] == ["dev-a"]
+
+
+def test_ids_honours_lifecycle_state(client):
+    for i in range(3):
+        _create_vm(client, name=f"vm-{i}", source_hostname=f"vm-{i}.local")
+    assert client.get("/api/vms/ids?lifecycle_state=available").json()["total"] == 3
+    assert client.get("/api/vms/ids?lifecycle_state=planned").json()["total"] == 0
+
+
+def test_ids_422_above_bulk_ceiling(client, monkeypatch):
+    monkeypatch.setattr("app.api.vms.MAX_VMS_PER_BULK_ACTION", 2)
+    for i in range(3):
+        _create_vm(client, name=f"vm-{i}", source_hostname=f"vm-{i}.local")
+    r = client.get("/api/vms/ids")
+    assert r.status_code == 422
+    assert "Narrow the selection" in r.json()["detail"]

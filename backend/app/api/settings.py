@@ -10,6 +10,7 @@ import paramiko
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.core import limits
 from app.core.audit import record_audit
 from app.core.config import settings as app_config
 from app.core.db import get_db
@@ -87,10 +88,12 @@ def _settings_payload(row: AppSettings) -> dict:
     body = AppSettingsRead.model_validate(row).model_dump(mode="json")
     nxt = next_run_time()
     body["next_run_at"] = nxt.isoformat() if nxt is not None else None
-    # Deploy-time config rather than a DB column, so it isn't on ``row``.
-    # The plan wizard reads this to gate selection at the same number
-    # POST /api/plans enforces (see plans.py's max_vms check).
+    # Deploy-time config rather than DB columns, so they aren't on ``row``.
+    # ``max_vms_per_plan`` is the batch size POST /api/plans cuts a large
+    # selection into; ``max_vms_per_plan_request`` is the per-request
+    # ceiling it 422s above. The wizard reads both.
     body["max_vms_per_plan"] = app_config.max_vms_per_plan
+    body["max_vms_per_plan_request"] = limits.MAX_VMS_PER_PLAN_SCOPE
     return body
 
 
@@ -394,9 +397,7 @@ def ssh_key_rotate(
         request.state.skip_audit_log = True
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"No SSH key found at {e.path}. " "Use POST /api/system/ssh-key/generate first."
-            ),
+            detail=(f"No SSH key found at {e.path}. Use POST /api/system/ssh-key/generate first."),
         ) from e
 
     record_audit(

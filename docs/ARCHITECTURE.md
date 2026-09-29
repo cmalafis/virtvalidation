@@ -38,6 +38,7 @@ Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core
 | `POST` | `/api/vms` | `create_vm(payload, db)` | — |
 | `POST` | `/api/vms/bulk` | `create_vms_bulk(payload, db)` | Best-effort batch enrollment. |
 | `GET` | `/api/vms` | `list_vms(db, skip, limit, sort_by, sort_order, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, assessment_status, assessment_finding, search, offset)` | Paginated, filterable inventory listing. |
+| `GET` | `/api/vms/ids` | `list_vm_ids(db, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, assessment_status, assessment_finding, search)` | Every ``{id, name}`` matching the filter set — unpaginated. |
 | `GET` | `/api/vms/facets` | `vm_facets(db, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, assessment_status, assessment_finding, search)` | Per-dimension counts so the filter UI can show &quot;Production (600)&quot;. |
 | `GET` | `/api/vms/stats` | `vm_stats(db)` | Cheap dashboard counters — no filter set, no row reads. |
 | `DELETE` | `/api/vms/all` | `delete_all_vms(request, db, confirm, status_filter, lifecycle_state, vcenter_source_id, environment, application_hint, os_family, classification_level, vsphere_cluster, power_state, esxi_host, network, datastore, missing_from_last_upload, assessment_status, assessment_finding, search)` | Bulk-delete every VM that matches the given filters. |
@@ -107,6 +108,11 @@ Depends on: `app.core.limits`, `app.models.vm`
 - **`VMListResponse`** (Pydantic schema)
   - Paginated wrapper for the inventory listing.
   - Fields: `items`, `total`, `skip`, `limit`
+- **`VMIdName`** (Pydantic schema)
+  - Fields: `id`, `name`
+- **`VMIdListResponse`** (Pydantic schema)
+  - ``GET /api/vms/ids`` — every ``{id, name}`` matching the filter
+  - Fields: `items`, `total`
 - **`VMFacetsResponse`** (Pydantic schema)
   - Per-dimension counts driven by the same filter set as list_vms.
   - Fields: `status`, `lifecycle_state`, `environment`, `os_family`, `application_hint`, `vcenter_source_id`, `classification_level`, `vsphere_cluster`, `power_state`, `assessment_status`, `total`
@@ -283,14 +289,14 @@ LLM-driven wave planning + MTV/Forklift YAML generation.
 <details><summary><strong><code>app.api.plans</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/plans.py`  
-Depends on: `app.core.assessment`, `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_generation`, `app.core.plan_pipeline`, `app.core.preclassifier`, `app.core.reporter`, `app.core.target_resolution`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
+Depends on: `app.core`, `app.core.assessment`, `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_chunking`, `app.core.plan_generation`, `app.core.plan_pipeline`, `app.core.preclassifier`, `app.core.reporter`, `app.core.target_resolution`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
 
 **Routes**
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
 | `POST` | `/api/plans` | `create_plan(request, payload, background_tasks, db)` | Kick off async migration plan generation. |
-| `POST` | `/api/plans/preview` | `preview_plan_partitions(payload, db)` | Show how the selection will fan out into Plan CRs without |
+| `POST` | `/api/plans/preview` | `preview_plan_partitions(payload, db)` | Show how the selection will fan out into plan rows without |
 | `POST` | `/api/plans/preview-groups` | `preview_groups(payload, db)` | Show how the pre-classifier WOULD group these VMs — no LLM, no plan. |
 | `GET` | `/api/plans` | `list_plans(db, limit)` | — |
 | `GET` | `/api/plans/{plan_id}` | `get_plan(plan_id, db)` | — |
@@ -369,7 +375,7 @@ Depends on: `app.core.db`
   - Customer intent captured by the planning wizard.
   - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
 - **`MigrationPlan`** (SQLAlchemy model · table `migration_plans`)
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `status`, `progress_message`, `migration_type`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `created_at`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `status`, `progress_message`, `migration_type`, `progress_percent`, `error_message`, `series_id`, `series_index`, `series_total`, `excluded_vms`, `started_at`, `completed_at`, `created_at`
 
 </details>
 
@@ -390,9 +396,9 @@ Depends on: `app.models.plan`
   - Fields: `wave_number`, `name`, `vm_ids`, `vm_names`, `rationale`, `estimated_duration`, `estimated_risk`, `risk_level`, `considerations`, `applications_included`, `applications_split_warning`
 - **`PlanRead`** (Pydantic schema)
   - API response shape for a stored plan.
-  - Fields: `id`, `name`, `migration_type`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`, `plans`, `plan_count`
+  - Fields: `id`, `name`, `migration_type`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`, `plans`, `plan_count`, `series_id`, `series_index`, `series_total`, `excluded_vms`, `excluded`
 - **`PlanCreate`** (Pydantic schema)
-  - Fields: `vm_ids`, `name`, `mapping_ids`, `migration_type`, `override_assessment`, `preclassification_enabled`, `ha_strategy`
+  - Fields: `vm_ids`, `name`, `mapping_ids`, `migration_type`, `override_assessment`, `skip_ineligible`, `preclassification_enabled`, `ha_strategy`
 - **`PreviewGroupsResponse`** (Pydantic schema)
   - Result of POST /api/plans/preview-groups — no plan persisted.
   - Fields: `vm_count`, `groups_formed`, `groups`, `over_ceiling`, `ceiling`
@@ -401,8 +407,13 @@ Depends on: `app.models.plan`
   - Fields: `source_vcenter_id`, `source_vcenter_name`, `target_cluster_id`, `target_cluster_name`, `target_namespace`, `vm_count`, `estimated_waves`, `mapping_id`, `mapping_name`, `network_targets`, `storage_targets`
 - **`PreviewUnresolvedVM`** (Pydantic schema)
   - Fields: `vm_id`, `vm_name`, `reasons`
+- **`PreviewPlanEntry`** (Pydantic schema)
+  - One plan row POST /api/plans will create for this selection —
+  - Fields: `name`, `vm_count`, `series_index`, `source_vcenter_id`, `source_vcenter_name`, `target_cluster_id`, `target_cluster_name`, `target_namespace`
+- **`PreviewExcludedVM`** (Pydantic schema)
+  - Fields: `vm_id`, `vm_name`, `reason`
 - **`PlanPreviewResponse`** (Pydantic schema)
-  - Fields: `total_vms`, `resolvable`, `unresolvable`, `groups`, `unresolved`
+  - Fields: `total_vms`, `resolvable`, `unresolvable`, `groups`, `unresolved`, `plans`, `plan_count`, `batch_size`, `excluded`
 - **`MultiPlanCreateResponse`** (Pydantic schema)
   - Fields: `plans`
 
@@ -730,7 +741,7 @@ Depends on: `app.core.audit`, `app.core.db`, `app.core.limits`, `app.core.rvtool
 <details><summary><strong><code>app.api.settings</code></strong> — <em>API endpoints</em> · Settings + system-info endpoints powering the /settings page.</summary>
 
 Path: `backend/app/api/settings.py`  
-Depends on: `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.runtime`, `app.core.llm.types`, `app.core.scheduler`, `app.core.ssh_key`, `app.models.settings`, `app.schemas.settings`
+Depends on: `app.core`, `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.fips`, `app.core.llm.runtime`, `app.core.llm.types`, `app.core.scheduler`, `app.core.ssh_key`, `app.models.settings`, `app.schemas.settings`
 
 **Routes**
 
@@ -1635,6 +1646,19 @@ Path: `backend/app/core/os_profile.py`
 
 </details>
 
+<details><summary><strong><code>app.core.plan_chunking</code></strong> — <em>Business logic</em> · Split one (vCenter, cluster, namespace) partition into plan-sized batches.</summary>
+
+Path: `backend/app/core/plan_chunking.py`  
+Depends on: `app.core.family`
+
+**Functions**
+
+- `chunk_partition(vms, max_per_plan)` — Cut ``vms`` into ``ceil(len / max_per_plan)`` balanced batches.
+- `slug_for_plan_name(value, max_len)` — RFC1123-safe lowercase slug. Falls back to ``plan`` when empty.
+- `compose_series_name(base)` — Name one plan of a series.
+
+</details>
+
 <details><summary><strong><code>app.core.plan_generation</code></strong> — <em>Business logic</em> · BackgroundTask body for POST /api/plans.</summary>
 
 Path: `backend/app/core/plan_generation.py`  
@@ -2421,7 +2445,7 @@ Depends on: `app.core.llm.types`, `app.models.settings`
 **Classes**
 
 - **`AppSettingsRead`** (Pydantic schema)
-  - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `ssh_operations_enabled`, `updated_at`, `next_run_at`, `max_vms_per_plan`
+  - Fields: `id`, `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `ssh_operations_enabled`, `updated_at`, `next_run_at`, `max_vms_per_plan`, `max_vms_per_plan_request`
 - **`AppSettingsUpdate`** (Pydantic schema)
   - Fields: `ollama_model`, `schedule_preset`, `ssh_host_key_policy`, `ssh_operations_enabled`
 - **`HealthStatus`** (Pydantic schema)
@@ -2911,13 +2935,18 @@ Exports / inner components:
 API calls:
 - `/api/mappings`
 - `/api/plans`
+- `/api/plans/preview`
 - `/api/plans/{id}`
 - `/api/settings`
+- `/api/sources/vcenters`
+- `/api/vms/facets?lifecycle_state=available`
+- `/api/vms/ids?{id}`
 - `/api/vms?{id}`
 
 Exports / inner components:
 - **`stageLabel`** (helper)
 - **`stagePercent`** (helper)
+- **`ExcludedVMs`** (component)
 - **`PlanWizardPage`** (component)
 
 </details>
@@ -2925,7 +2954,7 @@ Exports / inner components:
 <details><summary><strong><code>frontend/src/pages/PlansPage.jsx</code></strong> — <em>Frontend component</em> · Migration plans — the index.</summary>
 
 API calls:
-- `/api/plans?limit=100`
+- `/api/plans?limit=200`
 
 Exports / inner components:
 - **`stageProgress`** (helper)

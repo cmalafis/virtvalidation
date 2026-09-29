@@ -159,6 +159,21 @@ class VMListResponse(BaseModel):
     limit: int
 
 
+class VMIdName(BaseModel):
+    id: int
+    name: str
+
+
+class VMIdListResponse(BaseModel):
+    """``GET /api/vms/ids`` — every ``{id, name}`` matching the filter
+    set, unpaginated, for "select all N matching" affordances. Bounded
+    by ``limits.MAX_VMS_PER_BULK_ACTION``; above that the endpoint 422s
+    so a runaway filter can't ship a 100k-row body."""
+
+    items: list[VMIdName]
+    total: int
+
+
 class VMFacetsResponse(BaseModel):
     """Per-dimension counts driven by the same filter set as list_vms.
 

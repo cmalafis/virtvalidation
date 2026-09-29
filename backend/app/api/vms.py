@@ -11,7 +11,7 @@ from app.core.audit import record_audit
 from app.core.baseline import synthesize_profile
 from app.core.capture import run_capture_task, task_store
 from app.core.db import get_db
-from app.core.limits import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from app.core.limits import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_VMS_PER_BULK_ACTION
 from app.core.target_resolution import (
     ResolvedTarget,
     resolve_vm_target,
@@ -48,6 +48,7 @@ from app.schemas.vm import (
     SnapshotRead,
     VMCreate,
     VMFacetsResponse,
+    VMIdListResponse,
     VMListResponse,
     VMRead,
     VMStats,
@@ -421,6 +422,71 @@ def list_vms(
         "skip": skip,
         "limit": limit,
     }
+
+
+@router.get("/ids", response_model=VMIdListResponse)
+def list_vm_ids(
+    db: Session = Depends(get_db),
+    status_filter: list[VMStatus] | None = Query(default=None, alias="status"),
+    lifecycle_state: list[VMLifecycleState] | None = Query(default=None),
+    vcenter_source_id: list[int] | None = Query(default=None),
+    environment: list[str] | None = Query(default=None),
+    application_hint: list[str] | None = Query(default=None),
+    os_family: list[str] | None = Query(default=None),
+    classification_level: list[str] | None = Query(default=None),
+    vsphere_cluster: list[str] | None = Query(default=None),
+    power_state: list[str] | None = Query(default=None),
+    esxi_host: list[str] | None = Query(default=None),
+    network: list[str] | None = Query(default=None),
+    datastore: list[str] | None = Query(default=None),
+    missing_from_last_upload: bool | None = Query(default=None),
+    assessment_status: list[str] | None = Query(default=None),
+    assessment_finding: list[str] | None = Query(default=None),
+    search: str | None = Query(default=None, max_length=255),
+) -> dict:
+    """Every ``{id, name}`` matching the filter set — unpaginated.
+
+    Backs "Select all N matching" in the plan wizard: the same
+    querystring that rendered the page returns the ids the operator
+    would get by paging through it and ticking every row. Ordered by
+    name then id so the result is stable across calls.
+
+    Bounded by ``MAX_VMS_PER_BULK_ACTION`` (422 above it) so a filter
+    that matches an entire 50k-VM estate can't ship a multi-megabyte
+    body; the hint tells the operator to narrow by vCenter.
+    """
+    base = select(VM.id, VM.name)
+    base = _apply_vm_filters(
+        base,
+        statuses=status_filter,
+        lifecycle_states=lifecycle_state,
+        vcenter_source_ids=vcenter_source_id,
+        environments=environment,
+        application_hints=application_hint,
+        os_families=os_family,
+        classification_levels=classification_level,
+        search=search,
+        vsphere_clusters=vsphere_cluster,
+        power_states=power_state,
+        esxi_hosts=esxi_host,
+        networks=network,
+        datastores=datastore,
+        missing_from_last_upload=missing_from_last_upload,
+        assessment_statuses=assessment_status,
+        assessment_findings=assessment_finding,
+    )
+    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    if total > MAX_VMS_PER_BULK_ACTION:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{total} VMs match this filter, above the {MAX_VMS_PER_BULK_ACTION} "
+                "per-request ceiling. Narrow the selection (for example, by vCenter "
+                "or environment) and select again."
+            ),
+        )
+    rows = db.execute(base.order_by(VM.name.asc(), VM.id.asc())).all()
+    return {"items": [{"id": r[0], "name": r[1]} for r in rows], "total": total}
 
 
 @router.get("/facets", response_model=VMFacetsResponse)

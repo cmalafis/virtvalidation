@@ -61,6 +61,7 @@ const POPULATED = [
     id: 1, name: "vm-1", status: "validated", lifecycle_state: "available",
     vsphere_networks: ["net"], vsphere_datastores: ["ds"],
   }],
+  [/\/api\/vms\/ids/, { items: [{ id: 1, name: "vm-1" }, { id: 2, name: "vm-2" }], total: 2 }],
   [/\/api\/vms/, {
     items: [{ id: 1, name: "vm-1", status: "discovered", lifecycle_state: "available" }],
     total: 1, skip: 0, limit: 20,
@@ -70,9 +71,16 @@ const POPULATED = [
     authorization_reason: "", ssh_operations_enabled: true,
     vms: [{ vm_id: 1, name: "vm-1", host: "h", username: "u", commands: ["uname -r"] }],
   }],
+  [/\/api\/plans\/preview/, {
+    total_vms: 2, resolvable: 2, unresolvable: 0, groups: [], unresolved: [],
+    plans: [{ name: "plan-1", vm_count: 1, series_index: 1 }, { name: "plan-2", vm_count: 1, series_index: 2 }],
+    plan_count: 2, batch_size: 1,
+    excluded: [{ vm_id: 3, vm_name: "vm-3", reason: "blocked for cold: vv.disk.nvme.detected" }],
+  }],
   [/\/api\/plans\/\d+$/, {
     id: 1, name: "Plan", vm_ids: [1], mapping_ids: [], model: "m", status: "complete",
-    created_at: "2026-01-01T00:00:00Z",
+    created_at: "2026-01-01T00:00:00Z", series_id: "abc", series_index: 2, series_total: 3,
+    excluded_vms: [{ vm_id: 3, vm_name: "vm-3", reason: "no target cluster/namespace resolved" }],
     waves: [{ wave_number: 1, vm_ids: [1], description: "d", risk_score: 3, method: "llm" }],
   }],
   [/\/api\/plans/, [{
@@ -119,7 +127,7 @@ const POPULATED = [
     available_backends: [{ type: "mock", label: "Mock", configured: true, dev_only: true, missing_config: [] }],
     last_llm_error: null,
   }],
-  [/\/api\/settings/, { id: 1, ollama_model: "m", schedule_preset: "twice_daily", ssh_host_key_policy: "auto_accept", ssh_operations_enabled: true }],
+  [/\/api\/settings/, { id: 1, ollama_model: "m", schedule_preset: "twice_daily", ssh_host_key_policy: "auto_accept", ssh_operations_enabled: true, max_vms_per_plan: 1000, max_vms_per_plan_request: 10000 }],
   [/\/api\/system\/fips-status/, { configured: false, detected: false, effective: false, operations: [] }],
   [/\/api\/system\/ssh-key/, { status: "present", public_key: "ssh-ed25519 AAAA", fingerprint: "SHA256:x", algorithm: "ed25519" }],
   [/\/api\/ssh-keys/, [{ id: 1, name: "k", public_key: "p", fingerprint: "f", algorithm: "ed25519", status: "active", plan_id: null, created_at: "2026-01-01T00:00:00Z" }]],

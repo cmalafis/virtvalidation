@@ -6,10 +6,14 @@
 // named in plan_pipeline._PIPELINE_STAGE_TO_STATUS and the LLM annotation
 // step is slow enough that a bare spinner reads as stuck.
 //
-// The selection cap (settings.max_vms_per_plan, default 1000) is enforced
-// in the UI as well as the API, so the operator finds out before waiting
-// on a 422. It is READ from GET /api/settings rather than hardcoded —
-// getting that wrong silently caps capacity.
+// There is no selection cap. A selection larger than the batch size
+// (settings.max_vms_per_plan, default 1000, READ from GET /api/settings)
+// is generated as a numbered series of plans — name-1, name-2, … — each
+// holding at most that many VMs. The only ceiling is the per-request
+// guard (settings.max_vms_per_plan_request). Before generating, the
+// wizard asks POST /api/plans/preview for the exact plan names and for
+// every VM that will be skipped (assessment-blocked, unresolvable
+// target), so the operator knows what they will get before they wait.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -22,11 +26,16 @@ import {
   CardBody,
   Checkbox,
   Content,
+  ExpandableSection,
   Form,
   FormGroup,
   FormHelperText,
+  FormSelect,
+  FormSelectOption,
   HelperText,
   HelperTextItem,
+  List,
+  ListItem,
   PageSection,
   Pagination,
   Progress,
@@ -34,6 +43,10 @@ import {
   Skeleton,
   Radio,
   TextInput,
+  Toolbar,
+  ToolbarContent,
+  ToolbarGroup,
+  ToolbarItem,
   Wizard,
   WizardStep,
 } from "@patternfly/react-core";
@@ -45,13 +58,14 @@ import { GuidedEmptyState, NoResultsEmptyState } from "../common/EmptyStates";
 import { fetchJSON } from "../utils/fetchJSON";
 import { asArray } from "../utils/asArray";
 
-// Fallback only. The real cap is deploy-time config
-// (Settings.max_vms_per_plan) and is read from GET /api/settings — a
-// hardcoded value here previously gated operators at 250 while the API
-// happily accepted 1000.
-const MAX_VMS_FALLBACK = 1000;
+// Fallbacks only. Both numbers are deploy-time config and are read from
+// GET /api/settings — a hardcoded value here previously gated operators
+// at 250 while the API happily accepted 1000.
+const BATCH_SIZE_FALLBACK = 1000;
+const REQUEST_CEILING_FALLBACK = 10000;
 const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 300;
+const PREVIEW_DEBOUNCE_MS = 500;
 const POLL_MS = 2000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -78,15 +92,52 @@ function stagePercent(status) {
   return i < 0 ? 0 : Math.round((i / (STAGES.length - 1)) * 100);
 }
 
+// VMs the backend will leave out of the plan, with the reason. Rendered
+// both in the pre-generation preview and on the single-plan progress
+// screen; the plan detail page shows the persisted copy afterwards.
+function ExcludedVMs({ excluded, title }) {
+  const rows = asArray(excluded);
+  if (rows.length === 0) return null;
+  return (
+    <Alert variant="warning" isInline title={title} className="pf-v6-u-mb-md">
+      <ExpandableSection toggleText={`Show the ${rows.length} VM${rows.length === 1 ? "" : "s"}`} isIndented>
+        <Table aria-label="Excluded VMs" variant="compact" borders={false}>
+          <Thead>
+            <Tr>
+              <Th>Name</Th>
+              <Th>Reason</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {rows.map((e, i) => (
+              <Tr key={e?.vm_id ?? i}>
+                <Td dataLabel="Name">{e?.vm_name ?? `VM #${e?.vm_id ?? "?"}`}</Td>
+                <Td dataLabel="Reason">{e?.reason ?? "—"}</Td>
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
+      </ExpandableSection>
+      These VMs stay available in the inventory and can be planned separately once fixed.
+    </Alert>
+  );
+}
+
 export default function PlanWizardPage() {
   const navigate = useNavigate();
 
   const [name, setName] = useState("");
   const [migrationType, setMigrationType] = useState("cold");
-  const [maxVms, setMaxVms] = useState(MAX_VMS_FALLBACK);
+  const [batchSize, setBatchSize] = useState(BATCH_SIZE_FALLBACK);
+  const [requestCeiling, setRequestCeiling] = useState(REQUEST_CEILING_FALLBACK);
   const [mappings, setMappings] = useState([]);
   const [mappingIds, setMappingIds] = useState(() => new Set());
   const [mappingsLoading, setMappingsLoading] = useState(true);
+
+  const [vcenters, setVcenters] = useState([]);
+  const [environments, setEnvironments] = useState([]);
+  const [vcenterId, setVcenterId] = useState("");
+  const [environment, setEnvironment] = useState("");
 
   const [vms, setVms] = useState([]);
   const [total, setTotal] = useState(0);
@@ -94,20 +145,28 @@ export default function PlanWizardPage() {
   const [search, setSearch] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
   const [vmsLoading, setVmsLoading] = useState(true);
+  const [selectingAll, setSelectingAll] = useState(false);
 
   const [selected, setSelected] = useState(() => new Map());
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(null);
+  const [excludedAtSubmit, setExcludedAtSubmit] = useState([]);
   const [error, setError] = useState(null);
 
-  // The cap is deploy-time config, so read it rather than assume it.
+  // Batch size + request ceiling are deploy-time config, so read them
+  // rather than assume them.
   useEffect(() => {
     fetchJSON("/api/settings")
       .then((cfg) => {
-        if (Number.isFinite(cfg?.max_vms_per_plan)) setMaxVms(cfg.max_vms_per_plan);
+        if (Number.isFinite(cfg?.max_vms_per_plan)) setBatchSize(cfg.max_vms_per_plan);
+        if (Number.isFinite(cfg?.max_vms_per_plan_request)) {
+          setRequestCeiling(cfg.max_vms_per_plan_request);
+        }
       })
       .catch(() => {
-        /* Fallback already applied; a missing cap shouldn't block planning. */
+        /* Fallbacks already applied; missing config shouldn't block planning. */
       });
   }, []);
 
@@ -118,6 +177,17 @@ export default function PlanWizardPage() {
       .finally(() => setMappingsLoading(false));
   }, []);
 
+  // Filter facets. vCenters come from the registry so the dropdown shows
+  // names; environments come from the facet counts over available VMs.
+  useEffect(() => {
+    fetchJSON("/api/sources/vcenters")
+      .then((rows) => setVcenters(asArray(rows)))
+      .catch(() => setVcenters([]));
+    fetchJSON("/api/vms/facets?lifecycle_state=available")
+      .then((f) => setEnvironments(Object.keys(f?.environment ?? {}).sort()))
+      .catch(() => setEnvironments([]));
+  }, []);
+
   useEffect(() => {
     const t = setTimeout(() => {
       setSearch(searchDraft);
@@ -126,18 +196,27 @@ export default function PlanWizardPage() {
     return () => clearTimeout(t);
   }, [searchDraft]);
 
+  // The same filter set drives the page, the facet counts and "select
+  // all matching", so what the operator sees is what they select.
+  // NB: the list filter is `vcenter_source_id`, not `source_vcenter_id`
+  // (the VM column name) — FastAPI silently ignores unknown params and
+  // would return the unfiltered estate.
+  const filterParams = useCallback(() => {
+    const qs = new URLSearchParams({ lifecycle_state: "available" });
+    if (search) qs.set("search", search);
+    if (vcenterId) qs.set("vcenter_source_id", vcenterId);
+    if (environment) qs.set("environment", environment);
+    return qs;
+  }, [search, vcenterId, environment]);
+
   const loadVms = useCallback(async () => {
     setVmsLoading(true);
     try {
-      const qs = new URLSearchParams({
-        skip: String((page - 1) * PAGE_SIZE),
-        limit: String(PAGE_SIZE),
-        sort_by: "name",
-        sort_order: "asc",
-        // Only VMs not already committed to another plan are selectable.
-        lifecycle_state: "available",
-      });
-      if (search) qs.set("search", search);
+      const qs = filterParams();
+      qs.set("skip", String((page - 1) * PAGE_SIZE));
+      qs.set("limit", String(PAGE_SIZE));
+      qs.set("sort_by", "name");
+      qs.set("sort_order", "asc");
       const data = await fetchJSON(`/api/vms?${qs}`);
       setVms(asArray(data));
       setTotal(data?.total ?? 0);
@@ -147,7 +226,7 @@ export default function PlanWizardPage() {
     } finally {
       setVmsLoading(false);
     }
-  }, [page, search]);
+  }, [page, filterParams]);
 
   useEffect(() => {
     loadVms();
@@ -156,15 +235,47 @@ export default function PlanWizardPage() {
   const toggle = (vm, on) => {
     setSelected((prev) => {
       const next = new Map(prev);
-      if (on) {
-        if (next.size >= maxVms && !next.has(vm.id)) return prev;
-        next.set(vm.id, vm);
-      } else {
-        next.delete(vm.id);
-      }
+      if (on) next.set(vm.id, vm);
+      else next.delete(vm.id);
       return next;
     });
   };
+
+  const allOnPageSelected = vms.length > 0 && vms.every((vm) => selected.has(vm.id));
+  const toggleAllOnPage = (on) => {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      vms.forEach((vm) => {
+        if (on) next.set(vm.id, vm);
+        else next.delete(vm.id);
+      });
+      return next;
+    });
+  };
+
+  // Every VM matching the current filters, not just the page. The ids
+  // endpoint returns {id, name}, which is all the selection needs.
+  const selectAllMatching = async () => {
+    setSelectingAll(true);
+    try {
+      const data = await fetchJSON(`/api/vms/ids?${filterParams()}`);
+      const rows = asArray(data);
+      setSelected((prev) => {
+        const next = new Map(prev);
+        rows.forEach((vm) => {
+          if (vm?.id != null) next.set(vm.id, { id: vm.id, name: vm.name ?? `VM #${vm.id}` });
+        });
+        return next;
+      });
+      toast.success(`Selected ${rows.length} VM${rows.length === 1 ? "" : "s"}`);
+    } catch (e) {
+      toast.error(e?.message ?? "Could not select all matching VMs");
+    } finally {
+      setSelectingAll(false);
+    }
+  };
+
+  const clearSelection = () => setSelected(new Map());
 
   const toggleMapping = (id, on) =>
     setMappingIds((prev) => {
@@ -174,8 +285,44 @@ export default function PlanWizardPage() {
       return next;
     });
 
-  const atCap = selected.size >= maxVms;
-  const canGenerate = name.trim().length > 0 && selected.size > 0 && !generating;
+  // Ask the backend what this selection will turn into: the exact plan
+  // names after partitioning + batching, and the VMs it would skip.
+  useEffect(() => {
+    if (selected.size === 0) {
+      setPreview(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setPreviewLoading(true);
+      try {
+        const data = await fetchJSON("/api/plans/preview", {
+          method: "POST",
+          body: {
+            name: name.trim() || "plan",
+            vm_ids: [...selected.keys()],
+            mapping_ids: [...mappingIds],
+            migration_type: migrationType,
+          },
+        });
+        if (!cancelled) setPreview(data && typeof data === "object" ? data : null);
+      } catch {
+        // The preview is advisory; the create call is authoritative.
+        if (!cancelled) setPreview(null);
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [selected, name, mappingIds, migrationType]);
+
+  const previewPlans = asArray(preview?.plans);
+  const previewExcluded = asArray(preview?.excluded);
+  const overCeiling = selected.size > requestCeiling;
+  const canGenerate = name.trim().length > 0 && selected.size > 0 && !generating && !overCeiling;
 
   const submit = async () => {
     if (!canGenerate) return;
@@ -193,16 +340,33 @@ export default function PlanWizardPage() {
           // "operator opted out" from "field omitted".
           mapping_ids: [...mappingIds],
           migration_type: migrationType,
+          // Leave out VMs that can't be planned as selected instead of
+          // failing the whole selection; they're reported back.
+          skip_ineligible: true,
         },
       });
 
-      // A selection spanning several (vCenter, cluster, namespace) partitions
-      // fans out into one plan each — MTV allows one source provider per
-      // Plan CR. Follow all of them; the first finishing is not "done".
+      const excluded = asArray(plan?.excluded);
+      setExcludedAtSubmit(excluded);
+
+      // A selection spanning several (vCenter, cluster, namespace) partitions,
+      // or larger than the batch size, fans out into several plans. A series
+      // can take hours on a single-stream LLM backend, so hand off to the
+      // plans list (which polls) rather than sit on a 10-minute spinner.
       const planIds = asArray(plan?.plans).map((p) => p?.id).filter((id) => id != null);
       if (planIds.length === 0 && plan?.id != null) planIds.push(plan.id);
 
-      toast(planIds.length > 1 ? `Generating ${planIds.length} plans…` : "Generating plan…", { icon: "🤖" });
+      if (planIds.length > 1) {
+        toast.success(
+          `Generating ${planIds.length} plans` +
+            (excluded.length > 0 ? ` (${excluded.length} VMs skipped)` : ""),
+          { icon: "🤖" },
+        );
+        navigate("/plans");
+        return;
+      }
+
+      toast("Generating plan…", { icon: "🤖" });
       const deadline = Date.now() + POLL_TIMEOUT_MS;
 
       while (Date.now() < deadline) {
@@ -210,7 +374,6 @@ export default function PlanWizardPage() {
         const statuses = await Promise.all(planIds.map((id) => fetchJSON(`/api/plans/${id}`)));
         const failed = statuses.find((st) => st?.status === "failed");
         const pending = statuses.filter((st) => st?.status !== "complete" && st?.status !== "failed");
-        // Show the slowest plan's stage, and how many are done.
         setProgress({
           ...(pending[0] ?? statuses[0]),
           doneCount: statuses.length - pending.length,
@@ -218,16 +381,13 @@ export default function PlanWizardPage() {
         });
 
         if (failed) {
-          setError(
-            `${failed?.name ?? "A plan"} failed: ${failed?.error_message || "plan generation failed."}` +
-              (statuses.length > 1 ? " Other plans from this selection may have completed — check the plans list." : ""),
-          );
+          setError(`${failed?.name ?? "The plan"} failed: ${failed?.error_message || "plan generation failed."}`);
           setGenerating(false);
           return;
         }
         if (pending.length === 0) {
-          toast.success(statuses.length > 1 ? `${statuses.length} migration plans ready` : "Migration plan ready");
-          navigate(statuses.length > 1 ? "/plans" : `/plans/${statuses[0]?.id}`);
+          toast.success("Migration plan ready");
+          navigate(`/plans/${statuses[0]?.id}`);
           return;
         }
       }
@@ -245,32 +405,136 @@ export default function PlanWizardPage() {
 
   const selectedList = useMemo(() => [...selected.values()], [selected]);
 
+  const filtersActive = Boolean(search || vcenterId || environment);
+  const clearFilters = () => {
+    setSearchDraft("");
+    setVcenterId("");
+    setEnvironment("");
+    setPage(1);
+  };
+
   const vmStep = (
     <>
-      {atCap && (
+      {overCeiling && (
         <Alert
-          variant="warning"
+          variant="danger"
           isInline
-          title={`Selection cap reached (${maxVms} VMs)`}
+          title={`Selection exceeds the per-request ceiling (${requestCeiling} VMs)`}
           className="pf-v6-u-mb-md"
         >
-          Narrow the filters or split this into multiple plans. One huge plan
-          is harder to review and to sequence than several scoped ones.
+          Narrow the filters — by vCenter or environment — and generate in
+          separate selections. Each one will still be batched into plans of
+          up to {batchSize} VMs.
         </Alert>
       )}
 
-      <SearchInput
-        aria-label="Search available VMs"
-        placeholder="Search by name, IP, or owner"
-        value={searchDraft}
-        onChange={(_e, v) => setSearchDraft(v)}
-        onClear={() => setSearchDraft("")}
-        className="pf-v6-u-mb-md"
-      />
+      <Toolbar id="plan-vm-filters" clearAllFilters={clearFilters} className="pf-v6-u-mb-sm">
+        <ToolbarContent>
+          <ToolbarGroup variant="filter-group">
+            <ToolbarItem>
+              <FormSelect
+                id="plan-vm-vcenter"
+                aria-label="Filter by vCenter"
+                value={vcenterId}
+                onChange={(_e, v) => {
+                  setVcenterId(v);
+                  setPage(1);
+                }}
+              >
+                <FormSelectOption value="" label="All vCenters" />
+                {vcenters.map((v) => (
+                  <FormSelectOption key={v?.id} value={String(v?.id)} label={v?.name ?? `vCenter #${v?.id}`} />
+                ))}
+              </FormSelect>
+            </ToolbarItem>
+            <ToolbarItem>
+              <FormSelect
+                id="plan-vm-environment"
+                aria-label="Filter by environment"
+                value={environment}
+                onChange={(_e, v) => {
+                  setEnvironment(v);
+                  setPage(1);
+                }}
+              >
+                <FormSelectOption value="" label="All environments" />
+                {environments.map((env) => (
+                  <FormSelectOption key={env} value={env} label={env} />
+                ))}
+              </FormSelect>
+            </ToolbarItem>
+          </ToolbarGroup>
+          <ToolbarItem>
+            <SearchInput
+              aria-label="Search available VMs"
+              placeholder="Search by name, IP, or owner"
+              value={searchDraft}
+              onChange={(_e, v) => setSearchDraft(v)}
+              onClear={() => setSearchDraft("")}
+            />
+          </ToolbarItem>
+        </ToolbarContent>
+      </Toolbar>
 
       <Content component="p" className="pf-v6-u-color-200 pf-v6-u-mb-sm">
-        {`${selected.size} selected of a ${maxVms} maximum. Only VMs not already committed to a plan are listed.`}
+        {`${selected.size} selected. Only VMs not already committed to a plan are listed. `}
+        {total > 0 && (
+          <Button
+            variant="link"
+            isInline
+            onClick={selectAllMatching}
+            isLoading={selectingAll}
+            isDisabled={selectingAll}
+          >
+            {filtersActive ? `Select all ${total} matching` : `Select all ${total}`}
+          </Button>
+        )}
+        {selected.size > 0 && (
+          <>
+            {" · "}
+            <Button variant="link" isInline onClick={clearSelection}>
+              Clear selection
+            </Button>
+          </>
+        )}
       </Content>
+
+      {selected.size > 0 && (
+        <Content component="p" className="pf-v6-u-mb-sm">
+          {`Plans are generated in batches of up to ${batchSize} VMs. `}
+          {previewLoading && !preview
+            ? "Working out how this selection will be split…"
+            : preview
+              ? `This selection creates ${preview?.plan_count ?? previewPlans.length} plan${
+                  (preview?.plan_count ?? previewPlans.length) === 1 ? "" : "s"
+                }.`
+              : null}
+        </Content>
+      )}
+
+      {previewPlans.length > 1 && (
+        <ExpandableSection
+          toggleText={`Show the ${previewPlans.length} plans`}
+          isIndented
+          className="pf-v6-u-mb-md"
+        >
+          <List isPlain isBordered>
+            {previewPlans.map((p, i) => (
+              <ListItem key={p?.name ?? i}>
+                <strong>{p?.name ?? `Plan ${i + 1}`}</strong>
+                {` — ${p?.vm_count ?? 0} VMs`}
+                {p?.source_vcenter_name ? ` · ${p.source_vcenter_name}` : ""}
+                {p?.target_namespace ? ` → ${p.target_namespace}` : ""}
+              </ListItem>
+            ))}
+          </List>
+        </ExpandableSection>
+      )}
+
+      <ExcludedVMs
+        excluded={previewExcluded}
+        title={`${previewExcluded.length} selected VM${previewExcluded.length === 1 ? "" : "s"} will be skipped`}
+      />
 
       <Pagination
         itemCount={total}
@@ -283,7 +547,13 @@ export default function PlanWizardPage() {
       <Table aria-label="Available VMs" variant="compact">
         <Thead>
           <Tr>
-            <Th screenReaderText="Select" />
+            <Th
+              select={{
+                onSelect: (_e, on) => toggleAllOnPage(on),
+                isSelected: allOnPageSelected,
+              }}
+              aria-label="Select all on page"
+            />
             <Th width={35}>Name</Th>
             <Th width={20}>Status</Th>
             <Th width={20}>Environment</Th>
@@ -303,8 +573,8 @@ export default function PlanWizardPage() {
             <Tr>
               <Td colSpan={5}>
                 <Bullseye>
-                  {search ? (
-                    <NoResultsEmptyState onClearFilters={() => setSearchDraft("")} />
+                  {filtersActive ? (
+                    <NoResultsEmptyState onClearFilters={clearFilters} />
                   ) : (
                     <GuidedEmptyState
                       title="No VMs available to plan"
@@ -324,9 +594,6 @@ export default function PlanWizardPage() {
                     select={{
                       rowIndex: vm.id,
                       isSelected,
-                      // Block new selections at the cap, but always allow
-                      // deselecting so the operator isn't stuck.
-                      isDisabled: atCap && !isSelected,
                       onSelect: (_e, on) => toggle(vm, on),
                     }}
                   />
@@ -386,8 +653,14 @@ export default function PlanWizardPage() {
                     aria-label="Plan generation progress"
                   />
                   <Content component="small" className="pf-v6-u-color-200">
-                    {`${selected.size} VM(s). Stages 0–5 and 7 are deterministic and fast; the LLM annotation step dominates the wall clock.`}
+                    {`${selected.size - excludedAtSubmit.length} VM(s). Stages 0–5 and 7 are deterministic and fast; the LLM annotation step dominates the wall clock.`}
                   </Content>
+                  <div className="pf-v6-u-mt-md">
+                    <ExcludedVMs
+                      excluded={excludedAtSubmit}
+                      title={`${excludedAtSubmit.length} selected VM${excludedAtSubmit.length === 1 ? " was" : "s were"} not included`}
+                    />
+                  </div>
                 </>
               )}
             </CardBody>
@@ -429,6 +702,8 @@ export default function PlanWizardPage() {
                     <HelperTextItem>
                       Used on the plan list and in the generated MTV resource
                       names. Something you&apos;ll recognize in three weeks.
+                      A selection larger than {batchSize} VMs becomes a
+                      numbered series: name-1, name-2, …
                     </HelperTextItem>
                   </HelperText>
                 </FormHelperText>
@@ -491,7 +766,10 @@ export default function PlanWizardPage() {
           <WizardStep
             name="Select VMs"
             id="step-vms"
-            footer={{ nextButtonText: "Generate plan", isNextDisabled: !canGenerate }}
+            footer={{
+              nextButtonText: previewPlans.length > 1 ? `Generate ${previewPlans.length} plans` : "Generate plan",
+              isNextDisabled: !canGenerate,
+            }}
           >
             {vmStep}
           </WizardStep>
