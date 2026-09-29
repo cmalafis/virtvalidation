@@ -19,11 +19,17 @@ class AppSettingsRead(BaseModel):
     # scheduler isn't running (tests, freshly booted process, etc.).
     # The dashboard formats this as "Next collection: in 3h 42m".
     next_run_at: datetime | None = None
-    # Deploy-time config (``Settings.max_vms_per_plan``), not a DB column —
-    # surfaced here so the plan wizard can gate selection at the value the
-    # API will actually enforce. Hardcoding it in the frontend previously
-    # capped operators at 250 while the backend accepted 1000.
+    # Deploy-time config (``Settings.max_vms_per_plan``), not a DB column.
+    # This is the BATCH SIZE: the most VMs one generated plan holds. It
+    # is not a selection cap — a larger selection fans out into a series
+    # of plans. Hardcoding it in the frontend previously capped operators
+    # at 250 while the backend accepted 1000, so the wizard reads it.
     max_vms_per_plan: int = 1000
+    # Per-request ceiling on ``POST /api/plans`` ``vm_ids``
+    # (``limits.MAX_VMS_PER_PLAN_SCOPE``). Above ``max_vms_per_plan`` the
+    # backend batches the selection into a numbered series of plans;
+    # above this value it 422s. The wizard reads both.
+    max_vms_per_plan_request: int = 10_000
 
 
 class AppSettingsUpdate(BaseModel):

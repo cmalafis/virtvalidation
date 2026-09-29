@@ -217,6 +217,25 @@ class MigrationPlan(Base):
         Integer, default=0, server_default="0", nullable=False
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ---- Batched series (POST /api/plans with > max_vms_per_plan VMs) ----
+    # One POST can create several plan rows: one per (vcenter, cluster,
+    # namespace) partition, each further cut into batches of at most
+    # ``settings.max_vms_per_plan`` VMs (``app.core.plan_chunking``).
+    # Every row from the same POST shares ``series_id``; ``series_index``
+    # is 1-based across the whole series and ``series_total`` is the row
+    # count. NULL on rows created before batching existed.
+    series_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    series_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    series_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # VMs the operator selected but the create call left out
+    # (``skip_ineligible=true``): assessment-blocked for the chosen
+    # migration type, or unresolvable to a target cluster + namespace.
+    # ``[{vm_id, vm_name, reason}]``, the same list on every row of the
+    # series so the plan detail page can answer "why isn't VM X here?"
+    # without a join. Nullable for the same portability reason as
+    # ``mapping_ids``.
+    excluded_vms: Mapped[list[dict] | None] = mapped_column(JSONType, default=list, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

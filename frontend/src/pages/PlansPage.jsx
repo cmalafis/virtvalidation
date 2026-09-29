@@ -10,6 +10,7 @@ import { Link } from "react-router-dom";
 import {
   Bullseye,
   Button,
+  Label,
   PageSection,
   Skeleton,
   Progress,
@@ -94,7 +95,7 @@ export default function PlansPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchJSON("/api/plans?limit=100");
+      const data = await fetchJSON("/api/plans?limit=200");
       setPlans(Array.isArray(data) ? data : []);
       setError(null);
     } catch (e) {
@@ -160,6 +161,14 @@ export default function PlansPage() {
         <Tr key={plan.id}>
           <Td dataLabel="Plan">
             <Link to={`/plans/${plan.id}`}>{plan?.name || `Plan #${plan.id}`}</Link>
+            {(plan?.series_total ?? 1) > 1 && (
+              <>
+                {" "}
+                <Label isCompact color="blue">
+                  {`Batch ${plan?.series_index ?? "?"} of ${plan.series_total}`}
+                </Label>
+              </>
+            )}
           </Td>
           <Td dataLabel="Status">
             <PlanStatus plan={plan} />

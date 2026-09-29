@@ -281,9 +281,13 @@ Steps the operator sees:
 | 1,000–5,000 | 15–30 minutes | 3–10 minutes |
 | >5,000 | hours / use hierarchical planner | depends |
 
-For >5,000 VMs the wizard surfaces a warning: hierarchical
-planning lands in v0.5+; until then large fleets work better split
-across multiple plans by vCenter or environment.
+Selections larger than `max_vms_per_plan` (default 1,000) are cut
+into a numbered series of plans (`name-1`, `name-2`, …), generated
+one after another, so the per-plan rows above apply to each batch and
+the first batch is ready long before the last. Total LLM work is the
+same either way (one call per 10-VM wave). The only ceiling is
+`MAX_VMS_PER_PLAN_SCOPE` (default 10,000 VMs per request); above it,
+narrow by vCenter or environment and generate again.
 
 ### Failure modes
 

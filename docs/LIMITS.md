@@ -20,7 +20,7 @@ and when an operator should consider changing it.
 | `MAX_VMS_PER_BULK_CREATE` | `MAX_VMS_PER_BULK_CREATE` | 10,000 | `POST /api/vms/bulk` body length |
 | `MAX_VMS_PER_BULK_DELETE` | `MAX_VMS_PER_BULK_DELETE` | 10,000 | `DELETE /api/vms` body length |
 | `MAX_VMS_PER_BULK_ACTION` | `MAX_VMS_PER_BULK_ACTION` | 10,000 | bulk capture / validation / schedule scopes |
-| `MAX_VMS_PER_PLAN_SCOPE` | `MAX_VMS_PER_PLAN_SCOPE` | 10,000 | plan generation `scope.vm_ids` |
+| `MAX_VMS_PER_PLAN_SCOPE` | `MAX_VMS_PER_PLAN_SCOPE` | 10,000 | `POST /api/plans` `vm_ids` per request (the selection is batched into plans of `MAX_VMS_PER_PLAN`, default 1,000, below this) |
 | `MAX_VMS_PER_RVTOOLS_IMPORT` | `MAX_VMS_PER_RVTOOLS_IMPORT` | 10,000 | RVTools auto-link upload payload |
 | `MAX_VMS_PER_CHUNK` | `MAX_VMS_PER_CHUNK` | 500 | recommended chunk size for streaming flows |
 | `MAX_AUDIT_LOG_PAGE_SIZE` | `MAX_AUDIT_LOG_PAGE_SIZE` | 500 | audit listing `?limit=` cap |

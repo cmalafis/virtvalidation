@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { Table, Tbody, Td, Th, Thead, Tr } from "@patternfly/react-table";
 import toast from "react-hot-toast";
 import {
   Alert,
@@ -24,6 +25,7 @@ import {
   DescriptionListDescription,
   DescriptionListGroup,
   DescriptionListTerm,
+  ExpandableSection,
   Flex,
   FlexItem,
   Label,
@@ -325,6 +327,58 @@ export default function PlanDetailPage() {
         <PageSection hasBodyWrapper={false}>
           <Alert variant="info" isInline title={`Generating — ${plan.status}`}>
             Waves appear as the pipeline completes each stage.
+          </Alert>
+        </PageSection>
+      )}
+
+      {(plan?.series_total ?? 1) > 1 && (
+        <PageSection hasBodyWrapper={false}>
+          <Alert
+            variant="info"
+            isInline
+            title={`Batch ${plan?.series_index ?? "?"} of ${plan.series_total}`}
+          >
+            This plan is one of {plan.series_total} generated from a single
+            selection. Batches run in order; each is its own MTV Plan set.{" "}
+            <Link to="/plans">See the whole series</Link>.
+          </Alert>
+        </PageSection>
+      )}
+
+      {asArray(plan?.excluded_vms).length > 0 && (
+        <PageSection hasBodyWrapper={false}>
+          <Alert
+            variant="warning"
+            isInline
+            title={`${asArray(plan.excluded_vms).length} VM${
+              asArray(plan.excluded_vms).length === 1 ? " from the original selection was" : "s from the original selection were"
+            } not included`}
+          >
+            <ExpandableSection toggleText="Show which and why" isIndented>
+              <Table aria-label="Excluded VMs" variant="compact" borders={false}>
+                <Thead>
+                  <Tr>
+                    <Th>Name</Th>
+                    <Th>Reason</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {asArray(plan.excluded_vms).map((e, i) => (
+                    <Tr key={e?.vm_id ?? i}>
+                      <Td dataLabel="Name">
+                        {e?.vm_id != null ? (
+                          <Link to={`/vms/${e.vm_id}`}>{e?.vm_name ?? `VM #${e.vm_id}`}</Link>
+                        ) : (
+                          e?.vm_name ?? "—"
+                        )}
+                      </Td>
+                      <Td dataLabel="Reason">{e?.reason ?? "—"}</Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+              </Table>
+            </ExpandableSection>
+            They stay available in the inventory and can be planned once fixed.
           </Alert>
         </PageSection>
       )}
