@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -17,6 +19,11 @@ class WaveVMPreview(BaseModel):
     commands: list[str]
 
 
+class WaveBaselineGap(BaseModel):
+    vm_id: int
+    name: str
+
+
 class WavePreviewResponse(BaseModel):
     plan_id: int
     wave_number: int
@@ -27,3 +34,9 @@ class WavePreviewResponse(BaseModel):
     # Global kill-switch state — false means a run would be refused (503).
     ssh_operations_enabled: bool
     vms: list[WaveVMPreview]
+    # VMs in this wave that the wave's latest completed baseline run did
+    # not capture — typically VMs an operator moved in afterwards.
+    # Validation would report them unreachable; re-capture first. Empty
+    # when the wave has no completed baseline yet.
+    baseline_missing: list[WaveBaselineGap] = []
+    baseline_last_completed_at: datetime | None = None

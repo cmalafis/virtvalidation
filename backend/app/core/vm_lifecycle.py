@@ -13,6 +13,8 @@ Transitions
     available    → planned       transition_to_planned()
     planned      → available     transition_to_available_from_failed_plan()
     planned      → available     transition_to_available_from_deleted_plan()
+    planned      → available     transition_to_available_from_plan_edit()
+    planned      → planned       record_plan_reassignment()   (plan changes, state does not)
     planned      → migrated      transition_to_migrated()
     migrated     → rolled_back   transition_to_rolled_back()
     rolled_back  → available     transition_to_available_from_rolled_back()
@@ -79,7 +81,7 @@ def _fetch_locked(db: Session, vm_ids: list[int]) -> dict[int, VM]:
     """
     if not vm_ids:
         return {}
-    rows = db.scalars(select(VM).where(VM.id.in_(vm_ids))).all()
+    rows = db.scalars(select(VM).where(VM.id.in_(vm_ids)).with_for_update()).all()
     return {vm.id: vm for vm in rows}
 
 
@@ -121,10 +123,12 @@ def transition_to_planned(
     db: Session,
     *,
     actor: str = "system",
+    trigger: str = "plan.create",
 ) -> TransitionResult:
     """available → planned. Fails if any VM is not currently ``available``.
 
-    Hooked into ``POST /api/plans`` after the cap / mapping checks.
+    Hooked into ``POST /api/plans`` after the cap / mapping checks, and
+    into the manual "Add VMs" edit (``trigger="plan.edit.add"``).
     """
     vms = _fetch_locked(db, vm_ids)
     missing = [vid for vid in vm_ids if vid not in vms]
@@ -145,7 +149,7 @@ def transition_to_planned(
             "vm_ids": list(vms.keys()),
             "to": VMLifecycleState.planned.value,
             "from": from_states,
-            "trigger": "plan.create",
+            "trigger": trigger,
         },
     )
     return TransitionResult(
@@ -184,6 +188,55 @@ def transition_to_available_from_deleted_plan(
     Same idempotent semantics as the failed-plan path.
     """
     return _release_planned_to_available(plan_id, vm_ids, db, actor=actor, trigger="plan.deleted")
+
+
+def transition_to_available_from_plan_edit(
+    plan_id: int,
+    vm_ids: list[int],
+    db: Session,
+    *,
+    actor: str = "system",
+) -> TransitionResult:
+    """planned → available. An operator removed these VMs from a plan
+    that itself lives on (``POST /api/plans/{id}/edits``, ``remove``)."""
+    return _release_planned_to_available(
+        plan_id, vm_ids, db, actor=actor, trigger="plan.edit.remove"
+    )
+
+
+def record_plan_reassignment(
+    vm_ids: list[int],
+    from_plan_id: int,
+    to_plan_id: int,
+    db: Session,
+    *,
+    actor: str = "system",
+) -> None:
+    """planned → planned, different plan. No state change — the VM stays
+    committed — but the move is audited so a reviewer can reconstruct
+    which plan held the VM when. Fails if any VM is not ``planned``.
+    """
+    vms = _fetch_locked(db, vm_ids)
+    missing = [vid for vid in vm_ids if vid not in vms]
+    if missing:
+        raise LifecycleTransitionError(
+            attempted=VMLifecycleState.planned,
+            offenders=[(vid, VMLifecycleState.unmanageable) for vid in missing],
+        )
+    _enforce(vms, {VMLifecycleState.planned}, VMLifecycleState.planned)
+    record_audit(
+        db,
+        action="vm.plan_membership.moved",
+        actor=actor,
+        resource_type="plan",
+        resource_id=to_plan_id,
+        details={
+            "vm_ids": list(vms.keys()),
+            "from_plan_id": from_plan_id,
+            "to_plan_id": to_plan_id,
+            "trigger": "plan.edit.move_to_plan",
+        },
+    )
 
 
 def _release_planned_to_available(

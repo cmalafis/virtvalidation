@@ -219,36 +219,81 @@ are fixable.
 
 ---
 
-## Revise vs regenerate
+## Edit vs regenerate
 
 After reviewing a plan, you have two options:
 
-### Revise (per-wave move)
-**Pick when:** the strategy is right but specific VM-to-wave
-assignments need adjusting. Move the VM, get a new revision number.
-The revision chain preserves history — you can always see what
-changed.
+### Edit the plan in place
+**Pick when:** the plan is mostly right, but you know something the
+estate data does not show — an undocumented dependency, two apps that
+must cut over together, a VM that needs its own change window.
 
-**Endpoint:** `POST /api/plans/{plan_id}/waves/{wave_number}/move-vm`
+**UI:** on the plan page, tick VMs (the selection can span waves), then:
 
-**UI:** "Move" button on each VM row in the plan view.
+| Action | What it does |
+|---|---|
+| **Move to wave…** | Move the selection to another wave of this plan |
+| **New wave from selection** | Put the selection in a new wave, added after the last one |
+| **Move to plan…** | Move the selection into a wave of another plan that migrates from the same vCenter to the same cluster and namespace (same-series batches are listed first) |
+| **Remove from plan** | Drop the selection from the plan; the VMs become `available` again |
+| **Add VMs** | Bring `available` inventory VMs into a wave of this plan |
 
-**Audit:** every move writes a `plan.revision.move_vm` audit row
-with from-wave / to-wave / vm_id / actor / note.
+**Endpoint:** `POST /api/plans/{plan_id}/edits` — one operation over
+many VMs, atomic. Send `dry_run: true` to get back what would move and
+every rule the edit would break, without writing anything; the UI always
+does this first.
+
+**What the planner says about your edit.** Every edit is checked, and
+the result is one of three things:
+
+- **Blocked** — cannot be applied. A wave is one MTV Plan CR, so a VM
+  cannot join a wave or plan that migrates from a different vCenter or
+  to a different cluster or namespace. Also blocked: a VM the plan's
+  mappings do not cover, a VM the migratability assessment blocks for
+  the plan's migration type, a wave with a baseline or validation run
+  in progress, and removing every VM (delete the plan instead).
+- **Needs your confirmation** — a planner rule you may knowingly break:
+  more than 10 VMs in a wave, more members of one HA family in a wave
+  than the planner allows, editing a wave that was already validated.
+  Confirming is recorded in the audit log and the wave is labelled
+  **Rule overridden**.
+- **Fine** — applied as asked.
+
+Only what your edit introduces or makes worse is reported; a rule the
+generated plan already broke is not blamed on you.
+
+**What does not change.** Wave numbers are never renumbered and a
+dropped wave's number is never reused, because baseline / validation
+runs and the MTV resource names (`vv-plan-{id}-wave-{n}`) are keyed on
+it. A new wave always goes after the last one.
+
+**What is recomputed.** Each touched wave gets its VM list, risk,
+migratability considerations, parallel group and MTV YAML rebuilt
+immediately, with a deterministic description (method
+`Deterministic — LLM rationale pending`). The LLM then rewrites the
+rationale for the touched waves in the background, with your reason
+and any overrides in its prompt.
+
+**Baselines.** A VM that joins a wave after that wave's baseline was
+captured is not in the baseline. The wave is labelled **Baseline out of
+date** — capture it again before validating.
+
+**Audit:** `plan.edit.move_vm`, `plan.edit.move_to_plan` (one row on
+each plan), `plan.edit.remove_vm`, `plan.edit.add_vm`, plus
+`plan.edit.rule_overridden` when a rule was confirmed — each with the
+VMs, from/to waves, actor and reason.
+
+Plans in `migrated` status are a record of what happened and cannot be
+edited.
 
 ### Regenerate
-**Pick when:** the strategy itself is wrong. New plan, new strategy,
-new rationale top-to-bottom.
-
-**How:** /plans/new wizard. The previous plan stays in history;
-nothing is lost.
+**Pick when:** the grouping itself is wrong. Delete the plan (its VMs
+become available again) and generate a new one from /plans/new.
 
 ### When in doubt
 
 If you're moving more than ~10% of VMs across waves, you probably
-want to regenerate with a different strategy. A revision is for
-local adjustments; sweeping changes are a sign the strategy itself
-is off.
+want to regenerate. An edit is for local adjustments.
 
 ---
 
@@ -308,7 +353,7 @@ Re-triggering is safe — every plan gets a fresh `revision_number=1`.
 ## Federal compliance notes
 
 - Every plan is audited at creation (`plan.generation_triggered` +
-  `plan.generated`) and at each revision (`plan.revision.move_vm`).
+  `plan.generated`) and at each manual edit (`plan.edit.*`).
   The audit row carries the actor, scope, strategy, and resulting
   vm/wave counts.
 - The full prompt and raw LLM response are persisted on the plan
@@ -338,5 +383,6 @@ These are designed but not built today. The schema supports them.
 | **Hierarchical planning** for >5,000 VMs | v0.5+ | Levels 2/3 of the planning hierarchy; see [SCALE.md](SCALE.md) |
 | **"Mark wave reviewed"** approval workflow | v0.5 | Status flag + audit row per wave |
 
-In the meantime, the move-vm action covers most refinement needs.
-Regenerate when the strategy itself is wrong.
+In the meantime, editing the plan in place (see "Edit vs regenerate")
+covers most refinement needs, including splitting a wave by hand: select
+the VMs and use **New wave from selection**.

@@ -28,6 +28,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -141,6 +142,52 @@ three EHR web frontends:
 No markdown fences, no commentary."""
 
 
+# Appended to the system prompt ONLY for a wave an operator arranged by
+# hand (``app.core.plan_edit``). Generation-time calls never see it, so
+# the Stage-6 prompt is unchanged for plans nobody edited.
+MANUAL_WAVE_SYSTEM_ADDENDUM = """
+
+This wave carries an OPERATOR CONTEXT block: a migration engineer arranged
+its membership by hand, overriding the automatic planner. Explain the wave
+AS ARRANGED — do not second-guess or propose a different arrangement.
+Reflect the operator's note where one is given, and list every
+acknowledged override as its own entry in notable_concerns."""
+
+# Longest operator note / most override lines rendered into one prompt.
+# The per-call input stays bounded: ≤10 groups + 1 note + this many lines.
+_MAX_OPERATOR_NOTE_CHARS: int = 500
+_MAX_OVERRIDE_LINES: int = 5
+
+
+@dataclass(frozen=True)
+class ManualWaveContext:
+    """What the annotator should know about a hand-arranged wave.
+
+    ``overrides`` are pre-rendered, operator-readable lines (see
+    :func:`override_line`) for planner rules the operator knowingly
+    broke. They never contain internal labels, so they are safe in both
+    the mechanical text and the LLM prompt.
+    """
+
+    actor: str = "operator"
+    note: str | None = None
+    overrides: list[str] = field(default_factory=list)
+
+
+def override_line(code: str, count: int | None, limit: int | None) -> str:
+    """One acknowledged rule override, in words. Deliberately names no
+    VM or family: those strings can collide with the leaked-label scrub
+    (a family called ``batch-2-db`` would fail output validation)."""
+    if code == "wave_size":
+        return f"Wave holds {count} VMs, above the planner's limit of {limit} per wave"
+    if code == "ha_family_cap":
+        return (
+            f"{count} VMs of one HA family share this wave; the planner allows "
+            f"at most {limit} so the source cluster keeps quorum"
+        )
+    return f"Planner rule '{code}' overridden"
+
+
 class WaveAnnotation(BaseModel):
     """Pydantic validation for the Stage 6 LLM output.
 
@@ -207,27 +254,49 @@ def heuristic_risk(wave) -> int:
     return max_rank
 
 
-def _mechanical_annotation(wave) -> WaveAnnotation:
-    """Templated annotation, no LLM. Same fields as the LLM path."""
+def _mechanical_annotation(wave, manual: ManualWaveContext | None = None) -> WaveAnnotation:
+    """Templated annotation, no LLM. Same fields as the LLM path.
+
+    With ``manual`` the text describes a hand-arranged wave: it drops the
+    claims that only hold for the packer's own output (dependency order,
+    HA families spread across waves) and lists the acknowledged overrides
+    as concerns instead.
+    """
     roles = sorted({g.estimated_role for g in wave.groups})
     states = sorted({g.estimated_state for g in wave.groups})
     role_label = "/".join(roles) if roles else "mixed"
     state_label = ", ".join(states) if states else "mixed"
     risk = heuristic_risk(wave)
-    description = (
-        f"Wave {wave.wave_number}: {wave.vm_count} VMs across "
-        f"{len(wave.groups)} group(s) ({role_label} tier, {state_label}). "
-        f"Aggregate cluster-level risk {wave.estimated_risk}. Cutover "
-        "order follows topological dependencies + role priority; HA "
-        "families are spread across waves so the original cluster keeps "
-        "quorum during the migration window."
-    )
-    rationale = (
-        f"Heuristic score {risk}/5 derived from role mix "
-        f"({role_label}) and aggregate group risk ({wave.estimated_risk}). "
-        "Mechanical fallback — no LLM input."
-    )
+    if manual is None:
+        description = (
+            f"Wave {wave.wave_number}: {wave.vm_count} VMs across "
+            f"{len(wave.groups)} group(s) ({role_label} tier, {state_label}). "
+            f"Aggregate cluster-level risk {wave.estimated_risk}. Cutover "
+            "order follows topological dependencies + role priority; HA "
+            "families are spread across waves so the original cluster keeps "
+            "quorum during the migration window."
+        )
+        rationale = (
+            f"Heuristic score {risk}/5 derived from role mix "
+            f"({role_label}) and aggregate group risk ({wave.estimated_risk}). "
+            "Mechanical fallback — no LLM input."
+        )
+    else:
+        description = (
+            f"Wave {wave.wave_number}: {wave.vm_count} VMs across "
+            f"{len(wave.groups)} group(s) ({role_label} tier, {state_label}). "
+            f"Aggregate cluster-level risk {wave.estimated_risk}. An operator "
+            "arranged this wave's membership by hand, so the planner's automatic "
+            "dependency ordering and HA spreading were not applied to it."
+        )
+        rationale = (
+            f"Heuristic score {risk}/5 derived from role mix "
+            f"({role_label}) and aggregate group risk ({wave.estimated_risk}). "
+            "Deterministic text for a manually arranged wave — no LLM input."
+        )
     concerns: list[str] = []
+    if manual is not None:
+        concerns.extend(f"Operator override: {line}" for line in manual.overrides)
     if "data" in roles:
         concerns.append("Data tier present — confirm point-in-time consistency before cutover")
     if "infrastructure" in roles or "dc" in roles:
@@ -332,11 +401,30 @@ def _build_group_view(group, vm_name_by_id: dict[int, str], *, wave_roles: list[
     return view
 
 
+def _operator_context_lines(manual: ManualWaveContext) -> list[str]:
+    """The OPERATOR CONTEXT block for a hand-arranged wave's prompt.
+
+    Bounded input: one note (single line, truncated, internal tokens
+    scrubbed) and at most ``_MAX_OVERRIDE_LINES`` override lines.
+    """
+    lines = [
+        "OPERATOR CONTEXT: an operator arranged this wave's membership by hand.",
+    ]
+    note = " ".join((manual.note or "").split())
+    note = _NOTES_SCRUB_RE.sub("", note).strip()[:_MAX_OPERATOR_NOTE_CHARS]
+    if note:
+        lines.append(f"  operator_note: {json.dumps(note)}")
+    for line in manual.overrides[:_MAX_OVERRIDE_LINES]:
+        lines.append(f"  acknowledged_override: {line}")
+    return lines
+
+
 def _render_wave_prompt(
     wave,
     *,
     vm_name_by_id: dict[int, str],
     error_feedback: str | None = None,
+    operator_context: ManualWaveContext | None = None,
 ) -> str:
     """Build the user message for one wave's annotation call.
 
@@ -367,6 +455,11 @@ def _render_wave_prompt(
     for i, g in enumerate(wave.groups, start=1):
         view = _build_group_view(g, vm_name_by_id, wave_roles=wave_roles)
         lines.append(f"  GROUP {i}: {json.dumps(view, indent=2)}")
+    # After the groups: the model reads what is in the wave first, then
+    # how it came to be arranged that way.
+    if operator_context is not None:
+        lines.append("")
+        lines.extend(_operator_context_lines(operator_context))
     lines.append("")
     lines.append("Produce the JSON object specified in the system prompt now.")
     return "\n".join(lines)
@@ -401,6 +494,31 @@ def _parse_annotation(raw: str) -> WaveAnnotation:
         raise ValueError(f"Schema validation failed: {exc.errors()}") from exc
 
 
+def reduce_groups_for_annotation(groups: list, limit: int | None = None) -> list:
+    """Merge the smallest groups until at most ``limit`` remain.
+
+    The packer never produces a wave with more than ``_MAX_GROUPS_PER_WAVE``
+    groups, but an operator can: fourteen unrelated VMs moved into one
+    wave classify into fourteen groups. The per-call LLM ceiling still
+    holds, so the annotation view of such a wave is reduced mechanically
+    — the two smallest groups (ties by id) are merged, repeatedly. Only
+    the annotator sees the reduced list; the persisted wave keeps the
+    natural groups.
+    """
+    from app.core.config import settings
+    from app.core.preclassifier import PreClassifier
+
+    cap = min(limit or settings.llm_max_items_per_call, _MAX_GROUPS_PER_WAVE)
+    cap = max(1, cap)
+    reduced = list(groups)
+    merger = PreClassifier(max_groups=cap)
+    while len(reduced) > cap:
+        reduced.sort(key=lambda g: (len(g.vm_ids), g.id))
+        a, b = reduced[0], reduced[1]
+        reduced = [merger._merge_groups(a, b), *reduced[2:]]
+    return reduced
+
+
 async def annotate_one_wave(
     wave,
     *,
@@ -408,9 +526,14 @@ async def annotate_one_wave(
     max_attempts: int,
     semaphore: asyncio.Semaphore | None,
     vm_name_by_id: dict[int, str] | None = None,
+    operator_context: ManualWaveContext | None = None,
 ):
     """Run validate-retry-fallback for a single wave. Returns an
     :class:`AnnotatedWave` from ``plan_pipeline``.
+
+    ``operator_context`` marks a wave an operator arranged by hand: the
+    prompt gains an OPERATOR CONTEXT block and every mechanical fallback
+    uses the manual-aware text.
 
     Path semantics, mirrored in the ``method`` field:
       - ``"llm"``                — first attempt succeeded
@@ -428,7 +551,7 @@ async def annotate_one_wave(
     name_lookup: dict[int, str] = dict(vm_name_by_id or {})
 
     if backend is None:
-        ann = _mechanical_annotation(wave)
+        ann = _mechanical_annotation(wave, operator_context)
         return AnnotatedWave(
             wave=wave,
             description=ann.description,
@@ -438,15 +561,23 @@ async def annotate_one_wave(
             method="mechanical_fallback",
         )
 
+    system_prompt = WAVE_ANNOTATION_SYSTEM_PROMPT
+    if operator_context is not None:
+        system_prompt += MANUAL_WAVE_SYSTEM_ADDENDUM
     error_feedback: str | None = None
     sem = semaphore or asyncio.Semaphore(1)
     backend_type = getattr(backend, "backend_type", "unknown")
     last_messages: list[dict] | None = None
     last_raw: str = ""
     for attempt in range(1, max_attempts + 1):
-        prompt = _render_wave_prompt(wave, vm_name_by_id=name_lookup, error_feedback=error_feedback)
+        prompt = _render_wave_prompt(
+            wave,
+            vm_name_by_id=name_lookup,
+            error_feedback=error_feedback,
+            operator_context=operator_context,
+        )
         messages = [
-            {"role": "system", "content": WAVE_ANNOTATION_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
         last_messages = messages
@@ -472,7 +603,7 @@ async def annotate_one_wave(
                 f"failed (HTTP 401/403). Wave annotations are using the "
                 f"mechanical fallback. Check the configured credentials."
             )
-            ann = _mechanical_annotation(wave)
+            ann = _mechanical_annotation(wave, operator_context)
             return AnnotatedWave(
                 wave=wave,
                 description=ann.description,
@@ -500,7 +631,7 @@ async def annotate_one_wave(
                 f"prompt/response. Wave annotations are using the mechanical "
                 f"fallback. {exc}"
             )
-            ann = _mechanical_annotation(wave)
+            ann = _mechanical_annotation(wave, operator_context)
             return AnnotatedWave(
                 wave=wave,
                 description=ann.description,
@@ -564,7 +695,7 @@ async def annotate_one_wave(
         wave.wave_number,
         max_attempts,
     )
-    ann = _mechanical_annotation(wave)
+    ann = _mechanical_annotation(wave, operator_context)
     return AnnotatedWave(
         wave=wave,
         description=ann.description,

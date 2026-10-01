@@ -5,7 +5,8 @@
 // Behavior:
 //   - Network failures (DNS, refused connection, CORS) → throw a
 //     readable Error with the "Network error:" prefix.
-//   - Non-OK HTTP responses → throw with "HTTP <status>: <detail>".
+//   - Non-OK HTTP responses → throw with "HTTP <status>: <detail>";
+//     the error also carries `.status`, `.detail` and the parsed `.body`.
 //     Detail extraction:
 //       * Pydantic 422 array → flatten to "field.path: msg" (first 5)
 //       * Plain {detail: "..."} → use as-is
@@ -91,8 +92,10 @@ export async function fetchJSON(url, opts = {}) {
 
   if (!response.ok) {
     let detail = "";
+    let errorBody = null;
     try {
       const body = await response.json();
+      errorBody = body;
       detail = formatApiErrorDetail(body);
       if (!detail) {
         // Some endpoints emit non-`detail` error shapes (e.g.,
@@ -110,6 +113,9 @@ export async function fetchJSON(url, opts = {}) {
     const err = new Error(`HTTP ${response.status}: ${detail || response.statusText}`);
     err.status = response.status;
     err.detail = detail;
+    // The parsed body, for callers that render a structured error (the
+    // plan-edit endpoint returns the rule violations behind a 409/422).
+    err.body = errorBody;
     throw err;
   }
 

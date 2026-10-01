@@ -11,6 +11,7 @@ from app.api.health import router as health_router
 from app.api.imports import router as imports_router
 from app.api.inference_logs import router as inference_logs_router
 from app.api.network_reviews import router as network_reviews_router
+from app.api.plan_edits import plan_edits_router
 from app.api.plans import router as plans_router
 from app.api.plans import strategies_router as planning_strategies_router
 from app.api.reports import router as reports_router
@@ -37,6 +38,7 @@ from app.core.fips import log_startup_warning as _fips_startup_log
 from app.core.import_jobs import fail_orphan_imports
 from app.core.llm.runtime import get_active_backend
 from app.core.migrations import MigrationError, apply_migrations
+from app.core.plan_reannotation import abandon_stale_reannotations
 from app.core.scheduler import shutdown_scheduler, start_scheduler
 from app.core.startup import fail_orphan_plans
 from app.middleware.audit import AuditMiddleware
@@ -139,6 +141,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001 — startup must not block API serving
         logger.error("startup.fail_orphan_plans error=%s", e)
 
+    # A manual plan edit hands its touched waves to a BackgroundTask for
+    # an LLM rationale. One that was queued when the process died will
+    # never run; stop the UI saying it is pending.
+    try:
+        abandon_stale_reannotations()
+    except Exception as e:  # noqa: BLE001 — startup must not block API serving
+        logger.error("startup.abandon_stale_reannotations error=%s", e)
+
     # Same story for inventory imports that were mid-flight.
     try:
         fail_orphan_imports()
@@ -215,5 +225,6 @@ app.include_router(validation_schedules_router, prefix="/api/validation-schedule
 app.include_router(vcenters_router, prefix="/api/sources/vcenters")
 app.include_router(ssh_keys_router, prefix="/api/ssh-keys")
 app.include_router(waves_router, prefix="/api/plans")
+app.include_router(plan_edits_router, prefix="/api/plans")
 app.include_router(baseline_runs_router, prefix="/api/baseline-runs")
 app.include_router(validation_runs_router, prefix="/api/validation-runs")

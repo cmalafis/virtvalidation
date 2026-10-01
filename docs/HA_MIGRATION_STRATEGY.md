@@ -105,8 +105,9 @@ where no node is more important than the others.
     Tracked in roadmap.
   - Application-level HA without name/role signals (e.g. a JVM
     cluster discovered via JGroups). Falls back to `standalone`
-    for now — operator can override post-generation via
-    `POST /api/plans/{id}/waves/{n}/move-vm`.
+    for now — the operator can separate the peers after generation
+    by moving one to another wave on the plan page
+    (`POST /api/plans/{id}/edits`).
   - Active/passive failover between dissimilarly-named VMs
     (`payroll-svc` and `payroll-failover`). Falls back to
     `standalone`.

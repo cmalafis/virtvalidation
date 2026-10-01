@@ -283,6 +283,9 @@ export default function WaveRunPanel({ planId, waveNumber }) {
 
   const killSwitchOff = preview?.ssh_operations_enabled === false;
   const vms = preview?.vms ?? [];
+  // VMs the wave's latest baseline run did not capture — usually ones an
+  // operator moved in afterwards. Validation would call them unreachable.
+  const baselineMissing = asArray(preview?.baseline_missing);
   // Commands are identical across hosts in a wave; show the set once
   // rather than repeating it per row.
   const commands = vms[0]?.commands ?? [];
@@ -310,6 +313,22 @@ export default function WaveRunPanel({ planId, waveNumber }) {
             className="pf-v6-u-mb-md"
           >
             {preview.authorization_reason}
+          </Alert>
+        )}
+
+        {baselineMissing.length > 0 && (
+          <Alert
+            variant="warning"
+            isInline
+            title="Capture the baseline again before validating"
+            className="pf-v6-u-mb-md"
+          >
+            {`${baselineMissing.length} VM${
+              baselineMissing.length === 1 ? " is" : "s are"
+            } not in this wave's latest baseline: ${baselineMissing
+              .slice(0, 6)
+              .map((vm) => vm?.name ?? `VM #${vm?.vm_id}`)
+              .join(", ")}${baselineMissing.length > 6 ? "…" : ""}.`}
           </Alert>
         )}
 

@@ -12,6 +12,7 @@ from app.core.baseline import synthesize_profile
 from app.core.capture import run_capture_task, task_store
 from app.core.db import get_db
 from app.core.limits import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_VMS_PER_BULK_ACTION
+from app.core.plan_membership import vm_plan_index
 from app.core.target_resolution import (
     ResolvedTarget,
     resolve_vm_target,
@@ -153,6 +154,27 @@ def _vm_with_resolution(vm: VM, resolved: ResolvedTarget | None) -> dict:
     return body
 
 
+# Only VMs in these states can be held by a plan; the plan lookup is
+# skipped for a page that has none.
+_IN_PLAN_STATES = frozenset({VMLifecycleState.planned, VMLifecycleState.migrated})
+
+
+def _attach_plan_membership(
+    bodies: list[dict], vms: list[VM], db: Session, *, with_wave: bool = False
+) -> list[dict]:
+    """Fill ``plan_id`` / ``plan_name`` (and the wave number when asked)
+    on each rendered VM body."""
+    held = [vm.id for vm in vms if vm.lifecycle_state in _IN_PLAN_STATES]
+    if not held:
+        return bodies
+    index = vm_plan_index(db, held, with_wave=with_wave)
+    for body in bodies:
+        entry = index.get(body["id"])
+        if entry:
+            body.update(entry)
+    return bodies
+
+
 def _decorate_with_resolution(vms: list[VM], db: Session) -> list[dict]:
     """Resolve every VM in ``vms`` in one pass and return the dict
     shape :class:`VMRead` consumes. Empty list → empty list, no DB hit.
@@ -160,7 +182,8 @@ def _decorate_with_resolution(vms: list[VM], db: Session) -> list[dict]:
     if not vms:
         return []
     resolutions = resolve_vms_iter(vms, db)
-    return [_vm_with_resolution(vm, resolutions.get(vm.id)) for vm in vms]
+    bodies = [_vm_with_resolution(vm, resolutions.get(vm.id)) for vm in vms]
+    return _attach_plan_membership(bodies, vms, db)
 
 
 @router.post("", response_model=VMRead, status_code=status.HTTP_201_CREATED)
@@ -1040,7 +1063,8 @@ def set_vm_environment(
 @router.get("/{vm_id}", response_model=VMRead)
 def get_vm(vm_id: int, db: Session = Depends(get_db)) -> dict:
     vm = _get_vm_or_404(db, vm_id)
-    return _vm_with_resolution(vm, resolve_vm_target(vm, db))
+    body = _vm_with_resolution(vm, resolve_vm_target(vm, db))
+    return _attach_plan_membership([body], [vm], db, with_wave=True)[0]
 
 
 @router.get("/{vm_id}/assessment")

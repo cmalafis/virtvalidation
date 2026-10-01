@@ -29,7 +29,7 @@ Enrolling, listing, editing, and deleting VMs.
 <details><summary><strong><code>app.api.vms</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/vms.py`  
-Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.limits`, `app.core.target_resolution`, `app.core.validation`, `app.core.vm_lifecycle`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
+Depends on: `app.core.audit`, `app.core.baseline`, `app.core.capture`, `app.core.db`, `app.core.limits`, `app.core.plan_membership`, `app.core.target_resolution`, `app.core.validation`, `app.core.vm_lifecycle`, `app.models.validation`, `app.models.vcenter`, `app.models.vm`, `app.schemas.validation`, `app.schemas.vm`
 
 **Routes**
 
@@ -104,7 +104,7 @@ Depends on: `app.core.limits`, `app.models.vm`
 - **`ResolvedStorageRead`** (Pydantic schema)
   - Fields: `source`, `target_storage_class_name`, `access_mode`
 - **`VMRead`** (Class)
-  - Fields: `id`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `moref`, `vm_uuid`, `power_state`, `esxi_host`, `vsphere_datacenter`, `guest_os_full`, `num_cpus`, `memory_mb`, `disk_count`, `nic_count`, `provisioned_mb`, `missing_from_last_upload`, `assessment_status`, `assessment_findings`, `created_at`, `updated_at`, `resolved_target_cluster_id`, `resolved_target_cluster_name`, `resolved_target_namespace`, `resolved_networks`, `resolved_storage`, `resolution_is_complete`, `resolution_reasons`, `resolution_mapping_id`
+  - Fields: `id`, `status`, `lifecycle_state`, `lifecycle_state_changed_at`, `moref`, `vm_uuid`, `power_state`, `esxi_host`, `vsphere_datacenter`, `guest_os_full`, `num_cpus`, `memory_mb`, `disk_count`, `nic_count`, `provisioned_mb`, `missing_from_last_upload`, `assessment_status`, `assessment_findings`, `created_at`, `updated_at`, `resolved_target_cluster_id`, `resolved_target_cluster_name`, `resolved_target_namespace`, `resolved_networks`, `resolved_storage`, `resolution_is_complete`, `resolution_reasons`, `resolution_mapping_id`, `plan_id`, `plan_name`, `plan_wave_number`
 - **`VMListResponse`** (Pydantic schema)
   - Paginated wrapper for the inventory listing.
   - Fields: `items`, `total`, `skip`, `limit`
@@ -289,7 +289,7 @@ LLM-driven wave planning + MTV/Forklift YAML generation.
 <details><summary><strong><code>app.api.plans</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/api/plans.py`  
-Depends on: `app.core`, `app.core.assessment`, `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_chunking`, `app.core.plan_generation`, `app.core.plan_pipeline`, `app.core.preclassifier`, `app.core.reporter`, `app.core.target_resolution`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
+Depends on: `app.core`, `app.core.assessment`, `app.core.audit`, `app.core.config`, `app.core.db`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_chunking`, `app.core.plan_generation`, `app.core.plan_membership`, `app.core.plan_pipeline`, `app.core.preclassifier`, `app.core.reporter`, `app.core.target_resolution`, `app.core.vm_lifecycle`, `app.models.plan`, `app.models.target`, `app.models.validation`, `app.models.vm`, `app.schemas.plan`, `app.schemas.report`
 
 **Routes**
 
@@ -298,7 +298,7 @@ Depends on: `app.core`, `app.core.assessment`, `app.core.audit`, `app.core.confi
 | `POST` | `/api/plans` | `create_plan(request, payload, background_tasks, db)` | Kick off async migration plan generation. |
 | `POST` | `/api/plans/preview` | `preview_plan_partitions(payload, db)` | Show how the selection will fan out into plan rows without |
 | `POST` | `/api/plans/preview-groups` | `preview_groups(payload, db)` | Show how the pre-classifier WOULD group these VMs — no LLM, no plan. |
-| `GET` | `/api/plans` | `list_plans(db, limit)` | — |
+| `GET` | `/api/plans` | `list_plans(db, limit, series_id)` | — |
 | `GET` | `/api/plans/{plan_id}` | `get_plan(plan_id, db)` | — |
 | `DELETE` | `/api/plans/{plan_id}` | `delete_plan(request, plan_id, db)` | Delete a plan and return its VMs to ``available``. |
 | `POST` | `/api/plans/{plan_id}/mark-succeeded` | `mark_plan_succeeded(request, plan_id, db)` | Operator declares the cutover finished; VMs transition to ``migrated``. |
@@ -375,7 +375,7 @@ Depends on: `app.core.db`
   - Customer intent captured by the planning wizard.
   - Fields: `id`, `name`, `primary_grouping`, `wave_size_target`, `wave_size_custom`, `risk_approach`, `production_handling`, `application_atomicity`, `freeform_constraints`, `created_by_actor`, `created_at`, `updated_at`
 - **`MigrationPlan`** (SQLAlchemy model · table `migration_plans`)
-  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `status`, `progress_message`, `migration_type`, `progress_percent`, `error_message`, `series_id`, `series_index`, `series_total`, `excluded_vms`, `started_at`, `completed_at`, `created_at`
+  - Fields: `id`, `name`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `status`, `progress_message`, `migration_type`, `progress_percent`, `error_message`, `series_id`, `series_index`, `series_total`, `excluded_vms`, `wave_number_seq`, `started_at`, `completed_at`, `created_at`
 
 </details>
 
@@ -396,7 +396,7 @@ Depends on: `app.models.plan`
   - Fields: `wave_number`, `name`, `vm_ids`, `vm_names`, `rationale`, `estimated_duration`, `estimated_risk`, `risk_level`, `considerations`, `applications_included`, `applications_split_warning`
 - **`PlanRead`** (Pydantic schema)
   - API response shape for a stored plan.
-  - Fields: `id`, `name`, `migration_type`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`, `plans`, `plan_count`, `series_id`, `series_index`, `series_total`, `excluded_vms`, `excluded`
+  - Fields: `id`, `name`, `migration_type`, `vm_ids`, `waves`, `summary`, `model`, `mapping_ids`, `created_at`, `status`, `progress_message`, `progress_percent`, `error_message`, `started_at`, `completed_at`, `groups`, `groups_formed`, `method`, `attempts`, `plans`, `plan_count`, `series_id`, `series_index`, `series_total`, `excluded_vms`, `partition`, `excluded`
 - **`PlanCreate`** (Pydantic schema)
   - Fields: `vm_ids`, `name`, `mapping_ids`, `migration_type`, `override_assessment`, `skip_ineligible`, `preclassification_enabled`, `ha_strategy`
 - **`PreviewGroupsResponse`** (Pydantic schema)
@@ -695,6 +695,22 @@ Depends on: `app.core`, `app.core.audit`, `app.core.db`, `app.core.network_revie
 | `POST` | `/api/network-reviews/{review_id}/analyze` | `analyze_review(request, review_id, background_tasks, db)` | — |
 | `DELETE` | `/api/network-reviews/{review_id}` | `delete_review(request, review_id, db)` | — |
 | `PATCH` | `/api/network-reviews/{review_id}/findings/{finding_id}` | `update_finding_triage(request, review_id, finding_id, payload, db)` | — |
+
+</details>
+
+<details><summary><strong><code>app.api.plan_edits</code></strong> — <em>API endpoints</em> · Plan membership: who is in which wave, and operator edits to it.</summary>
+
+Path: `backend/app/api/plan_edits.py`  
+Depends on: `app.core.collection.wave_jobs`, `app.core.config`, `app.core.db`, `app.core.family`, `app.core.plan_edit`, `app.core.plan_membership`, `app.core.plan_reannotation`, `app.core.preclassifier`, `app.core.wave_skeleton`, `app.models.baseline_run`, `app.models.plan`, `app.models.validation_run`, `app.models.vm`, `app.schemas.plan_edit`
+
+**Routes**
+
+| Method | Path | Handler | Purpose |
+|---|---|---|---|
+| `GET` | `/api/plans/{plan_id}/vms` | `list_plan_vms(plan_id, db)` | Every VM in the plan with the wave it is in. |
+| `GET` | `/api/plans/{plan_id}/edit-targets` | `list_edit_targets(plan_id, db)` | Other plans this plan&#x27;s VMs can be moved into: status ``complete`` |
+| `POST` | `/api/plans/{plan_id}/edits` | `edit_plan(request, plan_id, payload, background_tasks, db)` | Move VMs between waves or plans, remove them, or add available VMs. |
+| `POST` | `/api/plans/{plan_id}/waves/{wave_number}/reannotate` | `reannotate_wave(request, plan_id, wave_number, background_tasks, db)` | Ask the LLM for a fresh rationale for one wave. The recovery path |
 
 </details>
 
@@ -1160,6 +1176,7 @@ Depends on: `app.core`, `app.core.collection.diff`, `app.core.collection.engine`
 - `resolve_wave_vm_ids(plan, wave_number)` — Return the VM ids in ``plan.waves[wave_number-1].vm_ids``.
 - `build_targets(db, vm_ids)` — Translate VM rows into engine-ready :class:`VMTarget` objects.
 - `run_baseline_task(baseline_run_id)` — BackgroundTask entry point — drives one BaselineRun to completion.
+- `latest_baseline_coverage(db, plan_id, wave_numbers)` — Per wave: its latest completed BaselineRun and the VM ids that run
 - `run_validation_task(validation_run_id)` — BackgroundTask entry point — drives one ValidationRun to completion.
 
 </details>
@@ -1659,6 +1676,41 @@ Depends on: `app.core.family`
 
 </details>
 
+<details><summary><strong><code>app.core.plan_edit</code></strong> — <em>Business logic</em> · Manual edits to a generated migration plan.</summary>
+
+Path: `backend/app/core/plan_edit.py`  
+Depends on: `app.core.assessment`, `app.core.audit`, `app.core.concurrency`, `app.core.config`, `app.core.mapping_validation`, `app.core.mtv`, `app.core.plan_membership`, `app.core.plan_pipeline`, `app.core.preclassifier`, `app.core.vm_lifecycle`, `app.core.wave_annotation`, `app.core.wave_constraints`, `app.core.wave_skeleton`, `app.models.baseline_run`, `app.models.plan`, `app.models.target`, `app.models.validation_run`, `app.models.vm`
+
+**Classes**
+
+- **`EditSpec`** (Class)
+  - One requested edit. ``target_wave`` is an existing wave number;
+  - Fields: `operation`, `vm_ids`, `target_wave`, `new_wave`, `target_plan_id`, `note`
+- **`PlanEditError`** (Class)
+  - The edit cannot be evaluated or applied. ``status_code`` is the
+- **`PlanChange`** (Class)
+  - What one plan row looks like after the edit.
+  - Fields: `plan`, `waves`, `vm_ids`, `wave_number_seq`, `touched_waves`, `created_waves`, `removed_waves`
+  - Methods:
+    - `summary(self)`
+    - `reannotation_tokens(self)` — ``{wave_number: token}`` for the waves the LLM should re-explain.
+- **`PreparedEdit`** (Class)
+  - Fields: `spec`, `source_plan`, `target_plan`, `violations`, `moves`, `changes`
+  - Methods:
+    - `blocking(self)`
+    - `overridable(self)`
+
+**Functions**
+
+- `wave_membership(plan)` — ``{wave_number: [vm_id, ...]}`` from the persisted wave documents.
+- `next_wave_number(plan, members)` — The number a new wave gets: past every number this plan ever used.
+- `classify_wave(wave_number, vms)` — Rebuild a hand-arranged wave from its VMs.
+- `manual_context(doc)` — The annotator's view of a persisted wave's manual-edit state, or
+- `prepare(db, plan, spec)` — Work out what ``spec`` would do to ``plan`` (and to the target plan
+- `apply(db, prepared)` — Persist a prepared edit: lifecycle transitions, the rebuilt wave
+
+</details>
+
 <details><summary><strong><code>app.core.plan_generation</code></strong> — <em>Business logic</em> · BackgroundTask body for POST /api/plans.</summary>
 
 Path: `backend/app/core/plan_generation.py`  
@@ -1667,6 +1719,30 @@ Depends on: `app.core`, `app.core.audit`, `app.core.llm.inference_log`, `app.cor
 **Functions**
 
 - `run_simple_plan_generation(plan_id)` — Body of the BackgroundTask the POST /api/plans endpoint spawns.
+
+</details>
+
+<details><summary><strong><code>app.core.plan_membership</code></strong> — <em>Business logic</em> · Which plan holds which VM, and which partition a plan covers.</summary>
+
+Path: `backend/app/core/plan_membership.py`  
+Depends on: `app.core.target_resolution`, `app.models.plan`, `app.models.vcenter`, `app.models.vm`
+
+**Classes**
+
+- **`Partition`** (Class)
+  - One MTV Plan CR's scope: a source provider, a destination
+  - Fields: `vcenter_id`, `cluster_id`, `namespace`, `vcenter_name`, `cluster_name`
+  - Methods:
+    - `key(self)`
+    - `to_dict(self)`
+    - `label(self)`
+
+**Functions**
+
+- `resolve_partitions(db, vms)` — Partition per VM id; ``None`` when the VM does not resolve to a
+- `plan_partitions(db, plans)` — Partition per plan id, resolved from one representative VM each.
+- `wave_number_of(waves, vm_id)`
+- `vm_plan_index(db, vm_ids)` — ``{vm_id: {plan_id, plan_name, plan_wave_number}}`` for the VMs
 
 </details>
 
@@ -1692,6 +1768,19 @@ Depends on: `app.core.concurrency`, `app.core.family`, `app.core.mapping_validat
 
 - `emit_wave_yaml(plan_id, wave, description, vm_by_id, resolver, migration_type)` — Stage 7 — render one wave's MTV YAML.
 - `run_pipeline(vms, mappings)` — Walk the seven stages and return an end-to-end annotated plan.
+
+</details>
+
+<details><summary><strong><code>app.core.plan_reannotation</code></strong> — <em>Business logic</em> · Background LLM re-annotation of waves an operator rearranged.</summary>
+
+Path: `backend/app/core/plan_reannotation.py`  
+Depends on: `app.core`, `app.core.audit`, `app.core.llm.inference_log`, `app.core.plan_edit`, `app.core.wave_annotation`, `app.models.plan`, `app.models.vm`
+
+**Functions**
+
+- `queue_wave_reannotation(plan, wave_number)` — Stamp a fresh token on one wave so :func:`reannotate_waves_task`
+- `reannotate_waves_task(plan_id, tokens)` — BackgroundTask body: one LLM call per wave in ``tokens``.
+- `abandon_stale_reannotations(session_factory)` — Startup sweep: a wave still ``queued`` at boot lost its background
 
 </details>
 
@@ -1984,6 +2073,8 @@ Depends on: `app.core.audit`, `app.models.vm`
 - `transition_to_planned(vm_ids, plan_id, db)` — available → planned. Fails if any VM is not currently ``available``.
 - `transition_to_available_from_failed_plan(plan_id, vm_ids, db)` — planned → available. Used when a plan transitions to ``failed``.
 - `transition_to_available_from_deleted_plan(plan_id, vm_ids, db)` — planned → available. Used when a plan is DELETEd.
+- `transition_to_available_from_plan_edit(plan_id, vm_ids, db)` — planned → available. An operator removed these VMs from a plan
+- `record_plan_reassignment(vm_ids, from_plan_id, to_plan_id, db)` — planned → planned, different plan. No state change — the VM stays
 - `transition_to_migrated(plan_id, vm_ids, db)` — planned → migrated. Triggered by ``POST /api/plans/{id}/mark-succeeded``.
 - `transition_to_rolled_back(vm_id, db)` — migrated → rolled_back. Single-VM operator action.
 - `transition_to_available_from_rolled_back(vm_id, db)` — rolled_back → available. Single-VM operator action.
@@ -1998,15 +2089,44 @@ Depends on: `app.core.llm.base`, `app.core.llm.status`
 
 **Classes**
 
+- **`ManualWaveContext`** (Class)
+  - What the annotator should know about a hand-arranged wave.
+  - Fields: `actor`, `note`, `overrides`
 - **`WaveAnnotation`** (Pydantic schema)
   - Pydantic validation for the Stage 6 LLM output.
   - Fields: `description`, `risk_score`, `risk_rationale`, `notable_concerns`
 
 **Functions**
 
+- `override_line(code, count, limit)` — One acknowledged rule override, in words. Deliberately names no
 - `heuristic_risk(wave)` — Default risk score when the LLM is unavailable.
+- `reduce_groups_for_annotation(groups, limit)` — Merge the smallest groups until at most ``limit`` remain.
 - `annotate_one_wave(wave)` — Run validate-retry-fallback for a single wave. Returns an
 - `annotate_waves(waves)` — Annotate every wave in parallel under the backend's concurrency limit.
+
+</details>
+
+<details><summary><strong><code>app.core.wave_constraints</code></strong> — <em>Business logic</em> · Planner-rule checks for a hand-edited wave layout — pure Python.</summary>
+
+Path: `backend/app/core/wave_constraints.py`  
+Depends on: `app.core.family`, `app.core.wave_skeleton`
+
+**Classes**
+
+- **`Violation`** (Class)
+  - One rule a wave layout breaks (or a fact the operator should see).
+  - Fields: `code`, `severity`, `message`, `plan_id`, `wave_number`, `family`, `vm_ids`, `vm_names`, `count`, `limit`
+  - Methods:
+    - `key(self)`
+    - `to_dict(self)`
+
+**Functions**
+
+- `wave_size_violations(waves)`
+- `family_sizes(waves)` — Plan-wide member count per name family.
+- `ha_family_violations(waves)` — Waves holding more of one family than ``family_cap`` allows.
+- `check_waves(waves)` — Every standing rule violation in this layout.
+- `diff_violations(before, after)` — Violations in ``after`` that an edit introduced or made worse.
 
 </details>
 
@@ -2028,12 +2148,16 @@ Depends on: `app.core.config`, `app.core.preclassifier`
   - Methods:
     - `assign_waves(self, groups)`
 
+**Functions**
+
+- `build_wave(wave_number, groups)` — A finished :class:`Wave` at ``wave_number`` holding ``groups``:
+
 </details>
 
 <details><summary><strong><code>app.main</code></strong> — <em>API endpoints</em></summary>
 
 Path: `backend/app/main.py`  
-Depends on: `app.api.assessment`, `app.api.audit`, `app.api.command_audits`, `app.api.health`, `app.api.imports`, `app.api.inference_logs`, `app.api.network_reviews`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.import_jobs`, `app.core.llm.runtime`, `app.core.migrations`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
+Depends on: `app.api.assessment`, `app.api.audit`, `app.api.command_audits`, `app.api.health`, `app.api.imports`, `app.api.inference_logs`, `app.api.network_reviews`, `app.api.plan_edits`, `app.api.plans`, `app.api.reports`, `app.api.rvtools`, `app.api.settings`, `app.api.snapshots`, `app.api.ssh_keys`, `app.api.storage_reviews`, `app.api.target_entities`, `app.api.targets`, `app.api.templates`, `app.api.validation_schedules`, `app.api.validations`, `app.api.vcenters`, `app.api.vms`, `app.api.waves`, `app.core.db`, `app.core.fips`, `app.core.import_jobs`, `app.core.llm.runtime`, `app.core.migrations`, `app.core.plan_reannotation`, `app.core.scheduler`, `app.core.startup`, `app.middleware.audit`, `app.models`
 
 **Functions**
 
@@ -2437,6 +2561,46 @@ Path: `backend/app/schemas/ocp_namespace.py`
 
 </details>
 
+<details><summary><strong><code>app.schemas.plan_edit</code></strong> — <em>Data models / schemas</em> · Schemas for manual plan edits — ``app.api.plan_edits``.</summary>
+
+Path: `backend/app/schemas/plan_edit.py`  
+
+**Classes**
+
+- **`PlanEditRequest`** (Pydantic schema)
+  - One edit over many VMs. ``target_wave`` is an existing wave number
+  - Fields: `operation`, `vm_ids`, `target_wave`, `target_plan_id`, `dry_run`, `confirm_overrides`, `note`
+- **`EditViolation`** (Pydantic schema)
+  - Fields: `code`, `severity`, `message`, `plan_id`, `wave_number`, `family`, `vm_ids`, `vm_names`, `count`, `limit`
+- **`EditMove`** (Pydantic schema)
+  - Fields: `vm_id`, `vm_name`, `from_plan_id`, `from_wave`, `to_plan_id`, `to_wave`
+- **`EditPlanSummary`** (Pydantic schema)
+  - Fields: `plan_id`, `name`, `vm_count`, `wave_count`, `touched_waves`, `created_waves`, `removed_waves`
+- **`PlanEditResponse`** (Pydantic schema)
+  - Fields: `applied`, `dry_run`, `operation`, `requires_confirmation`, `violations`, `moves`, `plans`, `reannotation`
+- **`PlanPartition`** (Pydantic schema)
+  - Fields: `source_vcenter_id`, `source_vcenter_name`, `target_cluster_id`, `target_cluster_name`, `target_namespace`
+- **`PlanVMRow`** (Pydantic schema)
+  - Fields: `vm_id`, `name`, `wave_number`, `environment`, `ip_address`, `os_family`, `application_hint`, `role`, `ha_family`, `ha_family_size`, `assessment_status`, `lifecycle_state`, `baseline_covered`, `missing`
+- **`PlanWaveBaseline`** (Pydantic schema)
+  - Fields: `last_run_id`, `last_completed_at`, `missing_vm_ids`
+- **`PlanWaveState`** (Pydantic schema)
+  - Fields: `wave_number`, `vm_count`, `baseline`, `active_run`, `validated`
+- **`PlanVMsResponse`** (Pydantic schema)
+  - Fields: `plan_id`, `status`, `editable`, `partition`, `limits`, `items`, `total`, `waves`
+- **`EditTargetWave`** (Pydantic schema)
+  - Fields: `wave_number`, `vm_count`, `estimated_risk`
+- **`EditTargetPlan`** (Pydantic schema)
+  - Fields: `plan_id`, `name`, `same_series`, `series_index`, `series_total`, `migration_type`, `vm_count`, `waves`
+- **`IneligiblePlan`** (Pydantic schema)
+  - Fields: `plan_id`, `name`, `reason`
+- **`EditTargetsResponse`** (Pydantic schema)
+  - Fields: `partition`, `targets`, `ineligible`
+- **`ReannotateAccepted`** (Pydantic schema)
+  - Fields: `plan_id`, `wave_number`, `reannotation`
+
+</details>
+
 <details><summary><strong><code>app.schemas.settings</code></strong> — <em>Data models / schemas</em></summary>
 
 Path: `backend/app/schemas/settings.py`  
@@ -2676,8 +2840,10 @@ Path: `backend/app/schemas/wave_preview.py`
 
 - **`WaveVMPreview`** (Pydantic schema)
   - Fields: `vm_id`, `name`, `host`, `username`, `os_family`, `environment`, `commands`
+- **`WaveBaselineGap`** (Pydantic schema)
+  - Fields: `vm_id`, `name`
 - **`WavePreviewResponse`** (Pydantic schema)
-  - Fields: `plan_id`, `wave_number`, `vm_count`, `requires_authorization`, `authorization_reason`, `ssh_operations_enabled`, `vms`
+  - Fields: `plan_id`, `wave_number`, `vm_count`, `requires_authorization`, `authorization_reason`, `ssh_operations_enabled`, `vms`, `baseline_missing`, `baseline_last_completed_at`
 
 </details>
 
@@ -2915,17 +3081,16 @@ Exports / inner components:
 
 </details>
 
-<details><summary><strong><code>frontend/src/pages/PlanDetailPage.jsx</code></strong> — <em>Frontend component</em> · Migration plan detail — the waves and how to run them.</summary>
+<details><summary><strong><code>frontend/src/pages/PlanDetailPage.jsx</code></strong> — <em>Frontend component</em> · Migration plan detail — which VMs are in the plan, wave by wave, and</summary>
 
 API calls:
 - `/api/plans/{id}`
 - `/api/plans/{id}/mark-succeeded`
-- `/api/plans/{id}/waves/{id}/mtv-yaml`
+- `/api/plans/{id}/vms`
+- `/api/plans?limit=200&series_id={id}`
 
 Exports / inner components:
-- **`methodLabel`** (helper)
-- **`riskColor`** (helper)
-- **`WaveCard`** (component)
+- **`plural`** (helper)
 - **`PlanDetailPage`** (component)
 
 </details>
@@ -2955,11 +3120,17 @@ Exports / inner components:
 
 API calls:
 - `/api/plans?limit=200`
+- `/api/vms?{id}`
 
 Exports / inner components:
 - **`stageProgress`** (helper)
 - **`humanize`** (helper)
 - **`PlanStatus`** (component)
+- **`groupBySeries`** (helper)
+- **`seriesName`** (helper)
+- **`wasEdited`** (helper)
+- **`PlanRow`** (component)
+- **`SeriesRows`** (component)
 - **`PlansPage`** (component)
 
 </details>
@@ -3098,6 +3269,52 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/pages/plan/AddVMsModal.jsx</code></strong> — <em>Frontend component</em> · Add available inventory VMs to an existing plan.</summary>
+
+API calls:
+- `/api/vms?{id}`
+
+Exports / inner components:
+- **`ineligibleReason`** (helper)
+- **`AddVMsModal`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/plan/EditViolations.jsx</code></strong> — <em>Frontend component</em> · What a proposed plan edit would break, grouped by what the operator</summary>
+
+Exports / inner components:
+- **`EditViolations`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/plan/PlanEditModal.jsx</code></strong> — <em>Frontend component</em> · Move the selected VMs to another wave or another plan, or remove them</summary>
+
+API calls:
+- `/api/plans/{id}/edit-targets`
+
+Exports / inner components:
+- **`waveOptionLabel`** (helper)
+- **`planOptionLabel`** (helper)
+- **`PlanEditModal`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/plan/PlanEditToolbar.jsx</code></strong> — <em>Frontend component</em> · The plan detail toolbar: find a VM, switch view, and act on a selection.</summary>
+
+Exports / inner components:
+- **`PlanEditToolbar`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/plan/PlanVMTable.jsx</code></strong> — <em>Frontend component</em> · The VMs of a plan — one wave&#x27;s worth, or all of them.</summary>
+
+Exports / inner components:
+- **`compare`** (helper)
+- **`BaselineCell`** (component)
+- **`PlanVMTable`** (component)
+
+</details>
+
 <details><summary><strong><code>frontend/src/pages/plan/WaveRunPanel.jsx</code></strong> — <em>Frontend component</em> · Per-wave execution: dry-run preview, baseline, validate.</summary>
 
 API calls:
@@ -3111,6 +3328,18 @@ Exports / inner components:
 - **`RunProgress`** (component)
 - **`RunModal`** (component)
 - **`WaveRunPanel`** (component)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/plan/WaveSection.jsx</code></strong> — <em>Frontend component</em> · One wave of a migration plan.</summary>
+
+API calls:
+- `/api/plans/{id}/waves/{id}/mtv-yaml`
+- `/api/plans/{id}/waves/{id}/reannotate`
+
+Exports / inner components:
+- **`overrideText`** (helper)
+- **`WaveSection`** (component)
 
 </details>
 
@@ -3152,10 +3381,43 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/test/planEditing.test.jsx</code></strong> — <em>Frontend component</em> · Behavior tests for seeing and changing which VMs are in which wave.</summary>
+
+Exports / inner components:
+- **`stub`** (helper)
+
+</details>
+
 <details><summary><strong><code>frontend/src/test/rvtoolsImport.test.jsx</code></strong> — <em>Frontend component</em> · Behavior tests for the server-side import flow.</summary>
 
 Exports / inner components:
 - **`stub`** (helper)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/plan/planRows.js</code></strong> — <em>Frontend component</em> · Row model for the plan detail page.</summary>
+
+Exports / inner components:
+- **`waveNumberOf`** (helper)
+- **`buildRows`** (helper)
+- **`rowMatches`** (helper)
+- **`methodMeta`** (helper)
+- **`riskColor`** (helper)
+- **`isReannotationPending`** (helper)
+- **`partitionLabel`** (helper)
+
+</details>
+
+<details><summary><strong><code>frontend/src/pages/plan/usePlanEdit.js</code></strong> — <em>Frontend component</em> · Dry-run + commit for a manual plan edit.</summary>
+
+API calls:
+- `/api/plans/{id}/edits`
+
+Exports / inner components:
+- **`useEditPreview`** (hook)
+- **`commitEdit`** (helper)
+- **`violationsFromError`** (helper)
+- **`hasSeverity`** (helper)
 
 </details>
 

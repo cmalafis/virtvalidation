@@ -10,9 +10,9 @@ Two related tables:
 
   - :class:`MigrationPlan` — the LLM-generated plan itself. Stores
     the rendered prompt and raw response alongside the parsed waves
-    so federal reviewers can audit the chain of reasoning. Plans
-    chain through ``supersedes_plan_id`` to support per-wave
-    refinements as new revisions.
+    so federal reviewers can audit the chain of reasoning. Operator
+    edits (``app.core.plan_edit``) change a plan's waves in place and
+    are recorded in the audit log; there are no plan revisions.
 """
 
 import enum
@@ -236,6 +236,14 @@ class MigrationPlan(Base):
     # without a join. Nullable for the same portability reason as
     # ``mapping_ids``.
     excluded_vms: Mapped[list[dict] | None] = mapped_column(JSONType, default=list, nullable=True)
+    # ---- Manual edits (POST /api/plans/{id}/edits) ----
+    # High-water mark of wave numbers ever used by this plan. Baseline /
+    # validation runs and MTV CR names (``vv-plan-{id}-wave-{n}``) key on
+    # the wave number, so an edit never renumbers a wave and never hands
+    # a dropped wave's number to a new one: a wave created by an edit gets
+    # ``max(wave_number_seq, highest current wave) + 1``. NULL until the
+    # plan is first edited.
+    wave_number_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

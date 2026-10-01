@@ -36,6 +36,16 @@ _ACTIONS: list[tuple[str, re.Pattern[str], str, str | None, int | None]] = [
     # no middleware-side inference needed; they're listed below for the
     # frontend filter dropdown.
     ("POST", re.compile(r"^/api/plans/?$"), "plan.create", "plan", None),
+    # A successful edit writes its own plan.edit.* rows and skips this
+    # one; what lands here is an edit that was refused (409 / 422).
+    ("POST", re.compile(r"^/api/plans/(\d+)/edits/?$"), "plan.edit", "plan", 1),
+    (
+        "POST",
+        re.compile(r"^/api/plans/(\d+)/waves/\d+/reannotate/?$"),
+        "plan.edit.reannotate_requested",
+        "plan",
+        1,
+    ),
     ("PUT", re.compile(r"^/api/settings/?$"), "settings.update", "settings", None),
 ]
 

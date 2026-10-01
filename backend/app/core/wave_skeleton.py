@@ -483,19 +483,32 @@ class MechanicalWaveAssigner:
         # empty) collapse to a tight sequence. Operators always see
         # 1..N waves, never gaps.
         ordered = sorted(waves.values(), key=lambda w: w.wave_number)
-        out: list[Wave] = []
-        for idx, wave in enumerate(ordered, start=1):
-            wave.wave_number = idx
-            wave.groups.sort(
-                key=lambda g: (
-                    _ROLE_PRIORITY.get(g.estimated_role, 99),
-                    _RISK_PRIORITY.get(g.migration_risk, 1),
-                    g.id,
-                ),
-            )
-            wave.estimated_risk = _wave_aggregate_risk(wave.groups)
-            out.append(wave)
-        return out
+        return [build_wave(idx, wave.groups, wave=wave) for idx, wave in enumerate(ordered, 1)]
+
+
+def build_wave(wave_number: int, groups: list[VMGroup], *, wave: Wave | None = None) -> Wave:
+    """A finished :class:`Wave` at ``wave_number`` holding ``groups``:
+    deterministic in-wave order (role priority, then risk, then group id)
+    and the aggregate risk filled in.
+
+    The packer calls this to finalize each wave. The manual-edit path
+    (``app.core.plan_edit``) calls it to rebuild one hand-arranged wave
+    at its EXISTING number — edits never renumber, because baseline /
+    validation runs and MTV CR names key on the wave number.
+    """
+    if wave is None:
+        wave = Wave(wave_number=wave_number)
+    wave.wave_number = wave_number
+    wave.groups = sorted(
+        groups,
+        key=lambda g: (
+            _ROLE_PRIORITY.get(g.estimated_role, 99),
+            _RISK_PRIORITY.get(g.migration_risk, 1),
+            g.id,
+        ),
+    )
+    wave.estimated_risk = _wave_aggregate_risk(wave.groups)
+    return wave
 
 
 def _wave_aggregate_risk(groups: list[VMGroup]) -> str:

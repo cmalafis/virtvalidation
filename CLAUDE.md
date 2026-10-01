@@ -626,15 +626,62 @@ When adding a new pipeline stage, extend
 `status` field reflects the new step name; the frontend's poll
 loop picks up new stages without further changes.
 
+## Manual plan edits (operators rearrange a generated plan)
+
+The planner decides wave structure from the estate data; operators know
+dependencies it does not show. `POST /api/plans/{id}/edits`
+(`app.api.plan_edits` → `app.core.plan_edit`) lets them change a
+`complete` plan: `move_to_wave` (incl. `target_wave: "new"`),
+`move_to_plan`, `remove`, `add`. One call is one operation over many
+VMs, atomic. `dry_run: true` returns the moves and every rule the edit
+would break without writing; the UI always dry-runs first.
+
+Rules that must survive any change to this code:
+
+- **Wave numbers are identity.** `BaselineRun` / `ValidationRun` and MTV
+  CR names (`vv-plan-{id}-wave-{n}`) key on `wave_number`. An edit never
+  renumbers; an emptied wave is dropped; a new wave is numbered past
+  `MigrationPlan.wave_number_seq` so a dropped number is never reused.
+- **Membership lives in two JSON columns** (`plan.vm_ids` +
+  `waves[].vm_ids`) with no mutation tracking — deep-copy, reassign, and
+  `flag_modified`. There is no VM→plan FK; "which plan holds this VM"
+  and a plan's `(vCenter, cluster, namespace)` partition are DERIVED at
+  read time in `app.core.plan_membership` (never persist them — the MTV
+  emitter re-resolves from live VM + mapping state).
+- **Severity is the contract.** `blocking` (partition mismatch, mapping
+  gap, assessment-blocked, run in progress, would empty the plan) → 422.
+  `overridable` (wave size, HA family cap, already-validated wave, plan
+  size) → 409 unless `confirm_overrides`; audited as
+  `plan.edit.rule_overridden` and recorded on the wave as `overrides`.
+  `info` never gates. Checks live in the pure
+  `app.core.wave_constraints`; `MechanicalWaveAssigner._find_target_wave`
+  is untouched.
+- **Report only what the edit introduces.** Generated plans can already
+  exceed the name-family cap, so checks diff the layout before / after
+  (`diff_violations`).
+- **LLM discipline.** The edit commits with a deterministic annotation
+  (`method: "mechanical_interim"`); `app.core.plan_reannotation` then
+  re-annotates ONLY the touched waves in a BackgroundTask (one call per
+  wave, ≤10 groups — a hand-built wave is reduced by
+  `reduce_groups_for_annotation` — plus one operator note and ≤5
+  override lines), guarded by a per-edit token so a later edit is never
+  overwritten. The interim text is the Python-only path.
+
+Per-VM rows for the plan page come from `GET /api/plans/{id}/vms`, not
+from `GET /api/plans/{id}` (which is polled every 3s).
+
 ## VM lifecycle (plan membership, parallel to VM.status)
 
 `VM.lifecycle_state` answers "is this VM available for a new
 plan?". It's server-enforced through `app.core.vm_lifecycle`:
 
 ```
-available  → planned          POST /api/plans
+available  → planned          POST /api/plans  OR  POST /api/plans/{id}/edits (add)
 planned    → migrated         POST /api/plans/{id}/mark-succeeded
 planned    → available        DELETE /api/plans/{id}  OR  plan→failed
+                              OR  POST /api/plans/{id}/edits (remove)
+planned    → planned          POST /api/plans/{id}/edits (move_to_plan) — plan changes,
+                              state does not; audited as vm.plan_membership.moved
 migrated   → rolled_back      PATCH /api/vms/{id}
 rolled_back → available       PATCH /api/vms/{id}
 ```
@@ -649,7 +696,9 @@ declared this plan succeeded". Both can be set independently.
 The plan selector hides anything not `available` by default;
 inventory shows the lifecycle pill on every row and surfaces
 "Revert to VMware" + "Make available" affordances on the
-operator-driven transitions.
+operator-driven transitions. `GET /api/vms` rows carry `plan_id` /
+`plan_name` (and `plan_wave_number` on the single GET) so the UI can
+link a planned VM to its plan and wave.
 
 ## Paginated list endpoint pattern
 
@@ -704,6 +753,7 @@ virtvalidate/
 - [x] VM plan-membership lifecycle (`VMLifecycleState`)
 - [x] PlanWizard per-VM selector with selection cap + filters
 - [x] Inventory revert affordances (migrated → rolled_back → available)
+- [x] Manual plan edits (move / add / remove VMs across waves and plans)
 
 ## DEFENSIVE CODING REQUIREMENTS
 

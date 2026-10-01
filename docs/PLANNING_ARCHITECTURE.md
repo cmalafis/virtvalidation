@@ -517,7 +517,8 @@ classification) over the strategy's wave-ordering preference.
 
 **Recovery:** for these, the operator runs the planner once, reviews
 the warnings the review LLM call surfaces, and either edits the plan
-manually (move-vm endpoint) or re-runs with a tighter scope filter.
+manually (`POST /api/plans/{id}/edits` — see PLANNING_GUIDE.md "Edit vs
+regenerate") or re-runs with a tighter scope filter.
 
 ---
 

@@ -30,6 +30,7 @@ from app.core.mtv import (
 )
 from app.core.plan_chunking import chunk_partition, compose_series_name
 from app.core.plan_generation import run_simple_plan_generation
+from app.core.plan_membership import plan_partitions
 from app.core.plan_pipeline import _vm_payload
 from app.core.preclassifier import PreClassifier
 from app.core.reporter import ReporterError, WaveReporter, render_pdf
@@ -646,27 +647,41 @@ def preview_groups(payload: PlanCreate, db: Session = Depends(get_db)) -> dict:
     }
 
 
+def _plans_with_partition(db: Session, plans: list[MigrationPlan]) -> list[dict]:
+    """PlanRead bodies with the derived ``partition`` filled in."""
+    partitions = plan_partitions(db, plans)
+    out: list[dict] = []
+    for plan in plans:
+        body = PlanRead.model_validate(plan).model_dump(mode="json")
+        partition = partitions.get(plan.id)
+        body["partition"] = partition.to_dict() if partition else None
+        out.append(body)
+    return out
+
+
 @router.get("", response_model=list[PlanRead])
 def list_plans(
     db: Session = Depends(get_db),
     limit: int = Query(default=20, ge=1, le=500),
-) -> list[MigrationPlan]:
+    series_id: str | None = Query(default=None, max_length=32),
+) -> list[dict]:
     # Newest first; within a batched series (same created_at to the
     # millisecond) keep the rows in series order.
-    stmt = (
-        select(MigrationPlan)
-        .order_by(MigrationPlan.created_at.desc(), MigrationPlan.series_index.asc())
-        .limit(limit)
+    stmt = select(MigrationPlan)
+    if series_id:
+        stmt = stmt.where(MigrationPlan.series_id == series_id)
+    stmt = stmt.order_by(MigrationPlan.created_at.desc(), MigrationPlan.series_index.asc()).limit(
+        limit
     )
-    return list(db.scalars(stmt).all())
+    return _plans_with_partition(db, list(db.scalars(stmt).all()))
 
 
 @router.get("/{plan_id}", response_model=PlanRead)
-def get_plan(plan_id: int, db: Session = Depends(get_db)) -> MigrationPlan:
+def get_plan(plan_id: int, db: Session = Depends(get_db)) -> dict:
     plan = db.get(MigrationPlan, plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
-    return plan
+    return _plans_with_partition(db, [plan])[0]
 
 
 @router.delete("/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -682,7 +697,8 @@ def delete_plan(
     revert flows might have done so) — those rows are skipped silently
     rather than rolled back from ``migrated``.
     """
-    plan = db.get(MigrationPlan, plan_id)
+    # Row lock: serializes against a concurrent manual edit of this plan.
+    plan = db.get(MigrationPlan, plan_id, with_for_update=True)
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
 
@@ -718,7 +734,8 @@ def mark_plan_succeeded(
     half-generated plan as done. Idempotent on plans already in
     ``migrated`` (operator may double-click).
     """
-    plan = db.get(MigrationPlan, plan_id)
+    # Row lock: ``plan.vm_ids`` must not change under a concurrent edit.
+    plan = db.get(MigrationPlan, plan_id, with_for_update=True)
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
     if plan.status not in ("complete", "migrated"):

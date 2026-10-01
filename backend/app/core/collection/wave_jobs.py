@@ -291,6 +291,41 @@ def _latest_completed_baseline_run(
     ).first()
 
 
+def latest_baseline_coverage(
+    db: Session, plan_id: int, wave_numbers: list[int] | None = None
+) -> dict[int, tuple[BaselineRun, set[int]]]:
+    """Per wave: its latest completed BaselineRun and the VM ids that run
+    captured.
+
+    "Latest completed" is the same run :func:`_latest_completed_baseline_run`
+    hands the validation task, so this answers exactly "which of this
+    wave's VMs would validation find a baseline for?". A VM an operator
+    moved into the wave after that run is not in the set — the read
+    endpoints surface it as "baseline out of date" rather than letting
+    the operator discover it as an ``unreachable`` verdict.
+    """
+    stmt = select(BaselineRun).where(
+        BaselineRun.plan_id == plan_id,
+        BaselineRun.status == BaselineRunStatus.completed,
+    )
+    if wave_numbers is not None:
+        stmt = stmt.where(BaselineRun.wave_number.in_(wave_numbers))
+    latest: dict[int, BaselineRun] = {}
+    for run in db.scalars(stmt.order_by(BaselineRun.id.desc())).all():
+        latest.setdefault(run.wave_number, run)
+    if not latest:
+        return {}
+    captured: dict[int, set[int]] = {run.id: set() for run in latest.values()}
+    for run_id, vm_id in db.execute(
+        select(Baseline.baseline_run_id, Baseline.vm_id).where(
+            Baseline.baseline_run_id.in_(list(captured)),
+            Baseline.status == VMCollectionStatus.captured,
+        )
+    ).all():
+        captured[run_id].add(vm_id)
+    return {wave: (run, captured[run.id]) for wave, run in latest.items()}
+
+
 def _verdict_from_diff(diff: dict) -> VMValidationVerdict:
     overall = (diff or {}).get("overall", "pass")
     if overall == "fail":
