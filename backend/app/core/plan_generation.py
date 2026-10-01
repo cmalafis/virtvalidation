@@ -142,14 +142,10 @@ def run_simple_plan_generation(
         plan_row = db.get(MigrationPlan, plan_id)
         if plan_row is None:
             return
-        # Load every mapping referenced by the plan. ``mapping_ids`` is
-        # the canonical list post-migration; ``mapping_id`` is the
-        # legacy singular alias used only when ``mapping_ids`` is
-        # missing (pre-migration rows or callers that haven't switched
-        # over).
+        # Load every mapping referenced by the plan. An empty list is
+        # legitimate: the operator opted out of mapping-driven coverage
+        # (``mapping_ids: []``) and Stage 0 validates per-VM targets only.
         mapping_id_list = list(plan_row.mapping_ids or [])
-        if not mapping_id_list and plan_row.mapping_id is not None:
-            mapping_id_list = [plan_row.mapping_id]
         mappings: list[ResourceMapping] = []
         if mapping_id_list:
             mappings = list(

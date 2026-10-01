@@ -256,7 +256,10 @@ namespace — and why. Skipped VMs stay available in the inventory and are
 listed again on each plan's detail page.
 
 A series is generated one batch after another. The wizard hands you off to
-the plans list, where each row shows **Batch n of N** and its progress.
+the plans list, where the batches of a series are grouped under one row
+and each shows **Batch n of N**, what it migrates (vCenter → cluster /
+namespace) and its progress. **Find a VM** on that page tells you which
+plan a VM is in and links straight to it.
 
 Generation runs a pipeline and reports which stage it's on. Most stages
 are deterministic and take under a second; the per-wave rationale step
@@ -275,6 +278,33 @@ rationale; `Deterministic fallback` means it didn't and Python did.
 `Fallback — LLM auth rejected` and `Fallback — guardrail fired` mean
 something specific went wrong and is worth investigating.
 
+### See and change which VMs are in which wave
+
+Open the plan. Each wave shows how many VMs it holds and the first few
+names; open a wave to list every VM with its environment, IP, HA family,
+role, assessment and baseline state. **All VMs** shows the whole plan as
+one sortable table with a Wave column, and the search box finds a VM
+across waves.
+
+You know dependencies the estate data doesn't show. To act on them, tick
+VMs — the selection can span waves — and choose **Move to wave…**, **New
+wave from selection**, **Move to plan…** or **Remove from plan**; **Add
+VMs** brings available VMs into a wave. Before anything changes, the
+dialog tells you what the planner makes of it:
+
+- moving a VM into a wave or plan that migrates to a different vCenter,
+  cluster or namespace is **refused** — a wave is one MTV Plan;
+- breaking a planner limit (more than 10 VMs in a wave, HA peers
+  together) asks you to **confirm**, and the wave is labelled **Rule
+  overridden**;
+- a VM that joins a wave after its baseline was captured marks the wave
+  **Baseline out of date** — capture it again before validating.
+
+Wave numbers never change when you edit, so a baseline you already
+captured and YAML you already applied still refer to the same wave. A
+removed VM returns to the inventory as available. Every change is in the
+audit log. A plan you have marked succeeded can no longer be edited.
+
 See [PLANNING_GUIDE.md](PLANNING_GUIDE.md) and
 [HA_MIGRATION_STRATEGY.md](HA_MIGRATION_STRATEGY.md).
 
@@ -282,7 +312,7 @@ See [PLANNING_GUIDE.md](PLANNING_GUIDE.md) and
 
 ## 10. Run a wave
 
-Open the plan. Each wave card has an execution panel.
+Open the plan and open a wave. Each wave has an execution panel.
 
 ### Dry run first
 

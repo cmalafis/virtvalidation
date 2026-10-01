@@ -568,7 +568,21 @@ export default function VMDetailPage() {
         <PageSection hasBodyWrapper={false}>
           <Alert variant="info" isInline title="This VM belongs to a migration plan">
             Its plan state is <strong>planned</strong>, so it won&apos;t appear in the
-            selector for new plans. See <Link to="/plans">migration plans</Link>.
+            selector for new plans.{" "}
+            {vm?.plan_id != null ? (
+              <>
+                It is in{" "}
+                <Link to={`/plans/${vm.plan_id}?vm=${vm.id}`}>
+                  {vm?.plan_name ?? `plan #${vm.plan_id}`}
+                </Link>
+                {vm?.plan_wave_number != null ? `, wave ${vm.plan_wave_number}` : ""}. Open the
+                plan to move it to another wave or remove it.
+              </>
+            ) : (
+              <>
+                See <Link to="/plans">migration plans</Link>.
+              </>
+            )}
           </Alert>
         </PageSection>
       )}

@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.core import environment as env_mod
 from app.core.audit import record_audit
 from app.core.collection.wave_jobs import (
+    latest_baseline_coverage,
     resolve_wave_vm_ids,
     run_baseline_task,
     run_validation_task,
@@ -74,7 +75,7 @@ from app.schemas.validation_run import (
     ValidationRunRead,
     VMValidationRead,
 )
-from app.schemas.wave_preview import WavePreviewResponse, WaveVMPreview
+from app.schemas.wave_preview import WaveBaselineGap, WavePreviewResponse, WaveVMPreview
 from app.services import ssh_key_service
 
 logger = logging.getLogger(__name__)
@@ -343,6 +344,15 @@ def preview_wave_run(
         )
         for vm in vms
     ]
+    coverage = latest_baseline_coverage(db, plan.id, [wave_number]).get(wave_number)
+    baseline_missing: list[WaveBaselineGap] = []
+    baseline_completed_at = None
+    if coverage is not None:
+        run, captured = coverage
+        baseline_completed_at = run.completed_at
+        baseline_missing = [
+            WaveBaselineGap(vm_id=vm.id, name=vm.name) for vm in vms if vm.id not in captured
+        ]
     return WavePreviewResponse(
         plan_id=plan.id,
         wave_number=wave_number,
@@ -351,6 +361,8 @@ def preview_wave_run(
         authorization_reason=reason,
         ssh_operations_enabled=enabled,
         vms=previews,
+        baseline_missing=baseline_missing,
+        baseline_last_completed_at=baseline_completed_at,
     )
 
 

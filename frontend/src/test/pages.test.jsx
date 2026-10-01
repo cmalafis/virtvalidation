@@ -58,8 +58,9 @@ const POPULATED = [
   }],
   [/\/api\/vms\/\d+\/baseline\/profile/, { vm_id: 1, snapshot_count: 1 }],
   [/\/api\/vms\/\d+$/, {
-    id: 1, name: "vm-1", status: "validated", lifecycle_state: "available",
+    id: 1, name: "vm-1", status: "validated", lifecycle_state: "planned",
     vsphere_networks: ["net"], vsphere_datastores: ["ds"],
+    plan_id: 1, plan_name: "Plan", plan_wave_number: 2,
   }],
   [/\/api\/vms\/ids/, { items: [{ id: 1, name: "vm-1" }, { id: 2, name: "vm-2" }], total: 2 }],
   [/\/api\/vms/, {
@@ -77,16 +78,59 @@ const POPULATED = [
     plan_count: 2, batch_size: 1,
     excluded: [{ vm_id: 3, vm_name: "vm-3", reason: "blocked for cold: vv.disk.nvme.detected" }],
   }],
-  [/\/api\/plans\/\d+$/, {
-    id: 1, name: "Plan", vm_ids: [1], mapping_ids: [], model: "m", status: "complete",
-    created_at: "2026-01-01T00:00:00Z", series_id: "abc", series_index: 2, series_total: 3,
-    excluded_vms: [{ vm_id: 3, vm_name: "vm-3", reason: "no target cluster/namespace resolved" }],
-    waves: [{ wave_number: 1, vm_ids: [1], description: "d", risk_score: 3, method: "llm" }],
+  [/\/api\/plans\/\d+\/vms/, {
+    plan_id: 1, status: "complete", editable: true,
+    partition: { source_vcenter_id: 1, source_vcenter_name: "vc", target_cluster_id: 1, target_cluster_name: "ocp", target_namespace: "prod" },
+    limits: { max_vms_per_wave: 10, max_vms_per_plan: 1000 },
+    items: [
+      { vm_id: 1, name: "vm-1", wave_number: 1, environment: "production", ip_address: "10.0.0.1", role: "app", ha_family: "vm", ha_family_size: 2, assessment_status: "ok", lifecycle_state: "planned", baseline_covered: false, missing: false },
+      { vm_id: 2, name: "vm-2", wave_number: 2, baseline_covered: null, missing: true },
+    ],
+    total: 2,
+    waves: [
+      { wave_number: 1, vm_count: 1, baseline: { last_run_id: 1, last_completed_at: "2026-01-01T00:00:00Z", missing_vm_ids: [1] }, active_run: false, validated: false },
+      { wave_number: 2, vm_count: 1, baseline: { last_run_id: null, last_completed_at: null, missing_vm_ids: [] }, active_run: false, validated: false },
+    ],
   }],
-  [/\/api\/plans/, [{
-    id: 1, name: "Plan", vm_ids: [1], waves: [], model: "m", status: "complete",
-    mapping_ids: [], created_at: "2026-01-01T00:00:00Z",
-  }]],
+  [/\/api\/plans\/\d+\/edit-targets/, {
+    partition: { target_namespace: "prod" },
+    targets: [{ plan_id: 2, name: "Plan-2", same_series: true, series_index: 3, series_total: 3, migration_type: "cold", vm_count: 4, waves: [{ wave_number: 1, vm_count: 4 }] }],
+    ineligible: [{ plan_id: 3, name: "Other", reason: "migrates to vc → ocp / dev" }],
+  }],
+  [/\/api\/plans\/\d+$/, {
+    id: 1, name: "Plan", vm_ids: [1, 2], mapping_ids: [], model: "m", status: "complete",
+    created_at: "2026-01-01T00:00:00Z", series_id: "abc", series_index: 2, series_total: 3,
+    partition: { source_vcenter_name: "vc", target_cluster_name: "ocp", target_namespace: "prod" },
+    excluded_vms: [{ vm_id: 3, vm_name: "vm-3", reason: "no target cluster/namespace resolved" }],
+    waves: [
+      { wave_number: 1, vm_ids: [1], vm_names: ["vm-1"], description: "d", risk_score: 3, method: "llm" },
+      {
+        wave_number: 2, vm_ids: [2], vm_names: ["vm-2"], description: "d2", risk_score: 4,
+        method: "mechanical_interim",
+        manual_edit: { edited_at: "2026-01-02T00:00:00Z", edited_by: "user", edit_count: 1, note: "n" },
+        overrides: [{ code: "wave_size", count: 11, limit: 10, by: "user" }],
+        reannotation: { state: "done", token: "t" },
+      },
+    ],
+  }],
+  // A two-batch series plus a standalone plan: the list groups the former.
+  [/\/api\/plans/, [
+    {
+      id: 1, name: "q4-1", vm_ids: [1], waves: [{ wave_number: 1, vm_ids: [1], manual_edit: { edit_count: 1 } }],
+      model: "m", status: "complete", mapping_ids: [], created_at: "2026-01-01T00:00:00Z",
+      series_id: "abc", series_index: 1, series_total: 2,
+      partition: { source_vcenter_name: "vc", target_cluster_name: "ocp", target_namespace: "prod" },
+    },
+    {
+      id: 2, name: "q4-2", vm_ids: [2], waves: [], model: "m", status: "annotating",
+      mapping_ids: [], created_at: "2026-01-01T00:00:00Z",
+      series_id: "abc", series_index: 2, series_total: 2, partition: null,
+    },
+    {
+      id: 3, name: "Solo", vm_ids: [3], waves: [], model: "m", status: "complete",
+      mapping_ids: [], created_at: "2026-01-01T00:00:00Z",
+    },
+  ]],
   [/\/api\/(network|storage)-reviews\/\d+/, {
     id: 1, name: "R", status: "complete", customer_notes: "", proposed_yaml: "",
     analysis_results: { executive_summary: "s" }, created_at: "2026-01-01T00:00:00Z",

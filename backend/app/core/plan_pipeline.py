@@ -246,6 +246,14 @@ def emit_wave_yaml(
     return generate_wave_yaml(ctx, vm_payloads, resolver=resolver)
 
 
+# Public names for the per-wave helpers the manual-edit path
+# (``app.core.plan_edit``) reuses to rebuild a hand-arranged wave exactly
+# the way Stage 7 builds a generated one.
+wave_considerations = _wave_considerations
+mapping_for_wave = _mapping_for_wave
+build_resolver = _build_resolver
+
+
 async def run_pipeline(
     vms: list[VM],
     mappings: list[ResourceMapping],

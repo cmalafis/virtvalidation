@@ -11,8 +11,10 @@ import pytest
 
 from app.core.vm_lifecycle import (
     LifecycleTransitionError,
+    record_plan_reassignment,
     transition_to_available_from_deleted_plan,
     transition_to_available_from_failed_plan,
+    transition_to_available_from_plan_edit,
     transition_to_available_from_rolled_back,
     transition_to_migrated,
     transition_to_planned,
@@ -205,3 +207,48 @@ class TestPatchTransition:
         vm = _make_vm(db_session, state=VMLifecycleState.migrated)
         with pytest.raises(LifecycleTransitionError):
             patch_transition(vm, VMLifecycleState.available, db_session, actor="op")
+
+
+class TestPlanEditTransitions:
+    """Transitions driven by ``POST /api/plans/{id}/edits``."""
+
+    def _triggers(self, db) -> list[str]:
+        from sqlalchemy import select
+
+        db.flush()
+        rows = db.scalars(select(AuditLog).order_by(AuditLog.id.asc())).all()
+        return [r.details.get("trigger") for r in rows]
+
+    def test_add_records_its_own_trigger(self, db_session):
+        vm = _make_vm(db_session)
+        transition_to_planned([vm.id], 1, db_session, actor="alice", trigger="plan.edit.add")
+        assert vm.lifecycle_state == VMLifecycleState.planned
+        assert self._triggers(db_session) == ["plan.edit.add"]
+
+    def test_default_trigger_is_plan_create(self, db_session):
+        vm = _make_vm(db_session)
+        transition_to_planned([vm.id], 1, db_session)
+        assert self._triggers(db_session) == ["plan.create"]
+
+    def test_remove_releases_only_planned(self, db_session):
+        planned = _make_vm(db_session, "a", VMLifecycleState.planned)
+        migrated = _make_vm(db_session, "b", VMLifecycleState.migrated)
+        result = transition_to_available_from_plan_edit(
+            1, [planned.id, migrated.id], db_session, actor="alice"
+        )
+        assert result.vm_ids == [planned.id]
+        assert planned.lifecycle_state == VMLifecycleState.available
+        assert migrated.lifecycle_state == VMLifecycleState.migrated
+        assert self._triggers(db_session) == ["plan.edit.remove"]
+
+    def test_reassignment_keeps_state_and_audits(self, db_session):
+        vm = _make_vm(db_session, state=VMLifecycleState.planned)
+        record_plan_reassignment([vm.id], 1, 2, db_session, actor="alice")
+        db_session.flush()
+        assert vm.lifecycle_state == VMLifecycleState.planned
+        assert _audit_count(db_session, action="vm.plan_membership.moved") == 1
+
+    def test_reassignment_rejects_unplanned_vm(self, db_session):
+        vm = _make_vm(db_session, state=VMLifecycleState.available)
+        with pytest.raises(LifecycleTransitionError):
+            record_plan_reassignment([vm.id], 1, 2, db_session)

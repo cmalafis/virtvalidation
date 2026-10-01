@@ -161,6 +161,13 @@ class PlanRead(BaseModel):
     series_index: int | None = None
     series_total: int | None = None
     excluded_vms: list[dict] = Field(default_factory=list)
+    # The (source vCenter, target cluster, target namespace) this plan
+    # migrates — ``{source_vcenter_id, source_vcenter_name,
+    # target_cluster_id, target_cluster_name, target_namespace}``.
+    # Derived at read time (``app.core.plan_membership``), not stored;
+    # None on the create response and when the plan's VMs no longer
+    # resolve to a target.
+    partition: dict | None = None
     # Transient — only populated on the create response: the excluded
     # list for the whole series (same content as ``excluded_vms``).
     excluded: list[dict] = Field(default_factory=list)

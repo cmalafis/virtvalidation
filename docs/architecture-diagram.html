@@ -514,6 +514,7 @@ const DATA = {
           "app.core.capture",
           "app.core.db",
           "app.core.limits",
+          "app.core.plan_membership",
           "app.core.target_resolution",
           "app.core.validation",
           "app.core.vm_lifecycle",
@@ -766,7 +767,10 @@ const DATA = {
               "resolved_storage",
               "resolution_is_complete",
               "resolution_reasons",
-              "resolution_mapping_id"
+              "resolution_mapping_id",
+              "plan_id",
+              "plan_name",
+              "plan_wave_number"
             ],
             "methods": [],
             "summary": ""
@@ -1477,6 +1481,7 @@ const DATA = {
           "app.core.mtv",
           "app.core.plan_chunking",
           "app.core.plan_generation",
+          "app.core.plan_membership",
           "app.core.plan_pipeline",
           "app.core.preclassifier",
           "app.core.reporter",
@@ -1704,6 +1709,7 @@ const DATA = {
               "series_index",
               "series_total",
               "excluded_vms",
+              "wave_number_seq",
               "started_at",
               "completed_at",
               "created_at"
@@ -1831,6 +1837,7 @@ const DATA = {
               "series_index",
               "series_total",
               "excluded_vms",
+              "partition",
               "excluded"
             ],
             "methods": [],
@@ -2596,6 +2603,58 @@ const DATA = {
           "app.core.network_review",
           "app.models.network_review",
           "app.schemas.network_review"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.api.plan_edits",
+        "title": "app.api.plan_edits",
+        "subtitle": "backend/app/api/plan_edits.py",
+        "summary": "Plan membership: who is in which wave, and operator edits to it.",
+        "category": "api",
+        "routes": [
+          {
+            "method": "GET",
+            "path": "/api/plans/{plan_id}/vms",
+            "handler": "list_plan_vms",
+            "summary": "Every VM in the plan with the wave it is in."
+          },
+          {
+            "method": "GET",
+            "path": "/api/plans/{plan_id}/edit-targets",
+            "handler": "list_edit_targets",
+            "summary": "Other plans this plan's VMs can be moved into: status ``complete``"
+          },
+          {
+            "method": "POST",
+            "path": "/api/plans/{plan_id}/edits",
+            "handler": "edit_plan",
+            "summary": "Move VMs between waves or plans, remove them, or add available VMs."
+          },
+          {
+            "method": "POST",
+            "path": "/api/plans/{plan_id}/waves/{wave_number}/reannotate",
+            "handler": "reannotate_wave",
+            "summary": "Ask the LLM for a fresh rationale for one wave. The recovery path"
+          }
+        ],
+        "classes": [],
+        "functions": [],
+        "depends_on": [
+          "app.core.collection.wave_jobs",
+          "app.core.config",
+          "app.core.db",
+          "app.core.family",
+          "app.core.plan_edit",
+          "app.core.plan_membership",
+          "app.core.plan_reannotation",
+          "app.core.preclassifier",
+          "app.core.wave_skeleton",
+          "app.models.baseline_run",
+          "app.models.plan",
+          "app.models.validation_run",
+          "app.models.vm",
+          "app.schemas.plan_edit"
         ]
       },
       {
@@ -4177,6 +4236,10 @@ const DATA = {
             "summary": "BackgroundTask entry point \u2014 drives one BaselineRun to completion."
           },
           {
+            "name": "latest_baseline_coverage",
+            "summary": "Per wave: its latest completed BaselineRun and the VM ids that run"
+          },
+          {
             "name": "run_validation_task",
             "summary": "BackgroundTask entry point \u2014 drives one ValidationRun to completion."
           }
@@ -5444,6 +5507,135 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.plan_edit",
+        "title": "app.core.plan_edit",
+        "subtitle": "backend/app/core/plan_edit.py",
+        "summary": "Manual edits to a generated migration plan.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "EditSpec",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "operation",
+              "vm_ids",
+              "target_wave",
+              "new_wave",
+              "target_plan_id",
+              "note"
+            ],
+            "methods": [],
+            "summary": "One requested edit. ``target_wave`` is an existing wave number;"
+          },
+          {
+            "name": "PlanEditError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "The edit cannot be evaluated or applied. ``status_code`` is the"
+          },
+          {
+            "name": "PlanChange",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "plan",
+              "waves",
+              "vm_ids",
+              "wave_number_seq",
+              "touched_waves",
+              "created_waves",
+              "removed_waves"
+            ],
+            "methods": [
+              {
+                "name": "summary",
+                "summary": ""
+              },
+              {
+                "name": "reannotation_tokens",
+                "summary": "``{wave_number: token}`` for the waves the LLM should re-explain."
+              }
+            ],
+            "summary": "What one plan row looks like after the edit."
+          },
+          {
+            "name": "PreparedEdit",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "spec",
+              "source_plan",
+              "target_plan",
+              "violations",
+              "moves",
+              "changes"
+            ],
+            "methods": [
+              {
+                "name": "blocking",
+                "summary": ""
+              },
+              {
+                "name": "overridable",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "wave_membership",
+            "summary": "``{wave_number: [vm_id, ...]}`` from the persisted wave documents."
+          },
+          {
+            "name": "next_wave_number",
+            "summary": "The number a new wave gets: past every number this plan ever used."
+          },
+          {
+            "name": "classify_wave",
+            "summary": "Rebuild a hand-arranged wave from its VMs."
+          },
+          {
+            "name": "manual_context",
+            "summary": "The annotator's view of a persisted wave's manual-edit state, or"
+          },
+          {
+            "name": "prepare",
+            "summary": "Work out what ``spec`` would do to ``plan`` (and to the target plan"
+          },
+          {
+            "name": "apply",
+            "summary": "Persist a prepared edit: lifecycle transitions, the rebuilt wave"
+          }
+        ],
+        "depends_on": [
+          "app.core.assessment",
+          "app.core.audit",
+          "app.core.concurrency",
+          "app.core.config",
+          "app.core.mapping_validation",
+          "app.core.mtv",
+          "app.core.plan_membership",
+          "app.core.plan_pipeline",
+          "app.core.preclassifier",
+          "app.core.vm_lifecycle",
+          "app.core.wave_annotation",
+          "app.core.wave_constraints",
+          "app.core.wave_skeleton",
+          "app.models.baseline_run",
+          "app.models.plan",
+          "app.models.target",
+          "app.models.validation_run",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.plan_generation",
         "title": "app.core.plan_generation",
         "subtitle": "backend/app/core/plan_generation.py",
@@ -5464,6 +5656,68 @@ const DATA = {
           "app.core.vm_lifecycle",
           "app.models.plan",
           "app.models.target",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.plan_membership",
+        "title": "app.core.plan_membership",
+        "subtitle": "backend/app/core/plan_membership.py",
+        "summary": "Which plan holds which VM, and which partition a plan covers.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "Partition",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "vcenter_id",
+              "cluster_id",
+              "namespace",
+              "vcenter_name",
+              "cluster_name"
+            ],
+            "methods": [
+              {
+                "name": "key",
+                "summary": ""
+              },
+              {
+                "name": "to_dict",
+                "summary": ""
+              },
+              {
+                "name": "label",
+                "summary": ""
+              }
+            ],
+            "summary": "One MTV Plan CR's scope: a source provider, a destination"
+          }
+        ],
+        "functions": [
+          {
+            "name": "resolve_partitions",
+            "summary": "Partition per VM id; ``None`` when the VM does not resolve to a"
+          },
+          {
+            "name": "plan_partitions",
+            "summary": "Partition per plan id, resolved from one representative VM each."
+          },
+          {
+            "name": "wave_number_of",
+            "summary": ""
+          },
+          {
+            "name": "vm_plan_index",
+            "summary": "``{vm_id: {plan_id, plan_name, plan_wave_number}}`` for the VMs"
+          }
+        ],
+        "depends_on": [
+          "app.core.target_resolution",
+          "app.models.plan",
+          "app.models.vcenter",
           "app.models.vm"
         ]
       },
@@ -5543,6 +5797,39 @@ const DATA = {
           "app.core.preclassifier",
           "app.core.wave_skeleton",
           "app.models.target",
+          "app.models.vm"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.plan_reannotation",
+        "title": "app.core.plan_reannotation",
+        "subtitle": "backend/app/core/plan_reannotation.py",
+        "summary": "Background LLM re-annotation of waves an operator rearranged.",
+        "category": "logic",
+        "routes": [],
+        "classes": [],
+        "functions": [
+          {
+            "name": "queue_wave_reannotation",
+            "summary": "Stamp a fresh token on one wave so :func:`reannotate_waves_task`"
+          },
+          {
+            "name": "reannotate_waves_task",
+            "summary": "BackgroundTask body: one LLM call per wave in ``tokens``."
+          },
+          {
+            "name": "abandon_stale_reannotations",
+            "summary": "Startup sweep: a wave still ``queued`` at boot lost its background"
+          }
+        ],
+        "depends_on": [
+          "app.core",
+          "app.core.audit",
+          "app.core.llm.inference_log",
+          "app.core.plan_edit",
+          "app.core.wave_annotation",
+          "app.models.plan",
           "app.models.vm"
         ]
       },
@@ -6377,6 +6664,14 @@ const DATA = {
             "summary": "planned \u2192 available. Used when a plan is DELETEd."
           },
           {
+            "name": "transition_to_available_from_plan_edit",
+            "summary": "planned \u2192 available. An operator removed these VMs from a plan"
+          },
+          {
+            "name": "record_plan_reassignment",
+            "summary": "planned \u2192 planned, different plan. No state change \u2014 the VM stays"
+          },
+          {
             "name": "transition_to_migrated",
             "summary": "planned \u2192 migrated. Triggered by ``POST /api/plans/{id}/mark-succeeded``."
           },
@@ -6408,6 +6703,18 @@ const DATA = {
         "routes": [],
         "classes": [
           {
+            "name": "ManualWaveContext",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "actor",
+              "note",
+              "overrides"
+            ],
+            "methods": [],
+            "summary": "What the annotator should know about a hand-arranged wave."
+          },
+          {
             "name": "WaveAnnotation",
             "kind": "schema",
             "table": "",
@@ -6423,8 +6730,16 @@ const DATA = {
         ],
         "functions": [
           {
+            "name": "override_line",
+            "summary": "One acknowledged rule override, in words. Deliberately names no"
+          },
+          {
             "name": "heuristic_risk",
             "summary": "Default risk score when the LLM is unavailable."
+          },
+          {
+            "name": "reduce_groups_for_annotation",
+            "summary": "Merge the smallest groups until at most ``limit`` remain."
           },
           {
             "name": "annotate_one_wave",
@@ -6438,6 +6753,71 @@ const DATA = {
         "depends_on": [
           "app.core.llm.base",
           "app.core.llm.status"
+        ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.wave_constraints",
+        "title": "app.core.wave_constraints",
+        "subtitle": "backend/app/core/wave_constraints.py",
+        "summary": "Planner-rule checks for a hand-edited wave layout \u2014 pure Python.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "Violation",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "code",
+              "severity",
+              "message",
+              "plan_id",
+              "wave_number",
+              "family",
+              "vm_ids",
+              "vm_names",
+              "count",
+              "limit"
+            ],
+            "methods": [
+              {
+                "name": "key",
+                "summary": ""
+              },
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": "One rule a wave layout breaks (or a fact the operator should see)."
+          }
+        ],
+        "functions": [
+          {
+            "name": "wave_size_violations",
+            "summary": ""
+          },
+          {
+            "name": "family_sizes",
+            "summary": "Plan-wide member count per name family."
+          },
+          {
+            "name": "ha_family_violations",
+            "summary": "Waves holding more of one family than ``family_cap`` allows."
+          },
+          {
+            "name": "check_waves",
+            "summary": "Every standing rule violation in this layout."
+          },
+          {
+            "name": "diff_violations",
+            "summary": "Violations in ``after`` that an edit introduced or made worse."
+          }
+        ],
+        "depends_on": [
+          "app.core.family",
+          "app.core.wave_skeleton"
         ]
       },
       {
@@ -6486,7 +6866,12 @@ const DATA = {
             "summary": "Build wave structure from preclassified groups, no LLM."
           }
         ],
-        "functions": [],
+        "functions": [
+          {
+            "name": "build_wave",
+            "summary": "A finished :class:`Wave` at ``wave_number`` holding ``groups``:"
+          }
+        ],
         "depends_on": [
           "app.core.config",
           "app.core.preclassifier"
@@ -6515,6 +6900,7 @@ const DATA = {
           "app.api.imports",
           "app.api.inference_logs",
           "app.api.network_reviews",
+          "app.api.plan_edits",
           "app.api.plans",
           "app.api.reports",
           "app.api.rvtools",
@@ -6535,6 +6921,7 @@ const DATA = {
           "app.core.import_jobs",
           "app.core.llm.runtime",
           "app.core.migrations",
+          "app.core.plan_reannotation",
           "app.core.scheduler",
           "app.core.startup",
           "app.middleware.audit",
@@ -8050,6 +8437,247 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.schemas.plan_edit",
+        "title": "app.schemas.plan_edit",
+        "subtitle": "backend/app/schemas/plan_edit.py",
+        "summary": "Schemas for manual plan edits \u2014 ``app.api.plan_edits``.",
+        "category": "data",
+        "routes": [],
+        "classes": [
+          {
+            "name": "PlanEditRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "operation",
+              "vm_ids",
+              "target_wave",
+              "target_plan_id",
+              "dry_run",
+              "confirm_overrides",
+              "note"
+            ],
+            "methods": [],
+            "summary": "One edit over many VMs. ``target_wave`` is an existing wave number"
+          },
+          {
+            "name": "EditViolation",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "code",
+              "severity",
+              "message",
+              "plan_id",
+              "wave_number",
+              "family",
+              "vm_ids",
+              "vm_names",
+              "count",
+              "limit"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "EditMove",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "vm_name",
+              "from_plan_id",
+              "from_wave",
+              "to_plan_id",
+              "to_wave"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "EditPlanSummary",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "plan_id",
+              "name",
+              "vm_count",
+              "wave_count",
+              "touched_waves",
+              "created_waves",
+              "removed_waves"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanEditResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "applied",
+              "dry_run",
+              "operation",
+              "requires_confirmation",
+              "violations",
+              "moves",
+              "plans",
+              "reannotation"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanPartition",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "source_vcenter_id",
+              "source_vcenter_name",
+              "target_cluster_id",
+              "target_cluster_name",
+              "target_namespace"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanVMRow",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "name",
+              "wave_number",
+              "environment",
+              "ip_address",
+              "os_family",
+              "application_hint",
+              "role",
+              "ha_family",
+              "ha_family_size",
+              "assessment_status",
+              "lifecycle_state",
+              "baseline_covered",
+              "missing"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanWaveBaseline",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "last_run_id",
+              "last_completed_at",
+              "missing_vm_ids"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanWaveState",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "wave_number",
+              "vm_count",
+              "baseline",
+              "active_run",
+              "validated"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "PlanVMsResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "plan_id",
+              "status",
+              "editable",
+              "partition",
+              "limits",
+              "items",
+              "total",
+              "waves"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "EditTargetWave",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "wave_number",
+              "vm_count",
+              "estimated_risk"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "EditTargetPlan",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "plan_id",
+              "name",
+              "same_series",
+              "series_index",
+              "series_total",
+              "migration_type",
+              "vm_count",
+              "waves"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "IneligiblePlan",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "plan_id",
+              "name",
+              "reason"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "EditTargetsResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "partition",
+              "targets",
+              "ineligible"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ReannotateAccepted",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "plan_id",
+              "wave_number",
+              "reannotation"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
         "id": "app.schemas.settings",
         "title": "app.schemas.settings",
         "subtitle": "backend/app/schemas/settings.py",
@@ -9208,6 +9836,17 @@ const DATA = {
             "summary": ""
           },
           {
+            "name": "WaveBaselineGap",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "vm_id",
+              "name"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
             "name": "WavePreviewResponse",
             "kind": "schema",
             "table": "",
@@ -9218,7 +9857,9 @@ const DATA = {
               "requires_authorization",
               "authorization_reason",
               "ssh_operations_enabled",
-              "vms"
+              "vms",
+              "baseline_missing",
+              "baseline_last_completed_at"
             ],
             "methods": [],
             "summary": ""
@@ -9747,25 +10388,18 @@ const DATA = {
         "id": "frontend/src/pages/PlanDetailPage.jsx",
         "title": "PlanDetailPage.jsx",
         "subtitle": "frontend/src/pages/PlanDetailPage.jsx",
-        "summary": "Migration plan detail \u2014 the waves and how to run them.",
+        "summary": "Migration plan detail \u2014 which VMs are in the plan, wave by wave, and",
         "category": "frontend",
         "api_calls": [
           "/api/plans/{id}",
           "/api/plans/{id}/mark-succeeded",
-          "/api/plans/{id}/waves/{id}/mtv-yaml"
+          "/api/plans/{id}/vms",
+          "/api/plans?limit=200&series_id={id}"
         ],
         "members": [
           {
-            "name": "methodLabel",
+            "name": "plural",
             "kind": "helper"
-          },
-          {
-            "name": "riskColor",
-            "kind": "helper"
-          },
-          {
-            "name": "WaveCard",
-            "kind": "component"
           },
           {
             "name": "PlanDetailPage",
@@ -9818,7 +10452,8 @@ const DATA = {
         "summary": "Migration plans \u2014 the index.",
         "category": "frontend",
         "api_calls": [
-          "/api/plans?limit=200"
+          "/api/plans?limit=200",
+          "/api/vms?{id}"
         ],
         "members": [
           {
@@ -9831,6 +10466,26 @@ const DATA = {
           },
           {
             "name": "PlanStatus",
+            "kind": "component"
+          },
+          {
+            "name": "groupBySeries",
+            "kind": "helper"
+          },
+          {
+            "name": "seriesName",
+            "kind": "helper"
+          },
+          {
+            "name": "wasEdited",
+            "kind": "helper"
+          },
+          {
+            "name": "PlanRow",
+            "kind": "component"
+          },
+          {
+            "name": "SeriesRows",
             "kind": "component"
           },
           {
@@ -10080,6 +10735,105 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/pages/plan/AddVMsModal.jsx",
+        "title": "AddVMsModal.jsx",
+        "subtitle": "frontend/src/pages/plan/AddVMsModal.jsx",
+        "summary": "Add available inventory VMs to an existing plan.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/vms?{id}"
+        ],
+        "members": [
+          {
+            "name": "ineligibleReason",
+            "kind": "helper"
+          },
+          {
+            "name": "AddVMsModal",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/plan/EditViolations.jsx",
+        "title": "EditViolations.jsx",
+        "subtitle": "frontend/src/pages/plan/EditViolations.jsx",
+        "summary": "What a proposed plan edit would break, grouped by what the operator",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "EditViolations",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/plan/PlanEditModal.jsx",
+        "title": "PlanEditModal.jsx",
+        "subtitle": "frontend/src/pages/plan/PlanEditModal.jsx",
+        "summary": "Move the selected VMs to another wave or another plan, or remove them",
+        "category": "frontend",
+        "api_calls": [
+          "/api/plans/{id}/edit-targets"
+        ],
+        "members": [
+          {
+            "name": "waveOptionLabel",
+            "kind": "helper"
+          },
+          {
+            "name": "planOptionLabel",
+            "kind": "helper"
+          },
+          {
+            "name": "PlanEditModal",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/plan/PlanEditToolbar.jsx",
+        "title": "PlanEditToolbar.jsx",
+        "subtitle": "frontend/src/pages/plan/PlanEditToolbar.jsx",
+        "summary": "The plan detail toolbar: find a VM, switch view, and act on a selection.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "PlanEditToolbar",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/plan/PlanVMTable.jsx",
+        "title": "PlanVMTable.jsx",
+        "subtitle": "frontend/src/pages/plan/PlanVMTable.jsx",
+        "summary": "The VMs of a plan \u2014 one wave's worth, or all of them.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "compare",
+            "kind": "helper"
+          },
+          {
+            "name": "BaselineCell",
+            "kind": "component"
+          },
+          {
+            "name": "PlanVMTable",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/pages/plan/WaveRunPanel.jsx",
         "title": "WaveRunPanel.jsx",
         "subtitle": "frontend/src/pages/plan/WaveRunPanel.jsx",
@@ -10106,6 +10860,28 @@ const DATA = {
           },
           {
             "name": "WaveRunPanel",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/plan/WaveSection.jsx",
+        "title": "WaveSection.jsx",
+        "subtitle": "frontend/src/pages/plan/WaveSection.jsx",
+        "summary": "One wave of a migration plan.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/plans/{id}/waves/{id}/mtv-yaml",
+          "/api/plans/{id}/waves/{id}/reannotate"
+        ],
+        "members": [
+          {
+            "name": "overrideText",
+            "kind": "helper"
+          },
+          {
+            "name": "WaveSection",
             "kind": "component"
           }
         ]
@@ -10193,6 +10969,21 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/test/planEditing.test.jsx",
+        "title": "planEditing.test.jsx",
+        "subtitle": "frontend/src/test/planEditing.test.jsx",
+        "summary": "Behavior tests for seeing and changing which VMs are in which wave.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "stub",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/test/rvtoolsImport.test.jsx",
         "title": "rvtoolsImport.test.jsx",
         "subtitle": "frontend/src/test/rvtoolsImport.test.jsx",
@@ -10202,6 +10993,74 @@ const DATA = {
         "members": [
           {
             "name": "stub",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/plan/planRows.js",
+        "title": "planRows.js",
+        "subtitle": "frontend/src/pages/plan/planRows.js",
+        "summary": "Row model for the plan detail page.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "waveNumberOf",
+            "kind": "helper"
+          },
+          {
+            "name": "buildRows",
+            "kind": "helper"
+          },
+          {
+            "name": "rowMatches",
+            "kind": "helper"
+          },
+          {
+            "name": "methodMeta",
+            "kind": "helper"
+          },
+          {
+            "name": "riskColor",
+            "kind": "helper"
+          },
+          {
+            "name": "isReannotationPending",
+            "kind": "helper"
+          },
+          {
+            "name": "partitionLabel",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/plan/usePlanEdit.js",
+        "title": "usePlanEdit.js",
+        "subtitle": "frontend/src/pages/plan/usePlanEdit.js",
+        "summary": "Dry-run + commit for a manual plan edit.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/plans/{id}/edits"
+        ],
+        "members": [
+          {
+            "name": "useEditPreview",
+            "kind": "hook"
+          },
+          {
+            "name": "commitEdit",
+            "kind": "helper"
+          },
+          {
+            "name": "violationsFromError",
+            "kind": "helper"
+          },
+          {
+            "name": "hasSeverity",
             "kind": "helper"
           }
         ]

@@ -142,6 +142,14 @@ class VMRead(VMBase):
     resolution_reasons: list[str] = Field(default_factory=list)
     resolution_mapping_id: int | None = None
 
+    # The migration plan holding this VM, derived from plan rows at read
+    # time (``app.core.plan_membership.vm_plan_index``) — there is no
+    # VM→plan FK. None when the VM is in no plan. ``plan_wave_number`` is
+    # filled on ``GET /api/vms/{id}`` only.
+    plan_id: int | None = None
+    plan_name: str | None = None
+    plan_wave_number: int | None = None
+
 
 class VMListResponse(BaseModel):
     """Paginated wrapper for the inventory listing.
