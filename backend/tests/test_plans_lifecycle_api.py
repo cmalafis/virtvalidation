@@ -529,6 +529,28 @@ class TestPlanLifecycle:
         assert r.json()["status"] == "migrated"
         assert client.get(f"/api/vms/{vm['id']}").json()["lifecycle_state"] == "migrated"
 
+    def test_empty_mapping_ids_reaches_a_terminal_status(self, client, monkeypatch):
+        """Regression: ``mapping_ids: []`` (the operator opting out of
+        mappings) used to crash the background task on a removed
+        ``plan_row.mapping_id`` attribute, leaving the plan stuck in
+        ``validating`` with its VM held as ``planned``."""
+        _setup_backend(monkeypatch)
+        vm = _enroll(
+            client,
+            "nomap-01",
+            vsphere_networks=[],
+            vsphere_datastores=[],
+            target_namespace_override="prod",
+        )
+        r = client.post(
+            "/api/plans", json={"name": "No mappings", "vm_ids": [vm["id"]], "mapping_ids": []}
+        )
+        assert r.status_code == 202, r.text
+        body = client.get(f"/api/plans/{r.json()['id']}").json()
+        assert body["status"] in ("complete", "failed"), body
+        expected = "planned" if body["status"] == "complete" else "available"
+        assert client.get(f"/api/vms/{vm['id']}").json()["lifecycle_state"] == expected
+
     def test_mark_succeeded_idempotent(self, client, monkeypatch):
         _setup_backend(monkeypatch)
         vm = _enroll(client, "vm-1")
