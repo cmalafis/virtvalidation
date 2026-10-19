@@ -69,11 +69,12 @@ How to choose:
 Reply with ONLY one JSON object holding ONE "suggestions" list with an entry
 per source, for example:
 {"suggestions": [
-  {"source": "web-pg-12", "target": "web-net", "confidence": "medium", "rationale": "Same tier name."},
+  {"source": "web-pg-12", "target": "C2", "confidence": "medium", "rationale": "Same tier name."},
   {"source": "vmotion-pg", "target": null, "confidence": "low", "rationale": "No VM-facing equivalent."}
 ]}
-"source" is the source's name exactly as given; "target" is a SHORTLIST name or
-null; "confidence" is high, medium or low. Answer every source exactly once."""
+"source" is the source's name exactly as given; "target" is the id (C1, C2, …)
+of one SHORTLIST candidate, or null — never a source name; "confidence" is high,
+medium or low. Answer every source exactly once."""
 
 STORAGE_SYSTEM_PROMPT = """You are an OpenShift Virtualization migration engineer.
 You map VMware vSphere datastores onto StorageClasses that already exist on the
@@ -91,11 +92,12 @@ How to choose:
 Reply with ONLY one JSON object holding ONE "suggestions" list with an entry
 per source, for example:
 {"suggestions": [
-  {"source": "web-pg-12", "target": "web-net", "confidence": "medium", "rationale": "Same tier name."},
+  {"source": "web-pg-12", "target": "C2", "confidence": "medium", "rationale": "Same tier name."},
   {"source": "vmotion-pg", "target": null, "confidence": "low", "rationale": "No VM-facing equivalent."}
 ]}
-"source" is the source's name exactly as given; "target" is a SHORTLIST name or
-null; "confidence" is high, medium or low. Answer every source exactly once."""
+"source" is the source's name exactly as given; "target" is the id (C1, C2, …)
+of one SHORTLIST candidate, or null — never a source name; "confidence" is high,
+medium or low. Answer every source exactly once."""
 
 
 class SuggestionError(RuntimeError):
@@ -285,7 +287,12 @@ def _render_prompt(
     # Null / bookkeeping fields only invite the model to echo them back.
     trimmed = [{k: v for k, v in s.items() if v is not None and k != "vm_count"} for s in batch]
     lines.append("SOURCES_JSON: " + json.dumps(trimmed, separators=(",", ":")))
-    short = [{k: v for k, v in t.items() if v is not None} for t in shortlist]
+    # Candidates are answered by id: a small model can't pass off an echoed
+    # source name as a target, and ids are shorter to copy than names.
+    short = [
+        {"id": f"C{i}", **{k: v for k, v in t.items() if v is not None}}
+        for i, t in enumerate(shortlist, start=1)
+    ]
     lines.append("SHORTLIST_JSON: " + json.dumps(short, separators=(",", ":")))
     return "\n".join(lines)
 
@@ -320,7 +327,7 @@ def _merge_repeated_lists(pairs: list[tuple[str, Any]]) -> dict:
     return out
 
 
-def _parse(raw: str, batch_names: list[str], shortlist_names: set[str]) -> dict[str, dict]:
+def _parse(raw: str, batch_names: list[str], shortlist_names: list[str]) -> dict[str, dict]:
     """source → {target, confidence, rationale}; raises ValueError with a
     message the model can act on."""
     try:
@@ -349,9 +356,14 @@ def _parse(raw: str, batch_names: list[str], shortlist_names: set[str]) -> dict[
         tgt = _unwrap(s.get("target"))
         if tgt in ("", "null", "none"):
             tgt = None
+        if isinstance(tgt, str) and re.fullmatch(r"[Cc]\d+", tgt):
+            idx = int(tgt[1:]) - 1
+            if not 0 <= idx < len(shortlist_names):
+                raise ValueError(f"{tgt!r} for {src!r} is not a SHORTLIST id")
+            tgt = shortlist_names[idx]
         if tgt is not None and tgt not in shortlist_names:
             raise ValueError(
-                f"target {tgt!r} for {src!r} is not in the SHORTLIST; use a listed name or null"
+                f"target {tgt!r} for {src!r} is not in the SHORTLIST; answer with a candidate id (C1, C2, …) or null"
             )
         conf = s.get("confidence") if s.get("confidence") in ("high", "medium", "low") else "low"
         out[src] = {
@@ -383,7 +395,7 @@ def _llm_batch(
             _fallback_row(s, targets, score, "mechanical_fallback", default_ok=default_ok)
             for s in batch
         ]
-    shortlist_names = {t["name"] for t in shortlist}
+    shortlist_names = [t["name"] for t in shortlist]
     backend_type = getattr(backend, "backend_type", "unknown")
     error_feedback: str | None = None
     fallback_method = "mechanical_fallback"
