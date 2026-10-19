@@ -247,3 +247,35 @@ def test_answers_for_unknown_sources_are_ignored():
         )
     )
     assert rows["Seg-A"]["method"] == "llm" and set(rows) == {"Seg-A"}
+
+
+def test_targets_answered_by_candidate_id():
+    def reply(prompt):
+        short = json.loads(prompt.split("SHORTLIST_JSON: ")[1].splitlines()[0])
+        dmz = next(c["id"] for c in short if c["name"] == "dmz")
+        return {"suggestions": [{"source": "Seg-A", "target": dmz, "confidence": "low"}]}
+
+    class ById(ScriptedBackend):
+        def chat_sync(self, messages, **kw):
+            self.prompts.append(messages[-1]["content"])
+            return {"content": json.dumps(reply(messages[-1]["content"])), "model": "i"}
+
+    rows = _rows(
+        suggest_network_mappings(
+            sources=[{"name": "Seg-A", "vm_count": 1}], targets=TARGETS, backend=ById([])
+        )
+    )
+    assert (rows["Seg-A"]["target_network_name"], rows["Seg-A"]["method"]) == ("dmz", "llm")
+
+
+def test_echoed_source_as_target_is_rejected_then_retried():
+    bad = {"suggestions": [{"source": "Seg-A", "target": "Seg-A"}]}
+    good = {"suggestions": [{"source": "Seg-A", "target": "C1"}]}
+    backend = ScriptedBackend([bad, good])
+    rows = _rows(
+        suggest_network_mappings(
+            sources=[{"name": "Seg-A", "vm_count": 1}], targets=TARGETS, backend=backend
+        )
+    )
+    assert rows["Seg-A"]["method"] == "llm_retry_1"
+    assert "candidate id" in backend.prompts[1].splitlines()[0]
