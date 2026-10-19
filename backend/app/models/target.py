@@ -80,6 +80,13 @@ class OCPTarget(Base):
     mtv_namespace: Mapped[str | None] = mapped_column(String(253), nullable=True)
     ocp_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     kubernetes_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # MTV operator version on the cluster. Blank means "the release paired
+    # with ocp_version" — see app.core.platform_features.mtv_for.
+    mtv_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # localnet names from NNCP ovn.bridge-mappings, captured by the catalog
+    # import. A localnet network's physical_network_name must be one of
+    # these. None = never imported (the check is skipped, not failed).
+    localnet_bridge_mappings: Mapped[list | None] = mapped_column(JSONType, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

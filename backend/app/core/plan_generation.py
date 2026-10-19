@@ -119,6 +119,7 @@ def run_simple_plan_generation(
     unconditionally and the LLM never decides wave structure.
     """
     from app.core.llm.runtime import get_active_backend
+    from app.core.mapping_catalog import load_catalogs_for
     from app.core.mtv import MTVGenerationError
     from app.core.plan_pipeline import PlanValidationError, run_pipeline
 
@@ -154,6 +155,8 @@ def run_simple_plan_generation(
                 ).all()
             )
 
+        catalogs = load_catalogs_for(db, mappings)
+
         def _progress_cb(stage: str) -> None:
             status_value, pct = _PIPELINE_STAGE_TO_STATUS.get(stage, (stage, None))
             _update_plan_status(
@@ -173,6 +176,7 @@ def run_simple_plan_generation(
                     backend=backend,
                     progress_cb=_progress_cb,
                     migration_type=plan_row.migration_type or "cold",
+                    catalogs=catalogs,
                 )
             )
         except PlanValidationError as e:

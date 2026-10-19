@@ -718,7 +718,9 @@ const DATA = {
               "target_network_id",
               "target_network_name",
               "target_network_namespace",
-              "target_network_type"
+              "target_network_type",
+              "destination_kind",
+              "ignored"
             ],
             "methods": [],
             "summary": "One source-network resolution row surfaced to the inventory UI."
@@ -730,7 +732,8 @@ const DATA = {
             "fields": [
               "source",
               "target_storage_class_name",
-              "access_mode"
+              "access_mode",
+              "volume_mode"
             ],
             "methods": [],
             "summary": ""
@@ -1477,6 +1480,7 @@ const DATA = {
           "app.core.audit",
           "app.core.config",
           "app.core.db",
+          "app.core.mapping_catalog",
           "app.core.mapping_validation",
           "app.core.mtv",
           "app.core.plan_chunking",
@@ -1520,12 +1524,13 @@ const DATA = {
               "network_mappings",
               "storage_mappings",
               "namespace_mappings",
-              "default_target_namespace"
+              "default_target_namespace",
+              "catalog"
             ],
             "methods": [
               {
                 "name": "resolve_network",
-                "summary": ""
+                "summary": "Where this source network goes, or None when it is unmapped."
               },
               {
                 "name": "resolve_storage",
@@ -1533,7 +1538,15 @@ const DATA = {
               },
               {
                 "name": "resolve_access_mode",
-                "summary": "The operator's access-mode choice for this datastore, or None to"
+                "summary": "Access mode for this datastore: the row's override first, then"
+              },
+              {
+                "name": "resolve_volume_mode",
+                "summary": "Row override first, then the catalog StorageClass's volume_mode."
+              },
+              {
+                "name": "resolve_offload",
+                "summary": "``vsphereXcopyConfig`` for this datastore's StorageClass, when the"
               },
               {
                 "name": "resolve_namespace",
@@ -1572,7 +1585,9 @@ const DATA = {
           }
         ],
         "depends_on": [
-          "app.core.config"
+          "app.core.config",
+          "app.core.mapping_catalog",
+          "app.core.platform_features"
         ]
       },
       {
@@ -3108,12 +3123,19 @@ const DATA = {
             "path": "/api/sources/targets/{target_id}/namespaces/{ns_id}",
             "handler": "delete_namespace",
             "summary": ""
+          },
+          {
+            "method": "POST",
+            "path": "/api/sources/targets/{target_id}/catalog/import",
+            "handler": "import_catalog",
+            "summary": "Fill the network / StorageClass / namespace catalogs from pasted"
           }
         ],
         "classes": [],
         "functions": [],
         "depends_on": [
           "app.core.audit",
+          "app.core.catalog_import",
           "app.core.db",
           "app.models.ocp_namespace",
           "app.models.target",
@@ -3161,6 +3183,12 @@ const DATA = {
             "path": "/api/sources/targets/{target_id}",
             "handler": "delete_target",
             "summary": ""
+          },
+          {
+            "method": "GET",
+            "path": "/api/sources/targets/{target_id}/platform-features",
+            "handler": "target_platform_features",
+            "summary": "What this cluster's OpenShift / MTV release supports"
           },
           {
             "method": "GET",
@@ -3222,7 +3250,9 @@ const DATA = {
         "depends_on": [
           "app.core.audit",
           "app.core.db",
+          "app.core.llm.runtime",
           "app.core.mapping_suggester",
+          "app.core.platform_features",
           "app.models.plan",
           "app.models.target",
           "app.models.target_network",
@@ -3720,6 +3750,14 @@ const DATA = {
             "summary": ""
           },
           {
+            "name": "vm_name_live_migration",
+            "summary": ""
+          },
+          {
+            "name": "rhel_static_ip",
+            "summary": ""
+          },
+          {
             "name": "hostname",
             "summary": ""
           },
@@ -3756,7 +3794,9 @@ const DATA = {
             "summary": "Finding ids that make this VM unfit for the given plan type."
           }
         ],
-        "depends_on": []
+        "depends_on": [
+          "app.core.platform_features"
+        ]
       },
       {
         "kind": "module",
@@ -3956,6 +3996,86 @@ const DATA = {
           "app.core.validation",
           "app.models.vm"
         ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.catalog_import",
+        "title": "app.core.catalog_import",
+        "subtitle": "backend/app/core/catalog_import.py",
+        "summary": "Build a target-cluster catalog from pasted ``oc get \u2026 -o yaml`` output.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "CatalogImportError",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [],
+            "summary": "The pasted text could not be parsed as Kubernetes YAML/JSON."
+          },
+          {
+            "name": "ImportedNetwork",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "name",
+              "network_type",
+              "namespace",
+              "role",
+              "topology",
+              "vlan_id",
+              "physical_network_name",
+              "mtu",
+              "subnets",
+              "ipam_mode",
+              "binding",
+              "transport"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ImportedStorageClass",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "name",
+              "provisioner",
+              "access_mode",
+              "volume_mode",
+              "is_default"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "ParsedCluster",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "networks",
+              "storage_classes",
+              "primary_udn_namespaces",
+              "localnet_bridge_mappings",
+              "warnings",
+              "counts"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "parse_cluster_yaml",
+            "summary": "Everything the pasted export says about networks, storage and"
+          },
+          {
+            "name": "plan_import",
+            "summary": "Preview: every derived entry with ``action`` create / update /"
+          }
+        ],
+        "depends_on": []
       },
       {
         "kind": "module",
@@ -5242,10 +5362,142 @@ const DATA = {
       },
       {
         "kind": "module",
+        "id": "app.core.mapping_catalog",
+        "title": "app.core.mapping_catalog",
+        "subtitle": "backend/app/core/mapping_catalog.py",
+        "summary": "A DB-free snapshot of one target cluster's catalog.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "CatalogSnapshot",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "ocp_target_id",
+              "ocp_version",
+              "mtv_version",
+              "mtv_namespace",
+              "localnet_bridge_mappings",
+              "networks",
+              "storage_classes",
+              "namespaces"
+            ],
+            "methods": [
+              {
+                "name": "network",
+                "summary": ""
+              },
+              {
+                "name": "storage_class",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "load_catalog",
+            "summary": "Snapshot one cluster's catalog. None when the cluster doesn't exist."
+          },
+          {
+            "name": "load_catalogs_for",
+            "summary": "Snapshots for every cluster the mappings target, keyed by ocp_target_id."
+          },
+          {
+            "name": "destination_kind",
+            "summary": "Classify a mapped target network for NetworkMap emission and the UI."
+          }
+        ],
+        "depends_on": []
+      },
+      {
+        "kind": "module",
+        "id": "app.core.mapping_checks",
+        "title": "app.core.mapping_checks",
+        "subtitle": "backend/app/core/mapping_checks.py",
+        "summary": "Deterministic, version-aware checks on a resource mapping.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "MappingFinding",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "code",
+              "severity",
+              "message",
+              "source",
+              "target",
+              "vm_names"
+            ],
+            "methods": [
+              {
+                "name": "to_dict",
+                "summary": ""
+              }
+            ],
+            "summary": ""
+          },
+          {
+            "name": "VMView",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "name",
+              "vsphere_networks",
+              "vsphere_datastores",
+              "nic_ips",
+              "target_namespace"
+            ],
+            "methods": [],
+            "summary": "The few VM facts the checks read (decoupled from the ORM row)."
+          },
+          {
+            "name": "_Collector",
+            "kind": "class",
+            "table": "",
+            "fields": [],
+            "methods": [
+              {
+                "name": "add",
+                "summary": ""
+              },
+              {
+                "name": "result",
+                "summary": ""
+              }
+            ],
+            "summary": "Merges findings that share (code, source, target) and gathers VMs."
+          }
+        ],
+        "functions": [
+          {
+            "name": "vm_view",
+            "summary": "Build a :class:`VMView` from a VM ORM row (or anything shaped like one)."
+          },
+          {
+            "name": "check_mapping",
+            "summary": "Every finding for one mapping, optionally scoped to ``vms``."
+          },
+          {
+            "name": "wave_mapping_view",
+            "summary": "(summary, findings) for one wave, for the wave card."
+          }
+        ],
+        "depends_on": [
+          "app.core.mapping_catalog",
+          "app.core.platform_features"
+        ]
+      },
+      {
+        "kind": "module",
         "id": "app.core.mapping_suggester",
         "title": "app.core.mapping_suggester",
         "subtitle": "backend/app/core/mapping_suggester.py",
-        "summary": "LLM-driven suggestion engine for resource mappings.",
+        "summary": "Suggestion engine for resource mappings \u2014 rules first, LLM for the rest.",
         "category": "logic",
         "routes": [],
         "classes": [
@@ -5255,22 +5507,41 @@ const DATA = {
             "table": "",
             "fields": [],
             "methods": [],
-            "summary": "Raised when the LLM call fails or produces unparseable output."
+            "summary": "Kept for callers that still catch it; the engine no longer raises it"
+          },
+          {
+            "name": "_Row",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "source",
+              "target",
+              "confidence",
+              "rationale",
+              "method"
+            ],
+            "methods": [],
+            "summary": ""
           }
         ],
         "functions": [
           {
+            "name": "vlan_from_name",
+            "summary": ""
+          },
+          {
             "name": "suggest_network_mappings",
-            "summary": "Ask the LLM for a network-mapping proposal."
+            "summary": "``sources``: ``[{\"name\", \"vm_count\", \"vlan_id\"?, \"switch\"?}]``."
           },
           {
             "name": "suggest_storage_mappings",
-            "summary": "Ask the LLM for a storage-mapping proposal."
+            "summary": "``sources``: ``[{\"name\", \"vm_count\"}]``. ``targets``: ``[{\"name\","
           }
         ],
         "depends_on": [
+          "app.core.config",
           "app.core.llm.base",
-          "app.core.llm.runtime"
+          "app.core.llm.status"
         ]
       },
       {
@@ -5618,6 +5889,8 @@ const DATA = {
           "app.core.audit",
           "app.core.concurrency",
           "app.core.config",
+          "app.core.mapping_catalog",
+          "app.core.mapping_checks",
           "app.core.mapping_validation",
           "app.core.mtv",
           "app.core.plan_membership",
@@ -5756,7 +6029,9 @@ const DATA = {
               "inference_backend_type",
               "inference_model",
               "inference_latency_ms",
-              "considerations"
+              "considerations",
+              "mapping_summary",
+              "mapping_findings"
             ],
             "methods": [
               {
@@ -5792,6 +6067,8 @@ const DATA = {
         "depends_on": [
           "app.core.concurrency",
           "app.core.family",
+          "app.core.mapping_catalog",
+          "app.core.mapping_checks",
           "app.core.mapping_validation",
           "app.core.mtv",
           "app.core.preclassifier",
@@ -5832,6 +6109,60 @@ const DATA = {
           "app.models.plan",
           "app.models.vm"
         ]
+      },
+      {
+        "kind": "module",
+        "id": "app.core.platform_features",
+        "title": "app.core.platform_features",
+        "subtitle": "backend/app/core/platform_features.py",
+        "summary": "What each OpenShift / MTV release supports, as data.",
+        "category": "logic",
+        "routes": [],
+        "classes": [
+          {
+            "name": "Feature",
+            "kind": "class",
+            "table": "",
+            "fields": [
+              "key",
+              "title",
+              "since",
+              "status",
+              "summary",
+              "source",
+              "status_by_version"
+            ],
+            "methods": [],
+            "summary": ""
+          }
+        ],
+        "functions": [
+          {
+            "name": "parse_version",
+            "summary": "``\"4.21.30\"`` / ``\"v4.22\"`` / ``\"4.21\"`` \u2192 ``(4, 21)``. ``None`` if unparseable."
+          },
+          {
+            "name": "mtv_for",
+            "summary": "The MTV release paired with an OCP minor (clamped to the known range)."
+          },
+          {
+            "name": "effective_versions",
+            "summary": "(ocp, mtv) for a target. MTV falls back to the pairing for the OCP version."
+          },
+          {
+            "name": "feature_status",
+            "summary": "Support level of ``key`` on this target: \"GA\" / \"TP\" / \"DP\", or None"
+          },
+          {
+            "name": "features_for",
+            "summary": "Every feature with its status on this target, for the API / UI."
+          },
+          {
+            "name": "prompt_context",
+            "summary": "Short \"what this cluster supports\" lines for an LLM prompt (\u22646 lines)."
+          }
+        ],
+        "depends_on": []
       },
       {
         "kind": "module",
@@ -6370,7 +6701,9 @@ const DATA = {
               "target_network_id",
               "target_network_name",
               "target_network_namespace",
-              "target_network_type"
+              "target_network_type",
+              "destination_kind",
+              "ignored"
             ],
             "methods": [
               {
@@ -6387,7 +6720,8 @@ const DATA = {
             "fields": [
               "source",
               "target_storage_class_name",
-              "access_mode"
+              "access_mode",
+              "volume_mode"
             ],
             "methods": [
               {
@@ -6445,6 +6779,7 @@ const DATA = {
           }
         ],
         "depends_on": [
+          "app.core.mapping_catalog",
           "app.models.ocp_namespace",
           "app.models.target",
           "app.models.target_network",
@@ -7394,6 +7729,7 @@ const DATA = {
               "ocp_target_id",
               "name",
               "description",
+              "primary_udn_network",
               "created_at",
               "updated_at"
             ],
@@ -7604,6 +7940,8 @@ const DATA = {
               "mtv_namespace",
               "ocp_version",
               "kubernetes_version",
+              "mtv_version",
+              "localnet_bridge_mappings",
               "notes",
               "created_at",
               "updated_at"
@@ -7673,6 +8011,15 @@ const DATA = {
               "name",
               "network_type",
               "namespace",
+              "role",
+              "topology",
+              "vlan_id",
+              "physical_network_name",
+              "mtu",
+              "subnets",
+              "ipam_mode",
+              "binding",
+              "transport",
               "is_default",
               "notes",
               "created_at",
@@ -7713,6 +8060,10 @@ const DATA = {
               "ocp_target_id",
               "name",
               "access_mode",
+              "volume_mode",
+              "provisioner",
+              "copy_offload_vendor",
+              "copy_offload_secret",
               "is_default",
               "notes",
               "created_at",
@@ -8370,7 +8721,8 @@ const DATA = {
             "table": "",
             "fields": [
               "name",
-              "description"
+              "description",
+              "primary_udn_network"
             ],
             "methods": [],
             "summary": ""
@@ -8389,7 +8741,8 @@ const DATA = {
             "table": "",
             "fields": [
               "name",
-              "description"
+              "description",
+              "primary_udn_network"
             ],
             "methods": [],
             "summary": ""
@@ -9185,6 +9538,7 @@ const DATA = {
               "mtv_namespace",
               "ocp_version",
               "kubernetes_version",
+              "mtv_version",
               "notes"
             ],
             "methods": [],
@@ -9211,6 +9565,7 @@ const DATA = {
               "mtv_namespace",
               "ocp_version",
               "kubernetes_version",
+              "mtv_version",
               "notes"
             ],
             "methods": [],
@@ -9223,6 +9578,7 @@ const DATA = {
             "fields": [
               "id",
               "status",
+              "localnet_bridge_mappings",
               "created_at",
               "updated_at"
             ],
@@ -9238,8 +9594,10 @@ const DATA = {
               "target_network_name",
               "target_network_type",
               "target_namespace",
+              "ignored",
               "confidence",
-              "rationale"
+              "rationale",
+              "method"
             ],
             "methods": [],
             "summary": "One source network \u2192 target network row."
@@ -9252,8 +9610,10 @@ const DATA = {
               "source_datastore",
               "target_storage_class",
               "access_mode",
+              "volume_mode",
               "confidence",
-              "rationale"
+              "rationale",
+              "method"
             ],
             "methods": [],
             "summary": ""
@@ -9345,7 +9705,8 @@ const DATA = {
             "table": "",
             "fields": [
               "suggestions",
-              "rationale_summary"
+              "rationale_summary",
+              "methods"
             ],
             "methods": [],
             "summary": ""
@@ -9356,7 +9717,9 @@ const DATA = {
             "table": "",
             "fields": [
               "name",
-              "vm_count"
+              "vm_count",
+              "vlan_id",
+              "switch"
             ],
             "methods": [],
             "summary": "One distinct source network or datastore seen in inventory, with"
@@ -9384,7 +9747,8 @@ const DATA = {
               "missing_storage_classes_on_target",
               "missing_networks_on_target",
               "missing_namespaces_on_target",
-              "warnings"
+              "warnings",
+              "findings"
             ],
             "methods": [],
             "summary": "Returned by POST /api/mappings/{id}/preflight. Reports every"
@@ -9406,8 +9770,26 @@ const DATA = {
         "routes": [],
         "classes": [
           {
-            "name": "TargetNetworkBase",
+            "name": "_NetworkAttributes",
             "kind": "schema",
+            "table": "",
+            "fields": [
+              "role",
+              "topology",
+              "vlan_id",
+              "physical_network_name",
+              "mtu",
+              "subnets",
+              "ipam_mode",
+              "binding",
+              "transport"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetNetworkBase",
+            "kind": "class",
             "table": "",
             "fields": [
               "name",
@@ -9429,7 +9811,7 @@ const DATA = {
           },
           {
             "name": "TargetNetworkUpdate",
-            "kind": "schema",
+            "kind": "class",
             "table": "",
             "fields": [
               "name",
@@ -9455,8 +9837,21 @@ const DATA = {
             "summary": ""
           },
           {
-            "name": "TargetStorageClassBase",
+            "name": "_StorageAttributes",
             "kind": "schema",
+            "table": "",
+            "fields": [
+              "volume_mode",
+              "provisioner",
+              "copy_offload_vendor",
+              "copy_offload_secret"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "TargetStorageClassBase",
+            "kind": "class",
             "table": "",
             "fields": [
               "name",
@@ -9477,7 +9872,7 @@ const DATA = {
           },
           {
             "name": "TargetStorageClassUpdate",
-            "kind": "schema",
+            "kind": "class",
             "table": "",
             "fields": [
               "name",
@@ -9511,6 +9906,34 @@ const DATA = {
             ],
             "methods": [],
             "summary": "409 body shape returned when a TargetNetwork or TargetStorageClass"
+          },
+          {
+            "name": "CatalogImportRequest",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "yaml",
+              "dry_run"
+            ],
+            "methods": [],
+            "summary": ""
+          },
+          {
+            "name": "CatalogImportResponse",
+            "kind": "schema",
+            "table": "",
+            "fields": [
+              "dry_run",
+              "applied",
+              "networks",
+              "storage_classes",
+              "namespaces",
+              "localnet_bridge_mappings",
+              "warnings",
+              "counts"
+            ],
+            "methods": [],
+            "summary": "Every derived entry with ``action`` create / update / unchanged."
           }
         ],
         "functions": [],
@@ -10310,6 +10733,10 @@ const DATA = {
         ],
         "members": [
           {
+            "name": "networkShape",
+            "kind": "helper"
+          },
+          {
             "name": "EntityModal",
             "kind": "component"
           },
@@ -10570,6 +10997,14 @@ const DATA = {
           "/api/ocp-targets/{id}/storage-classes?limit=500"
         ],
         "members": [
+          {
+            "name": "destinationKind",
+            "kind": "helper"
+          },
+          {
+            "name": "methodText",
+            "kind": "helper"
+          },
           {
             "name": "ConfidenceCell",
             "kind": "component"
@@ -10834,6 +11269,25 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/pages/plan/WaveMappingSummary.jsx",
+        "title": "WaveMappingSummary.jsx",
+        "subtitle": "frontend/src/pages/plan/WaveMappingSummary.jsx",
+        "summary": "Where one wave's networks and disks land on OpenShift.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "waveMappingBadges",
+            "kind": "helper"
+          },
+          {
+            "name": "WaveMappingSummary",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/pages/plan/WaveRunPanel.jsx",
         "title": "WaveRunPanel.jsx",
         "subtitle": "frontend/src/pages/plan/WaveRunPanel.jsx",
@@ -10912,6 +11366,48 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/pages/targets/ImportCatalogModal.jsx",
+        "title": "ImportCatalogModal.jsx",
+        "subtitle": "frontend/src/pages/targets/ImportCatalogModal.jsx",
+        "summary": "Import a cluster's catalog from pasted `oc get \u2026 -o yaml` output.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/ocp-targets/{id}/catalog/import"
+        ],
+        "members": [
+          {
+            "name": "ActionLabel",
+            "kind": "component"
+          },
+          {
+            "name": "PreviewTable",
+            "kind": "component"
+          },
+          {
+            "name": "ImportCatalogModal",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/pages/targets/PlatformFeatures.jsx",
+        "title": "PlatformFeatures.jsx",
+        "subtitle": "frontend/src/pages/targets/PlatformFeatures.jsx",
+        "summary": "What this cluster's OpenShift / MTV release supports.",
+        "category": "frontend",
+        "api_calls": [
+          "/api/sources/targets/{id}/platform-features"
+        ],
+        "members": [
+          {
+            "name": "PlatformFeatures",
+            "kind": "component"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/test/mappingAuthoring.test.jsx",
         "title": "mappingAuthoring.test.jsx",
         "subtitle": "frontend/src/test/mappingAuthoring.test.jsx",
@@ -10936,6 +11432,21 @@ const DATA = {
         "members": [
           {
             "name": "stub",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/test/ocpNetworking.test.jsx",
+        "title": "ocpNetworking.test.jsx",
+        "subtitle": "frontend/src/test/ocpNetworking.test.jsx",
+        "summary": "OCP 4.21/4.22 mapping features in the UI: dropping a NIC, the \"lands as\"",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "stubFetch",
             "kind": "helper"
           }
         ]

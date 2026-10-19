@@ -84,6 +84,7 @@ five response templates:
 
 | Intent       | Keywords matched (case-insensitive)               | Template |
 |--------------|---------------------------------------------------|----------|
+| mapping_suggest | "map each source to one candidate from the shortlist" (checked first) | Every SOURCES_JSON entry → the SHORTLIST_JSON candidate sharing most name tokens, confidence low |
 | categorize   | "level 1 categorizer", "categorize", "business_unit", "application group", `kind": "application` | Groups: application + environment + business_unit, every input vm_id covered |
 | plan         | "wave_number", "wave plan", "migration plan", "planner", "waves to migrate" | One wave per vm_id (foundation first, dependents second) |
 | topology     | "topology", "load_balanced", "ha pair", "cluster pattern" | detected_patterns: load_balanced with all visible vm_ids |

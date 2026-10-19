@@ -57,6 +57,8 @@ from app.core.assessment import blocks_migration_type
 from app.core.audit import record_audit
 from app.core.concurrency import assign_concurrency_groups
 from app.core.config import settings
+from app.core.mapping_catalog import CatalogSnapshot, load_catalogs_for
+from app.core.mapping_checks import wave_mapping_view
 from app.core.mapping_validation import validate_plan_inputs
 from app.core.mtv import MTVGenerationError
 from app.core.plan_membership import plan_partitions, resolve_partitions
@@ -567,6 +569,7 @@ def _build_wave_doc(
     mappings: list[ResourceMapping],
     spec: EditSpec,
     actor: str,
+    catalogs: dict[int, CatalogSnapshot] | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     """One touched wave's persisted document, plus the YAML emit error
     if the rebuilt wave cannot be emitted."""
@@ -596,13 +599,17 @@ def _build_wave_doc(
         [vm_by_id[vid] for vid in wave.vm_ids], plan.migration_type or "cold"
     )
     yaml_error: str | None = None
+    resolver = build_resolver(mapping_for_wave(wave, mappings, vm_by_id), catalogs)
+    aw.mapping_summary, aw.mapping_findings = wave_mapping_view(
+        [vm_by_id[vid] for vid in wave.vm_ids], resolver, plan.migration_type or "cold"
+    )
     try:
         aw.mtv_yaml = emit_wave_yaml(
             plan.id,
             wave,
             ann.description,
             vm_by_id,
-            build_resolver(mapping_for_wave(wave, mappings, vm_by_id)),
+            resolver,
             plan.migration_type or "cold",
         )
     except MTVGenerationError as exc:
@@ -662,6 +669,7 @@ def _rebuild_plan(
         else {}
     )
     mappings = _plan_mappings(db, plan)
+    catalogs = load_catalogs_for(db, mappings)
     violations: list[Violation] = []
     docs: list[dict[str, Any]] = []
     for number in sorted(after):
@@ -681,6 +689,7 @@ def _rebuild_plan(
                 mappings,
                 spec,
                 actor,
+                catalogs,
             )
             if yaml_error:
                 was_ok = number in created or bool(

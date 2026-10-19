@@ -283,3 +283,132 @@ def test_storage_access_mode_reaches_the_storagemap(ctx):
     assert by_src["ds2"] == {"storageClass": "ocs"}  # not in the CRD enum → not emitted
     # NAD without its own namespace lands in the VM's target namespace
     assert netmap["spec"]["map"][0]["destination"]["namespace"] == "prod"
+
+
+# ---------------------------------------------------------------------------
+# OCP 4.21/4.22 destinations — primary UDN, localnet CUDN, ignored NIC,
+# volumeMode and copy offload (docs/MTV-GROUNDING.md §2.1, §3).
+# ---------------------------------------------------------------------------
+from app.core.mapping_catalog import CatalogSnapshot  # noqa: E402
+from app.core.mtv_validate import validate_documents  # noqa: E402
+
+
+def _catalog_resolver() -> MappingResolver:
+    catalog = CatalogSnapshot(
+        ocp_target_id=1,
+        ocp_version="4.22",
+        networks={
+            "tenant-a": {"network_type": "cudn", "role": "primary", "topology": "layer2"},
+            "vlan-200": {"network_type": "cudn", "role": "secondary", "topology": "localnet"},
+            "db-nad": {"network_type": "nad", "namespace": "finance-prod", "topology": "bridge"},
+        },
+        storage_classes={
+            "ontap-san": {
+                "access_mode": "ReadWriteMany",
+                "volume_mode": "Block",
+                "copy_offload_vendor": "ontap",
+                "copy_offload_secret": "ontap-creds",
+            },
+            "plain": {"access_mode": "ReadWriteOnce", "volume_mode": None},
+        },
+    )
+    return MappingResolver(
+        network_mappings=[
+            {
+                "source_network": "App",
+                "target_network_name": "tenant-a",
+                "target_network_type": "cudn",
+            },
+            {
+                "source_network": "VLAN200",
+                "target_network_name": "vlan-200",
+                "target_network_type": "cudn",
+                "target_namespace": "somewhere-else",
+            },
+            {"source_network": "DB", "target_network_name": "db-nad", "target_network_type": "nad"},
+            {"source_network": "Backup", "ignored": True},
+        ],
+        storage_mappings=[
+            {"source_datastore": "ds-san", "target_storage_class": "ontap-san"},
+            {
+                "source_datastore": "ds-plain",
+                "target_storage_class": "plain",
+                "volume_mode": "Filesystem",
+            },
+        ],
+        namespace_mappings={"strategy": "single", "single_namespace": "finance-prod"},
+        catalog=catalog,
+    )
+
+
+def _udn_vms() -> list[dict]:
+    return [
+        {"name": "app-01", "vsphere_networks": ["App", "Backup"], "vsphere_datastores": ["ds-san"]},
+        {
+            "name": "db-01",
+            "vsphere_networks": ["DB", "VLAN200"],
+            "vsphere_datastores": ["ds-plain"],
+        },
+    ]
+
+
+def test_network_destinations_follow_catalog_role_and_topology(ctx):
+    text = generate_wave_yaml(ctx, _udn_vms(), resolver=_catalog_resolver())
+    netmap = _docs(text)[0]
+    dest = {e["source"]["name"]: e["destination"] for e in netmap["spec"]["map"]}
+    # Primary CUDN → pod; MTV detects the UDN from the namespace label.
+    assert dest["App"] == {"type": "pod"}
+    assert dest["Backup"] == {"type": "ignored"}
+    # Localnet CUDN is cluster-scoped: the VM's own namespace, not the row's.
+    assert dest["VLAN200"] == {"type": "multus", "name": "vlan-200", "namespace": "finance-prod"}
+    assert dest["DB"] == {"type": "multus", "name": "db-nad", "namespace": "finance-prod"}
+    assert validate_documents(text) == []
+
+
+def test_storage_map_emits_volume_mode_and_copy_offload(ctx):
+    text = generate_wave_yaml(ctx, _udn_vms(), resolver=_catalog_resolver())
+    storagemap = _docs(text)[1]
+    entries = {e["source"]["name"]: e for e in storagemap["spec"]["map"]}
+    san = entries["ds-san"]
+    assert san["destination"] == {
+        "storageClass": "ontap-san",
+        "accessMode": "ReadWriteMany",
+        "volumeMode": "Block",
+    }
+    assert san["offloadPlugin"] == {
+        "vsphereXcopyConfig": {"secretRef": "ontap-creds", "storageVendorProduct": "ontap"}
+    }
+    # Row override wins over the catalog; no vendor → no offload block.
+    plain = entries["ds-plain"]
+    assert plain["destination"]["volumeMode"] == "Filesystem"
+    assert plain["destination"]["accessMode"] == "ReadWriteOnce"
+    assert "offloadPlugin" not in plain
+    assert validate_documents(text) == []
+
+
+def test_ignored_nic_counts_as_mapped(ctx):
+    resolver = _catalog_resolver()
+    vms = [
+        {"name": "only-backup", "vsphere_networks": ["Backup"], "vsphere_datastores": ["ds-plain"]}
+    ]
+    netmap = _docs(generate_wave_yaml(ctx, vms, resolver=resolver))[0]
+    assert netmap["spec"]["map"] == [
+        {"source": {"name": "Backup"}, "destination": {"type": "ignored"}}
+    ]
+
+
+def test_no_catalog_keeps_legacy_multus_for_cudn(ctx):
+    resolver = MappingResolver(
+        network_mappings=[
+            {
+                "source_network": "App",
+                "target_network_name": "tenant-a",
+                "target_network_type": "cudn",
+            }
+        ],
+        storage_mappings=[{"source_datastore": "ds", "target_storage_class": "sc"}],
+        namespace_mappings={"strategy": "single", "single_namespace": "finance-prod"},
+    )
+    vms = [{"name": "a", "vsphere_networks": ["App"], "vsphere_datastores": ["ds"]}]
+    netmap = _docs(generate_wave_yaml(ctx, vms, resolver=resolver))[0]
+    assert netmap["spec"]["map"][0]["destination"]["type"] == "multus"

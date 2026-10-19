@@ -22,6 +22,16 @@ limitation that has no forklift policy:
 | `vv.disk.nvme.detected` (Critical) | MTV docs: "does not support migrating VMware NVMe disks" |
 | `vv.firmware.secure_boot` (Warning) | MTV-1548 — Secure Boot VMs may not boot on the destination |
 | `vv.os.windows2012.no_virtio` (Warning) | MTV 2.12 known issue — no virtio drivers for Server 2012 R2 |
+| `vv.vm.name.live_migration_length` (Warning) | OpenShift Virtualization 4.21 / 4.22 known issue CNV-61066 — VM names over 47 characters fail live migration |
+| `vv.os.rhel9_10.static_ip` (Information) | MTV 2.12 known issue MTV-5530 — static IPs can be lost on RHEL 9 / 10 guests; Information because it applies to every such guest and the remedy is a post-cutover check |
+
+Ruleset `forklift-2.12.1+vv2` (2026-10-18) added the last two. Existing VMs
+keep their stored assessment until re-assessed (`POST /api/assessment/run`
+or a fresh RVTools import).
+
+Mapping-dependent platform checks (primary UDN subnets, localnet bridge
+mappings, copy offload support) are not assessment rules — they depend on
+the target, not the VM. See `RESOURCE_MAPPING.md` §5.
 
 ## Status
 

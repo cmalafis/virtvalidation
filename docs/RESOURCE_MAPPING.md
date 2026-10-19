@@ -1,239 +1,173 @@
 # Resource Mapping
 
-A *resource mapping* is the bridge between a vCenter source and an
-OCP target cluster. It says, concretely:
+A *resource mapping* is the bridge between one vCenter and one OpenShift
+target cluster. It says, concretely:
 
-- this source vSphere portgroup → that target NetworkAttachmentDefinition,
-- this source datastore → that target StorageClass,
-- VMs matching this criterion → that target namespace.
+- this vSphere port group → that target network (or: drop this NIC),
+- this datastore → that StorageClass,
+- VMs like these → that target namespace.
 
-The MTV YAML generator pulls names from the mapping at export time so
-the YAML references real cluster resources, not placeholders.
+Plan generation (Stage 0) refuses to plan a VM whose networks, datastores or
+namespace don't resolve through a mapping. The MTV YAML emitter (Stage 7)
+reads the mapping *and the target cluster's catalog* to decide each
+NetworkMap / StorageMap entry, so the YAML references real cluster resources
+and the right MTV destination type.
 
-> Without a mapping, the YAML generator falls back to per-VM
-> `target_*` columns. Those columns were a v0.1.x compromise — they
-> don't know which cluster you're targeting and routinely produce
-> YAML the cluster rejects. **Always create a mapping before
-> generating MTV YAML for production use.**
+VirtValidate never connects to the cluster. What the cluster offers is
+declared in its **catalog** — by hand, or by pasting `oc get … -o yaml`
+output into **Import from cluster**.
 
 ---
 
-## Anatomy of a mapping
+## 1. The target catalog
+
+Each registered OpenShift target has three catalogs (OpenShift targets →
+cluster → tabs) plus a **Platform support** tab.
+
+### Networks (`TargetNetwork`)
+
+| Field | Meaning |
+|---|---|
+| `name`, `network_type` | `nad` · `udn` · `cudn` · `pod` |
+| `namespace` | Where a NAD / UDN lives. Blank for a CUDN (cluster-scoped; its NAD is rendered into every selected namespace). |
+| `role` | `primary` (replaces the pod network for its namespace) or `secondary`. UDN/CUDN only. |
+| `topology` | `layer2` · `layer3` · `localnet` · `bridge` · `sriov` · `other` |
+| `vlan_id` | Access VLAN — the recommender matches vSphere port groups on it. |
+| `physical_network_name` | Localnet only; must match an NNCP `ovn.bridge-mappings[].localnet`. |
+| `subnets` | CIDRs. A primary UDN's subnets are checked against VMs that keep a static IP. |
+| `ipam_mode` | `persistent` (keeps IPs across live migration — required for primary UDN VMs) · `disabled` (required for localnet VMs) · `none` |
+| `binding` | `l2bridge` (default) · `passt` (Tech Preview) · `bridge` · `sriov` |
+| `transport` | `geneve` · `evpn` (4.22+, primary CUDN, bare metal) |
+
+### Storage classes (`TargetStorageClass`)
+
+`access_mode`, `volume_mode` (`Block` / `Filesystem`, emitted as
+`volumeMode`), `provisioner`, and MTV **storage copy offload**:
+`copy_offload_vendor` (forklift `storageVendorProduct`) plus
+`copy_offload_secret` (array credentials Secret in the MTV namespace). With
+both set, the StorageMap entry carries `offloadPlugin.vsphereXcopyConfig`.
+
+### Namespaces (`OCPTargetNamespace`)
+
+`primary_udn_network` names the primary UDN/CUDN serving the namespace, if
+any. The namespace label `k8s.ovn.org/primary-user-defined-network` is set at
+creation and cannot be added later, so a VM mapped to a primary UDN must land
+in a namespace declared as served by it.
+
+### Import from cluster
+
+`POST /api/ocp-targets/{id}/catalog/import` (`app.core.catalog_import`, pure
+Python). The UI shows the command to run:
+
+```bash
+{ oc get network-attachment-definitions,userdefinednetworks -A -o yaml
+  echo ---
+  oc get clusteruserdefinednetworks,storageclasses,storageprofiles,nodenetworkconfigurationpolicies -o yaml
+  echo ---
+  oc get namespaces -l k8s.ovn.org/primary-user-defined-network -o yaml; } > cluster-catalog.yaml
+```
+
+Derivation: NAD `spec.config` CNI JSON (bridge / `ovn-k8s-cni-overlay` /
+sriov); UDN / CUDN role, topology, subnets, IPAM, transport; primary-UDN
+namespaces from the UDN's namespace, a CUDN's selector against pasted
+Namespace objects, or the CUDN's `NetworkCreated` status condition;
+StorageClass volume/access mode from the matching CDI StorageProfile (else a
+provisioner heuristic); NNCP localnet bridge mappings. NADs owned by a UDN/CUDN
+are skipped. `dry_run` (default) previews; applying creates and updates but
+never deletes or clears a field the paste doesn't mention.
+
+---
+
+## 2. Anatomy of a mapping
 
 ```
 ResourceMapping
-├── name                    Phase 1 cutover
-├── vcenter_source_id   →   VCenterSource (left side)
-├── ocp_target_id       →   OCPTarget (right side)
-├── status                  complete | incomplete | needs_review
-├── is_active               True for the default one in this pair
-├── network_mappings []     [{source_network, target_network_name, target_namespace, ...}, ...]
-├── storage_mappings []     [{source_datastore, target_storage_class, access_mode, ...}, ...]
-└── namespace_mappings []   [{criteria, criteria_value, target_namespace}, ...]
+├── vcenter_source_id / ocp_target_id      unique pair
+├── network_mappings  [{source_network, target_network_name, target_network_type,
+│                       target_namespace, ignored, confidence, rationale, method}]
+├── storage_mappings  [{source_datastore, target_storage_class, access_mode,
+│                       volume_mode, confidence, rationale, method}]
+└── namespace_mappings  NamespaceStrategy {strategy: single | per_environment |
+                        per_application, …}  (legacy: list of criteria rows)
 ```
 
-`network_mappings` and `storage_mappings` are **lookup tables** — one
-entry per source resource. `namespace_mappings` is **rule-based** —
-walked in order, first match wins, with a `default` fallback.
-
-### Status
-
-`complete` — every source network and datastore in the vCenter scope has a target,
-and every target referenced is still present in the cluster's discovery cache.
-
-`incomplete` — at least one source resource has no target. MTV YAML
-will skip those entries (and likely fail to apply on the cluster).
-
-`needs_review` — drift detected: the mapping references a target
-resource that was present at mapping-time but is no longer in the
-cluster's discovery cache. Re-run discovery, then fix the mapping.
-
-Status is recomputed on every read so drift surfaces without an
-explicit refresh.
+`status` is recomputed on read: `complete` (every source in the vCenter scope
+is mapped or ignored), `incomplete`, or `needs_review` (a row names something
+no longer in the catalog).
 
 ---
 
-## Creating a mapping
+## 3. What each row emits (Stage 7)
 
-### From the dashboard
+| Mapping row → catalog entry | NetworkMap destination |
+|---|---|
+| `ignored: true` | `{type: ignored}` |
+| `pod` | `{type: pod}` |
+| UDN / CUDN with `role: primary` | `{type: pod}` — MTV detects the primary UDN from the namespace and applies `l2bridge` |
+| CUDN (secondary, e.g. localnet) | `{type: multus, name: <cudn>, namespace: <VM's namespace>}` |
+| NAD / secondary UDN | `{type: multus, name, namespace: row → catalog → VM's namespace}` |
+| catalog entry with no `role` | as before the catalog grew attributes: `multus` |
 
-1. Visit **Mappings** in the top nav (or `/mappings`).
-2. Click **+ New Mapping**.
-3. Pick a source vCenter + a target OCP cluster + a friendly name.
-4. (Optional) Mark the mapping active — this deactivates any other
-   mapping for the same source/target pair. Active mappings are the
-   ones the planner picks up by default if the wizard doesn't
-   specify a `mapping_id`.
-5. Save → you land on the editor.
-
-### Via the API
-
-```bash
-curl -X POST http://<host>:8000/api/mappings \
-  -H "Content-Type: application/json" \
-  -H "x-actor: $USER" \
-  -d '{
-    "name": "phase-1",
-    "vcenter_source_id": 1,
-    "ocp_target_id": 1,
-    "network_mappings": [],
-    "storage_mappings": [],
-    "namespace_mappings": [],
-    "is_active": true
-  }'
-```
-
-The response includes `status: incomplete` until you populate the
-mapping rows.
+StorageMap: `storageClass`, `accessMode` and `volumeMode` (row override first,
+then the catalog), and `offloadPlugin` when the StorageClass declares copy
+offload. Every document is validated offline against the vendored forklift
+v2.12.1 CRDs (`app.core.mtv_validate`) before it leaves the process.
 
 ---
 
-## Editing the mapping
+## 4. Suggestions (rules first, LLM for the rest)
 
-The editor renders the union of:
+**Suggest mappings** (`POST /api/mappings/{id}/suggest-network|-storage`,
+`app.core.mapping_suggester`) never auto-saves and never returns a 5xx:
 
-- **source signals** — every distinct network and datastore referenced
-  by VMs in the source vCenter, with a VM count beside each row,
-- **existing mapping rows** — what you've already set, including
-  rows for sources no longer in the inventory (which you can delete
-  by clearing the target).
+1. **Rules.** A port group whose VLAN (RVTools `vPort` / `dvPort` sheets, or a
+   number in its name) equals one catalog network's VLAN → `rule:vlan`, high.
+   Same normalized name → `rule:name`, medium. A cluster with one
+   StorageClass → `rule:single_target`.
+2. **LLM** for the rest: ≤10 sources per call, each with a shortlist of ≤10
+   candidates ranked by the Python scorer, plus what the target release
+   supports (`platform_features.prompt_context`).
+3. **Validate → retry (3×, with the error as feedback) → fall back** to the
+   scorer's best candidate (`mechanical_fallback`, low). Networks are never
+   guessed by the fallback — an unmatched port group stays unmapped. Auth and
+   guardrail failures fall back too and raise the Settings banner.
 
-For each source row, pick a target from the dropdown. The dropdown
-options come from the OCP target's discovery cache.
-
-### Suggesting mappings via the LLM
-
-Click **🤖 Suggest** above the network table or the storage table to
-ask the local LLM for matches. The LLM proposes one target per source
-with a confidence score (`high` / `medium` / `low`) and a one-line
-rationale.
-
-The suggestion engine never auto-commits — every row is reviewed.
-The LLM is also constrained to pick from the discovered target set;
-hallucinated names are dropped before the suggestions reach the UI,
-and the rationale_summary notes how many drops happened.
-
-The model and prompts are documented in [`LLM_PROMPTS.md`](./LLM_PROMPTS.md).
-
-### Pre-flight check
-
-Click **✓ Preflight** at the top of the editor to validate the
-mapping against the inventory and the cluster:
-
-| Check | Failure means |
-|-------|---------------|
-| `unmapped_networks` | Source networks the inventory references that have no target row |
-| `unmapped_datastores` | Same for storage |
-| `missing_storage_classes_on_target` | Mapping references a StorageClass the cluster doesn't have |
-| `missing_networks_on_target` | Same for NADs / CUDNs |
-| `warnings` | Soft signals — no namespace mapping configured, target is inactive, etc. |
-
-The check is non-destructive. The dashboard surfaces the result in a
-banner above the editor.
+Each row's `method` shows which path decided it. Every LLM call is captured
+in the inference log (`operation: mapping_suggest_*`).
 
 ---
 
-## How plan generation uses the mapping
+## 5. Platform checks (preflight and wave cards)
 
-When the wizard submits, an optional `mapping_id` accompanies the
-plan:
+`app.core.mapping_checks` — deterministic and version-aware (judged against
+the cluster's `ocp_version` / `mtv_version` through
+`app.core.platform_features`). Shown in **Run preflight** and on each wave
+card ("Where this wave lands"). Blocking findings make preflight `ok: false`;
+plan generation is not refused on them.
 
-```json
-POST /api/plans/generate
-{
-  "name": "Q3 cutover plan",
-  "inline_strategy": { ... },
-  "scope": {"source_vcenter_id": 1},
-  "mapping_id": 7
-}
-```
+| Code | Severity |
+|---|---|
+| `udn.static_ip_outside_subnet` — VM keeps a static IP outside the primary UDN's subnets | blocking |
+| `udn.namespace_not_primary` — VM lands in a namespace not served by that primary UDN | blocking |
+| `udn.primary_not_layer2`, `udn.ipam_not_persistent` | blocking |
+| `localnet.bridge_mapping_missing`, `localnet.ipam_enabled` | blocking |
+| `udn.evpn_unavailable` (EVPN before 4.22) | blocking |
+| `offload.unavailable` (MTV < 2.10) | blocking |
+| `udn.mtv_destination_support`, `udn.passt_tech_preview`, `udn.evpn_support_level` | warning |
+| `storage.rwo_no_live_migration` | warning |
+| `offload.vendor_developer_preview`, `offload.support_level`, `offload.no_secret`, `offload.nfs_datastore` | warning |
+| `localnet.no_physical_network` | warning |
+| `udn.many_networks` (> 72, MTV-5695), `target.version_unknown` | info |
 
-Pre-flight on the trigger endpoint:
-
-- `404` if `mapping_id` doesn't exist,
-- `409` if the mapping's `vcenter_source_id` doesn't match the scope's
-  `source_vcenter_id` (you're targeting a vCenter the mapping doesn't cover).
-
-The plan stores `mapping_id` so re-generating MTV YAML weeks later
-uses the same mapping the operator chose at planning time, even if the
-mapping has been edited or deactivated since.
-
-The plan also records mapping-driven warnings (`incomplete`,
-`needs_review`, or "no mapping" hint) on its `warnings` array so the
-plan view surfaces them.
-
----
-
-## How MTV YAML export uses the mapping
-
-`GET /api/plans/{plan_id}/waves/{wave_number}/mtv-yaml` resolves
-references this way:
-
-| YAML field | Source |
-|------------|--------|
-| `NetworkMap.spec.map[].destination.name` / `namespace` / `type` | mapping → `network_mappings` |
-| `StorageMap.spec.map[].destination.storageClass` | mapping → `storage_mappings` |
-| `Plan.spec.targetNamespace` and per-VM overrides | mapping → `namespace_mappings` |
-
-If the mapping is missing or doesn't cover a source resource, the
-generator falls back to per-VM `target_*` fields. If those are also
-empty:
-
-- networks fall back to `pod` (so the YAML stays valid),
-- storage rows are skipped (operators see an `MTVGenerationError`
-  with a clear "set vsphere_datastores and target_storage_class"
-  message).
-
-If the plan references a `mapping_id` that's been deleted, the YAML
-endpoint returns `409` with a clear "re-generate the plan" message
-rather than silently producing wrong YAML.
-
----
-
-## Single-active mapping rule
-
-Per (source, target) pair, only one mapping can be `is_active`. When
-you flag a mapping active, the API automatically deactivates the
-others — so you can keep mappings around as drafts and promote one at
-a time.
-
-Plan generation doesn't *enforce* `is_active` — `mapping_id` is the
-explicit signal. Active is a UI/operator convenience for "this is the
-default one I'd grab."
-
----
-
-## Worked example: phase-1 cutover
-
-```yaml
-ResourceMapping: Phase 1 cutover
-  vCenter: vc-east-prod (40 VMs)
-  Target:  ocp-east-prod
-  Status:  complete · active
-
-  Network mappings (3 rows):
-    web-vlan-100         → prod-vlan-100 (NAD, openshift-multus)        [confirmed]
-    db-vlan-110          → prod-vlan-110 (NAD, openshift-multus)        [confirmed]
-    dmz-vlan-200         → dmz-vlan-200  (NAD, openshift-multus)        [LLM-suggested high]
-
-  Storage mappings (2 rows):
-    array-tier1-ssd      → ocs-storagecluster-ceph-rbd                  [confirmed]
-    array-bulk-hdd       → ocs-storagecluster-cephfs (RWM)              [confirmed]
-
-  Namespace mappings (2 rows):
-    application=epic-emr → epic-emr-prod
-    default              → finance-prod
-```
-
-When the planner generates `Q3 cutover` against this mapping, every
-generated MTV `Plan`/`NetworkMap`/`StorageMap` references the
-right-hand side names verbatim — no operator needs to edit the YAML
-before applying.
+Per-VM caveats that don't depend on the mapping (VM names over 47 characters
+can't live-migrate, RHEL 9/10 static-IP known issue) are assessment rules —
+see `MIGRATABILITY_ASSESSMENT.md`.
 
 ---
 
 ## Related docs
 
-- [`TARGET_CLUSTERS.md`](./TARGET_CLUSTERS.md) — registering and discovering targets.
-- [`PLANNING_GUIDE.md`](./PLANNING_GUIDE.md) — how plans reference mappings.
-- [`LLM_PROMPTS.md`](./LLM_PROMPTS.md) — what the suggestion LLM is told.
+- `MTV-GROUNDING.md` — the sourced reference for every field emitted (§2.1, §12).
+- `COMPATIBILITY.md` — OpenShift / MTV platform matrix.
+- `TARGET_CLUSTERS.md` — registering clusters.
+- `PLANNING_ARCHITECTURE.md` — Stages 0–7.

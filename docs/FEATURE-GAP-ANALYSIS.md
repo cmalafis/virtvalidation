@@ -60,7 +60,9 @@ work is therefore one dependency chain rooted in ingestion.
 (Phase B — see [MIGRATABILITY_ASSESSMENT.md](MIGRATABILITY_ASSESSMENT.md)); GAP-16 is
 reported as *not evaluated* until `vSource` is ingested and targets carry a FIPS
 flag. #4: GAP-03 and GAP-05 (`accessMode`) done, offline CRD validation done;
-GAP-04 primary-UDN role and `volumeMode` remain. #5-#7 not started.
+GAP-04 primary-UDN role and `volumeMode` remain. **Update 2026-10-18:**
+GAP-04, GAP-05 and GAP-17 are done (OCP 4.21/4.22 mapping refresh —
+`docs/RESOURCE_MAPPING.md`). #5-#7 not started.
 
 | # | Gap | Why here |
 |---|---|---|

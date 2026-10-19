@@ -58,6 +58,18 @@ class TargetStorageClass(Base):
         default=StorageAccessMode.rwo,
         server_default=StorageAccessMode.rwo.value,
     )
+    # Filesystem | Block. Emitted as StorageMap destination.volumeMode.
+    # Plain string for the same reason as the network attributes in
+    # app.models.target_network.
+    volume_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # CSI provisioner, e.g. openshift-storage.rbd.csi.ceph.com. Feeds the
+    # recommender's provisioner-family rules.
+    provisioner: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    # MTV storage copy offload (offloadPlugin.vsphereXcopyConfig): the
+    # forklift storageVendorProduct value and the Secret holding the
+    # array credentials, in the MTV namespace. Both or neither.
+    copy_offload_vendor: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    copy_offload_secret: Mapped[str | None] = mapped_column(String(253), nullable=True)
     is_default: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0", nullable=False
     )

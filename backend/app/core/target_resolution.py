@@ -35,11 +35,22 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.mapping_catalog import destination_kind
 from app.models.ocp_namespace import OCPTargetNamespace
 from app.models.target import OCPTarget, ResourceMapping
 from app.models.target_network import TargetNetwork
 from app.models.target_storage_class import TargetStorageClass
 from app.models.vm import VM
+
+
+def _catalog_attrs(net: TargetNetwork | None) -> dict | None:
+    if net is None:
+        return None
+    return {
+        "network_type": getattr(net.network_type, "value", net.network_type),
+        "role": net.role,
+        "topology": net.topology,
+    }
 
 
 @dataclass
@@ -52,12 +63,17 @@ class ResolvedNetwork:
     target_network_name: str | None = None
     target_network_namespace: str | None = None
     target_network_type: str | None = None  # nad | cudn | udn | pod
+    # pod | primary_udn | localnet | multus | ignored —
+    # app.core.mapping_catalog.destination_kind
+    destination_kind: str | None = None
+    ignored: bool = False
 
     @property
     def is_resolved(self) -> bool:
         # A "pod" target (cluster default network) doesn't need a name
-        # or namespace — its presence alone is sufficient.
-        if self.target_network_type == "pod":
+        # or namespace — its presence alone is sufficient. Neither does a
+        # NIC the operator chose to drop.
+        if self.ignored or self.target_network_type == "pod":
             return True
         return bool(self.target_network_name)
 
@@ -67,6 +83,7 @@ class ResolvedStorage:
     source: str
     target_storage_class_name: str | None = None
     access_mode: str | None = None  # ReadWriteOnce | ReadWriteMany | ReadOnlyMany
+    volume_mode: str | None = None  # Filesystem | Block
 
     @property
     def is_resolved(self) -> bool:
@@ -298,6 +315,11 @@ def _resolve_vm_with_caches(vm: VM, caches: _ResolverCaches) -> ResolvedTarget:
             continue
         entry = network_map_index.get(src)
         net = ResolvedNetwork(source=src)
+        if entry is not None and entry.get("ignored"):
+            net.ignored = True
+            net.destination_kind = "ignored"
+            result.networks.append(net)
+            continue
         if entry is not None:
             tgt_name = (entry.get("target_network_name") or "").strip()
             tgt_type = (entry.get("target_network_type") or "").strip() or None
@@ -320,11 +342,15 @@ def _resolve_vm_with_caches(vm: VM, caches: _ResolverCaches) -> ResolvedTarget:
                 net.target_network_namespace = inline_namespace or (
                     catalog_hit.namespace if catalog_hit is not None else None
                 )
-                if (net.target_network_type or "").lower() == "pod":
+                net.destination_kind = destination_kind(
+                    _catalog_attrs(catalog_hit), net.target_network_type
+                )
+                if net.destination_kind in ("pod", "primary_udn"):
                     net.target_network_namespace = None
                 if (
                     not net.target_network_namespace
-                    and (net.target_network_type or "").lower() != "pod"
+                    and net.destination_kind not in ("pod", "primary_udn")
+                    and (net.target_network_type or "").lower() != "cudn"
                 ):
                     # Default NAD namespace heuristic — the operator
                     # declared NAD lives in the workload namespace if
@@ -336,6 +362,7 @@ def _resolve_vm_with_caches(vm: VM, caches: _ResolverCaches) -> ResolvedTarget:
                     )
             elif (tgt_type or "").lower() == "pod":
                 net.target_network_type = "pod"
+                net.destination_kind = "pod"
         if not net.is_resolved and mapping is not None:
             result.reasons.append(f"source network {src!r} is not mapped")
         result.networks.append(net)
@@ -359,14 +386,19 @@ def _resolve_vm_with_caches(vm: VM, caches: _ResolverCaches) -> ResolvedTarget:
             if tgt_sc:
                 stor.target_storage_class_name = tgt_sc
                 catalog_hit = storage_catalog.get(tgt_sc)
-                if catalog_hit is not None:
+                # Row override first, then the catalog — the same order
+                # the MTV emitter uses (MappingResolver.resolve_access_mode).
+                if entry.get("access_mode"):
+                    stor.access_mode = entry["access_mode"]
+                elif catalog_hit is not None:
                     stor.access_mode = (
                         catalog_hit.access_mode.value
                         if hasattr(catalog_hit.access_mode, "value")
                         else str(catalog_hit.access_mode)
                     )
-                elif entry.get("access_mode"):
-                    stor.access_mode = entry["access_mode"]
+                stor.volume_mode = entry.get("volume_mode") or (
+                    catalog_hit.volume_mode if catalog_hit is not None else None
+                )
         if not stor.is_resolved and mapping is not None:
             result.reasons.append(f"source datastore {src!r} is not mapped")
         result.storage.append(stor)

@@ -1,3 +1,32 @@
+# Compatibility
+
+## OpenShift / MTV platform matrix
+
+What VirtValidate's mapping checks, recommender prompt and YAML emitter
+assume for each release. The source of truth is
+`backend/app/core/platform_features.py` (each entry links its Red Hat doc);
+the cluster page's **Platform support** tab shows it for a registered target.
+Retrieved 2026-10-18.
+
+| OpenShift | Paired MTV | Highlights VirtValidate uses |
+|---|---|---|
+| 4.18 | 2.8 | Primary Layer2 UDN / CUDN for VMs (GA); localnet CUDN; `passt` binding TP |
+| 4.19 | 2.9 | — |
+| 4.20 | 2.10 | MTV migration onto preconfigured UDN endpoints (TP); copy offload cold TP / warm DP |
+| 4.21 | 2.11 | IP + MAC kept on import to a primary L2 network; native storage live migration (MTC EOL); copy offload **cold GA**, warm TP |
+| 4.22 | 2.12 | BGP EVPN for primary CUDN (support level unstated → treated as TP); IPv6 single-stack VMs GA; live NAD swap; copy offload **warm GA** |
+
+Known issues encoded as checks: VM names > 47 chars can't live-migrate
+(CNV-61066), > 72 UDNs created at once (MTV-5695), RHEL 9/10 static IPs
+(MTV-5530), copy offload from NFS datastores, InfiniBox / Primera-3PAR offload
+is Developer Preview. Not deprecated (keep recommending): localnet NADs and the
+Linux-bridge CNI.
+
+Set **OpenShift version** (and optionally **MTV version**) on each target;
+when blank, checks judge against the newest release in the matrix and say so.
+
+---
+
 # Operating System Compatibility
 
 VirtValidate's SSH collector detects the target VM's OS at the start of every

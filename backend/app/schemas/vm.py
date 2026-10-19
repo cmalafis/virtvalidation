@@ -81,12 +81,15 @@ class ResolvedNetworkRead(BaseModel):
     target_network_name: str | None = None
     target_network_namespace: str | None = None
     target_network_type: str | None = None
+    destination_kind: str | None = None
+    ignored: bool = False
 
 
 class ResolvedStorageRead(BaseModel):
     source: str
     target_storage_class_name: str | None = None
     access_mode: str | None = None
+    volume_mode: str | None = None
 
 
 class VMRead(VMBase):

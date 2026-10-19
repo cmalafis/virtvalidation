@@ -351,6 +351,20 @@ def _snapshot_fact(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _vlan(raw: Any) -> int | None:
+    """A single access VLAN ID, or None for trunks ("0-4094"), private
+    VLANs, blanks and anything else that isn't one integer."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if text.endswith(".0"):  # spreadsheet round-trip turned 100 into 100.0
+        text = text[:-2]
+    if not text.isdigit():
+        return None
+    v = int(text)
+    return v if 0 <= v <= 4094 else None
+
+
 def _nic_fact(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "label": _s(row.get("niclabel") or row.get("label"), 128),
@@ -390,6 +404,28 @@ def _load_aux(
             bucket(row).setdefault(key, []).append(build(row))
             stats.rows_read += 1
             tick()
+
+    # Portgroup → VLAN, from vPort (standard switches, one row per host)
+    # and dvPort (distributed switches). Stamped onto each NIC fact so the
+    # mapping recommender can match a portgroup to a target network by
+    # VLAN ID instead of by name alone.
+    vlans: dict[str, int | None] = {}
+    for norm_name, pg_keys in (("vport", ("portgroup",)), ("dvport", ("port", "portgroup"))):
+        actual = sheets.get(norm_name)
+        if not actual:
+            continue
+        stats.current_sheet = actual
+        for _row_no, row in src.rows(actual):
+            pg = _s(_get(row, pg_keys), 255)
+            if pg and pg not in vlans:
+                vlans[pg] = _vlan(row.get("vlan"))
+            stats.rows_read += 1
+            tick()
+    if vlans:
+        for bucket_facts in facts.values():
+            for nic in bucket_facts.get("nics") or []:
+                if nic.get("network") in vlans:
+                    nic["vlan"] = vlans[nic["network"]]
 
     for norm_name, key in (("vcpu", "cpu_hot_add"), ("vmemory", "mem_hot_add")):
         actual = sheets.get(norm_name)
@@ -605,7 +641,16 @@ def scan(path: Path) -> ScanResult:
         src.close()
 
 
-_KNOWN_SHEETS = ("vinfo", "vdisk", "vsnapshot", "vnetwork", "vcpu", "vmemory")
+_KNOWN_SHEETS = (
+    "vinfo",
+    "vdisk",
+    "vsnapshot",
+    "vnetwork",
+    "vcpu",
+    "vmemory",
+    "vport",
+    "dvport",
+)
 
 
 def iter_vms(

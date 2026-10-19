@@ -72,6 +72,15 @@ def _semantic_errors(doc: dict[str, Any]) -> list[str]:
             dest = entry.get("destination") or {}
             if dest.get("type") == "multus" and not (dest.get("name") and dest.get("namespace")):
                 errors.append(f"spec.map[{i}] is multus but lacks the NAD name/namespace")
+            if dest.get("type") in ("pod", "ignored") and (
+                dest.get("name") or dest.get("namespace")
+            ):
+                errors.append(f"spec.map[{i}] is {dest['type']} but names a NAD")
+    if doc.get("kind") == "StorageMap":
+        for i, entry in enumerate(spec.get("map") or []):
+            xcopy = (entry.get("offloadPlugin") or {}).get("vsphereXcopyConfig")
+            if xcopy is not None and not str(xcopy.get("secretRef") or "").strip():
+                errors.append(f"spec.map[{i}].offloadPlugin has no array credentials Secret")
     return errors
 
 

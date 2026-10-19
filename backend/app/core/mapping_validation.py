@@ -74,7 +74,9 @@ def _mapped_networks(mapping: ResourceMapping | None) -> set[str]:
     for entry in mapping.network_mappings or []:
         src = (entry or {}).get("source_network")
         tgt = ((entry or {}).get("target_network_name") or "").strip()
-        if src and tgt:
+        # An ignored NIC (NetworkMap ``type: ignored``) is a decision,
+        # not a gap.
+        if src and (tgt or (entry or {}).get("ignored")):
             out.add(src)
     return out
 

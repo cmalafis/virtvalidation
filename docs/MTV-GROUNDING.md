@@ -1,8 +1,11 @@
 # MTV / OpenShift Virtualization API Grounding Reference
 
-**Retrieved: 2026-09-20.** Every claim below was read from a live source on
-that date — none is from model recall. Anything that could not be confirmed is
-marked `UNVERIFIED`.
+**Retrieved: 2026-09-20; §0, §12 and §13 refreshed 2026-10-18** for OpenShift
+4.21 / 4.22 and MTV 2.11 / 2.12. Every claim below was read from a live source
+on those dates — none is from model recall. Anything that could not be
+confirmed is marked `UNVERIFIED`. The machine-readable version of the
+version-dependent facts is `backend/app/core/platform_features.py`; keep the
+two in step.
 
 > **Hard rule.** If a field is not in this document with a source, it does
 > not appear in VirtValidate-generated YAML. To add a field: confirm it in a
@@ -14,7 +17,7 @@ marked `UNVERIFIED`.
 |---|---|---|
 | Latest MTV | **2.12** (z-streams through 2.12.8 in release notes) | [S-RN] |
 | Upstream tag matching MTV 2.12 | `kubev2v/forklift` **`v2.12.1`** (published 2026-06-30) | GitHub releases API |
-| MTV 2.12 ↔ OCP compatibility | The compat table is attribute-templated (`{ocp-y-version}`) in source; the rendered OCP version for 2.12 was **not retrieved** → `UNVERIFIED` that MTV 2.12 is the release paired with OCP 4.22 | [S-DOC] `ref_compatibility-guidelines.adoc` |
+| MTV ↔ OCP pairing | MTV **2.11** supports OCP 4.21 / 4.20 / 4.19 (live migration needs OpenShift Virtualization ≥ 4.20 on both sides); MTV **2.10** supports 4.20 / 4.19 / 4.18. MTV **2.12** is described as "in line with OpenShift 4.22"; its exact N-2 matrix is `UNVERIFIED`. | [MTV 2.11 planning guide](https://docs.redhat.com/en/documentation/migration_toolkit_for_virtualization/2.11/pdf/planning_your_migration_to_red_hat_openshift_virtualization/Migration_Toolkit_for_Virtualization-2.11-Planning_your_migration_to_Red_Hat_OpenShift_Virtualization-en-US.pdf), [MTV 2.10 planning guide](https://docs.redhat.com/en/documentation/migration_toolkit_for_virtualization/2.10/pdf/planning_your_migration_to_red_hat_openshift_virtualization/Migration_Toolkit_for_Virtualization-2.10-Planning_your_migration_to_Red_Hat_OpenShift_Virtualization-en-US.pdf) |
 | VMware vSphere supported | 6.5 or later | [S-DOC] `ref_compatibility-guidelines.adoc` |
 | OCP docs | 4.22 (`enterprise-4.22` branch of openshift-docs) | [S-OCP] |
 
@@ -307,6 +310,43 @@ DRS/DPM/FT, USB/SR-IOV/passthrough devices, NIC names (guest-dependent).
   (`modules/virt-creating-secondary-localnet-udn.adoc`,
   `modules/virt-attaching-vm-to-secondary-udn.adoc`)
 - BGP EVPN for primary CUDNs is available in 4.22. (assembly note)
+  `spec.network.transport: EVPN` + VTEP / FRRConfiguration /
+  RouteAdvertisements; bare metal only, IPv4 VTEPs, **cannot be enabled on an
+  existing CUDN**. Support level not stated in the 4.22 notes → VirtValidate
+  treats it as TP. Known issue: ingress can be lost after live migration on an
+  EVPN UDN (OCPBUGS-86503).
+  ([EVPN docs](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/advanced_networking/bgp-evpn-for-user-defined-networks))
+
+### 12.1 What changed in 4.21 / 4.22 (refreshed 2026-10-18)
+
+| Change | Release | Effect in VirtValidate |
+|---|---|---|
+| IP + MAC preserved on import to a custom primary L2 network (CNV-61227) | 4.21 | Primary UDN is now a first-class recommendation for VMs that keep their address; the static-IP-outside-subnet check guards it. |
+| Localnet CUDN console create/manage (CNV-52160) | 4.21 | Localnet CUDN remains GA; **localnet NADs are not deprecated** (4.22 removed a misleading console label, OCPBUGS-83809). |
+| "Preconfigured UDN endpoints using MTV" | TP in 4.20 / 4.21; 4.22 cell blank | Mapping checks warn that a primary-UDN destination is TP. |
+| Native storage live migration; MTC end of life (CNV-61829, CNV-50822) | 4.21 | Recommend the native path for StorageClass moves after migration. |
+| Live NAD swap on a secondary network (CNV-72329) | 4.22 | A post-cutover mapping fix no longer needs a VM restart. |
+| IPv6 single-stack VMs on localnet / bridge / SR-IOV (CNV-28924) | 4.22 GA | IPv6-only targets are valid. |
+| No-overlay BGP mode; VRF in BGPPeer | TP | Not recommended. |
+| Multi-network policy backend → nftables, iptables removed | 4.22 | No CR change. |
+| Live migration fails for VM names > 47 characters (CNV-61066) | known issue, 4.21 + 4.22 | Assessment rule `vv.vm.name.live_migration_length`. |
+
+Sources: [4.21 virt RN](https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/virtualization/release-notes),
+[4.22 virt RN](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/virtualization/release-notes),
+[4.21 OCP RN](https://docs.redhat.com/documentation/openshift_container_platform/4.21/html-single/release_notes/index).
+
+### 12.2 MTV 2.11 / 2.12 storage copy offload
+
+StorageMap `map[].offloadPlugin.vsphereXcopyConfig{secretRef, storageVendorProduct}`
+(in the vendored v2.12.1 CRD). Cold: TP in 2.10, **GA in 2.11.0**. Warm: DP in
+2.10, TP in 2.11, **GA in 2.12.0**. Vendors (CRD enum): flashsystem, vantara,
+ontap, primera3par, pureFlashArray, powerflex, powermax, powerstore, infinibox —
+**InfiniBox and Primera/3PAR are Developer Preview**; PowerFlex uses a host-copy
+fallback; offload from **NFS datastores fails** (2.10 known issue). The populator
+is renamed `vsphere-copy-offload-populator` in 2.12 (MTV-3901). The Secret lives
+in the source provider's namespace.
+([2.11 RN](https://docs.redhat.com/en/documentation/migration_toolkit_for_virtualization/2.11/html-single/release_notes/index),
+[2.12 RN](https://docs.redhat.com/en/documentation/migration_toolkit_for_virtualization/2.12/html/release_notes/ref_rn-2-12_release-notes))
 
 ---
 
@@ -326,7 +366,8 @@ raises instead of emitting.
 | StorageMap dropped the operator's `access_mode` | **Fixed.** `accessMode` emitted when set and in the CRD enum. |
 | Unmapped network → silent `type: pod` | **Fixed.** Refused with the network and a VM that uses it. |
 | Mapped NAD with no namespace → `multus` with empty namespace | **Fixed** (found by the validator). Defaults to the VM's resolved target namespace. |
-| `cudn`/`udn` catalog types all emit `multus` | **Open.** A *primary* UDN must emit `type: pod` (§2.1). Needs a primary/secondary role on `TargetNetwork`. Until then, map VMs bound for a primary-UDN namespace to a catalog entry of type `pod`. |
-| `volumeMode` | **Open.** Not modelled on `TargetStorageClass`; not emitted. |
+| `cudn`/`udn` catalog types all emit `multus` | **Fixed (2026-10-18).** `TargetNetwork.role` / `topology` decide the destination: primary UDN/CUDN → `type: pod`; localnet CUDN → `multus` in the VM's namespace; NAD → `multus`. Rows with `ignored: true` emit `type: ignored`. |
+| `volumeMode` | **Fixed (2026-10-18).** `TargetStorageClass.volume_mode` (row override first) → `destination.volumeMode`. |
+| Storage copy offload | **Added (2026-10-18).** `TargetStorageClass.copy_offload_vendor` + `copy_offload_secret` → `offloadPlugin.vsphereXcopyConfig`. |
 | Source `id` (moRef) for networks / datastores | **Open.** Maps reference sources by `name`, which the CRD allows; RVTools carries no network/datastore MoRefs in the sheets read today. Ambiguous only if two source networks share a name in one vCenter. |
 | `preserveStaticIPs` not set | Unchanged — CRD default is `true`. |

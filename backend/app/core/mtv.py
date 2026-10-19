@@ -32,6 +32,8 @@ from typing import Any
 import yaml
 
 from app.core.config import settings
+from app.core.mapping_catalog import CatalogSnapshot, destination_kind
+from app.core.platform_features import COPY_OFFLOAD_VENDORS, VOLUME_MODES
 
 # Enums copied from the forklift v2.12.1 CRDs — docs/MTV-GROUNDING.md §3, §4.
 # If a value isn't in that document, it doesn't get emitted.
@@ -63,33 +65,86 @@ class MappingResolver:
     storage_mappings: list[dict] = field(default_factory=list)
     namespace_mappings: list[dict] | dict = field(default_factory=list)
     default_target_namespace: str = ""
+    # The target cluster's catalog. Decides primary-UDN vs multus, volume
+    # mode and copy offload. None keeps the pre-catalog behaviour.
+    catalog: CatalogSnapshot | None = None
 
-    def resolve_network(self, source_network: str) -> dict | None:
+    def _network_row(self, source_network: str) -> dict | None:
         for entry in self.network_mappings:
             if entry.get("source_network") == source_network:
-                if not entry.get("target_network_name"):
-                    return None
-                return {
-                    "name": entry["target_network_name"],
-                    "namespace": entry.get("target_namespace") or "",
-                    "type": entry.get("target_network_type") or "nad",
-                }
+                return entry
         return None
+
+    def _storage_row(self, source_datastore: str) -> dict | None:
+        for entry in self.storage_mappings:
+            if entry.get("source_datastore") == source_datastore:
+                return entry
+        return None
+
+    def resolve_network(self, source_network: str) -> dict | None:
+        """Where this source network goes, or None when it is unmapped.
+
+        ``kind`` is ``pod`` / ``primary_udn`` / ``localnet`` / ``multus``
+        / ``ignored`` (see :func:`app.core.mapping_catalog.destination_kind`).
+        """
+        entry = self._network_row(source_network)
+        if entry is None:
+            return None
+        if entry.get("ignored"):
+            return {"name": "", "namespace": "", "type": "ignored", "kind": "ignored"}
+        if not entry.get("target_network_name"):
+            return None
+        name = entry["target_network_name"]
+        row_type = entry.get("target_network_type") or "nad"
+        net = self.catalog.network(name) if self.catalog else None
+        return {
+            "name": name,
+            "namespace": entry.get("target_namespace") or "",
+            "type": (net or {}).get("network_type") or row_type,
+            "kind": destination_kind(net, row_type),
+            "network": net,
+        }
 
     def resolve_storage(self, source_datastore: str) -> str | None:
-        for entry in self.storage_mappings:
-            if entry.get("source_datastore") == source_datastore:
-                return entry.get("target_storage_class") or None
-        return None
+        entry = self._storage_row(source_datastore)
+        return (entry or {}).get("target_storage_class") or None
+
+    def _catalog_sc(self, source_datastore: str) -> dict | None:
+        if self.catalog is None:
+            return None
+        return self.catalog.storage_class(self.resolve_storage(source_datastore))
 
     def resolve_access_mode(self, source_datastore: str) -> str | None:
-        """The operator's access-mode choice for this datastore, or None to
-        let the storage class's StorageProfile decide."""
-        for entry in self.storage_mappings:
-            if entry.get("source_datastore") == source_datastore:
-                mode = entry.get("access_mode") or None
-                return mode if mode in STORAGE_ACCESS_MODES else None
-        return None
+        """Access mode for this datastore: the row's override first, then
+        the catalog StorageClass's mode. None lets the StorageProfile
+        decide. Same precedence as app.core.target_resolution."""
+        entry = self._storage_row(source_datastore)
+        if entry is None:
+            return None
+        mode = entry.get("access_mode") or (self._catalog_sc(source_datastore) or {}).get(
+            "access_mode"
+        )
+        return mode if mode in STORAGE_ACCESS_MODES else None
+
+    def resolve_volume_mode(self, source_datastore: str) -> str | None:
+        """Row override first, then the catalog StorageClass's volume_mode."""
+        entry = self._storage_row(source_datastore)
+        if entry is None:
+            return None
+        mode = entry.get("volume_mode") or (self._catalog_sc(source_datastore) or {}).get(
+            "volume_mode"
+        )
+        return mode if mode in VOLUME_MODES else None
+
+    def resolve_offload(self, source_datastore: str) -> dict | None:
+        """``vsphereXcopyConfig`` for this datastore's StorageClass, when the
+        catalog declares both a copy-offload vendor and its Secret."""
+        sc = self._catalog_sc(source_datastore) or {}
+        vendor = sc.get("copy_offload_vendor")
+        secret = sc.get("copy_offload_secret")
+        if not vendor or not secret or vendor not in COPY_OFFLOAD_VENDORS:
+            return None
+        return {"secretRef": secret, "storageVendorProduct": vendor}
 
     def resolve_namespace(self, vm: dict) -> str | None:
         """Dispatch on the namespace_mappings shape.
@@ -253,13 +308,25 @@ def _build_network_map(
                 continue
             mapped = resolver.resolve_network(src) if resolver else None
             if mapped is not None:
-                if mapped["type"] == "pod":
+                kind = mapped.get("kind")
+                if kind == "ignored":
+                    # Operator dropped this NIC on purpose.
+                    destination = {"type": "ignored"}
+                elif kind in ("pod", "primary_udn"):
+                    # A primary UDN replaces the pod network for its
+                    # namespace: MTV detects it from the namespace label
+                    # and applies the l2bridge binding itself
+                    # (docs/MTV-GROUNDING.md §2.1).
                     destination = {"type": "pod"}
                 else:
+                    # A CUDN is cluster-scoped; OVN-K renders its NAD into
+                    # every selected namespace, so the VM's own namespace
+                    # is the one to reference.
+                    ns = ns_fallback if mapped["type"] == "cudn" else None
                     destination = {
                         "type": "multus",
                         "name": mapped["name"],
-                        "namespace": mapped["namespace"] or ns_fallback,
+                        "namespace": ns or mapped["namespace"] or ns_fallback,
                     }
             elif nad_fallback:
                 destination = {
@@ -317,7 +384,17 @@ def _build_storage_map(
             access_mode = resolver.resolve_access_mode(src) if resolver else None
             if access_mode:
                 destination["accessMode"] = access_mode
-            seen[src] = {"source": {"name": src}, "destination": destination}
+            volume_mode = resolver.resolve_volume_mode(src) if resolver else None
+            if volume_mode:
+                destination["volumeMode"] = volume_mode
+            entry: dict[str, Any] = {"source": {"name": src}, "destination": destination}
+            offload = resolver.resolve_offload(src) if resolver else None
+            if offload:
+                # MTV storage copy offload: the array clones the disk
+                # instead of VDDK streaming it (GA cold in MTV 2.11, warm
+                # in 2.12 — app.core.platform_features).
+                entry["offloadPlugin"] = {"vsphereXcopyConfig": offload}
+            seen[src] = entry
 
     return {
         "apiVersion": "forklift.konveyor.io/v1beta1",

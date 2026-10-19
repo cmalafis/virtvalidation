@@ -670,6 +670,37 @@ Rules that must survive any change to this code:
 Per-VM rows for the plan page come from `GET /api/plans/{id}/vms`, not
 from `GET /api/plans/{id}` (which is polled every 3s).
 
+## Network / storage mappings (OCP 4.21/4.22 aware)
+
+The appliance never connects to a cluster; each target's catalog is
+declared by hand or by **Import from cluster**
+(`app.core.catalog_import` parses pasted `oc get … -o yaml`, dry-run first,
+never deletes). Rules that must survive changes here:
+
+- **Version facts live in one place**: `app.core.platform_features`
+  (OCP→MTV pairing, GA/TP/DP per feature, each with its doc URL). Checks,
+  the suggestion prompt and the cluster page's Platform support tab all
+  read it. A new OpenShift release = new rows there + MTV-GROUNDING §0/§12.
+- **NetworkMap destination is derived, never stored**:
+  `app.core.mapping_catalog.destination_kind` — primary UDN/CUDN → `pod`,
+  CUDN → `multus` in the VM's namespace, NAD → `multus`, row
+  `ignored: true` → `ignored`. A catalog entry with no `role` keeps the old
+  behaviour (`multus`). Resolvers get a `CatalogSnapshot` from the caller
+  (`load_catalog(s)_for`) so the pipeline stays DB-free.
+- **Checks are deterministic** (`app.core.mapping_checks`): `blocking` /
+  `warning` / `info`; shown in preflight and on wave cards
+  (`wave.mapping_summary` / `mapping_findings`). They never refuse plan
+  generation — Stage 0 keeps its coverage-only contract.
+- **Suggestions are rules first** (`rule:vlan` / `rule:name` /
+  `rule:single_target`), then ≤10 sources × ≤10 candidates per LLM call
+  with validate-retry-fallback. The network fallback never guesses a
+  target. Every row carries `method`.
+- Catalog attributes are plain strings validated by Pydantic Literals
+  (pinned to the platform_features vocabularies by a test), not Postgres
+  enums — their value sets move with OVN-Kubernetes releases.
+
+See `docs/RESOURCE_MAPPING.md`.
+
 ## VM lifecycle (plan membership, parallel to VM.status)
 
 `VM.lifecycle_state` answers "is this VM available for a new
@@ -754,6 +785,8 @@ virtvalidate/
 - [x] PlanWizard per-VM selector with selection cap + filters
 - [x] Inventory revert affordances (migrated → rolled_back → available)
 - [x] Manual plan edits (move / add / remove VMs across waves and plans)
+- [x] OCP 4.21/4.22 mapping refresh (UDN/CUDN/localnet roles, ignored NICs,
+      volumeMode + copy offload, catalog import, platform checks)
 
 ## DEFENSIVE CODING REQUIREMENTS
 

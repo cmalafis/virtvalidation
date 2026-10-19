@@ -44,6 +44,11 @@ class OCPTargetNamespace(Base):
     # 63 chars by k8s but the full name can use the whole 253.
     name: Mapped[str] = mapped_column(String(253), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Name of the primary UDN/CUDN serving this namespace, when it has one.
+    # The namespace then carries k8s.ovn.org/primary-user-defined-network
+    # (applied at creation — it cannot be added later) and VMs land on
+    # that network instead of the pod network.
+    primary_udn_network: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

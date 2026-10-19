@@ -147,7 +147,13 @@ wrong — picture of what has been checked.
 2026-09-20 emission work; the rest are newly actionable because the September
 import work ingested the data they need.
 
-### F-08 — Primary UDN needs `role` and `topology` on `TargetNetwork`
+### F-08 — Primary UDN needs `role` and `topology` on `TargetNetwork` — **Done 2026-10-18**
+
+Shipped with the OCP 4.21/4.22 mapping refresh: `role` / `topology` / VLAN /
+subnets / IPAM / binding / transport on `TargetNetwork`, primary UDN → `pod`,
+`ignored` rows, catalog import from `oc get -o yaml`, and platform checks.
+See `docs/RESOURCE_MAPPING.md`. Original description kept below.
+
 **GAP-04 remainder. Size: M.**
 
 `app/models/target_network.py:31-35` still types the network as
@@ -160,7 +166,7 @@ secondary one, and emits `multus` for any non-pod catalog type.
 Also in scope: emit `type: ignored` for deliberately-dropped NICs, which is
 currently inexpressible.
 
-### F-09 — Emit `volumeMode`
+### F-09 — Emit `volumeMode` — **Done 2026-10-18** (plus copy offload)
 **GAP-05 remainder. Size: S.**
 
 `volume_mode` appears **nowhere** in `backend/app` outside the vendored CRD.

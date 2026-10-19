@@ -220,3 +220,20 @@ async def test_chat_stream_yields_full_content_as_one_chunk():
     assert len(chunks) == 1
     # Stream chunk should be JSON-decodable.
     json.loads(chunks[0])
+
+
+# ---------------------------------------------------------------------------
+# Mapping suggestions — round-trip through the real parser
+# ---------------------------------------------------------------------------
+def test_mapping_suggest_response_round_trips_through_suggester():
+    from app.core.mapping_suggester import suggest_network_mappings
+
+    sources = [{"name": f"App-Tier-{i}", "vm_count": 1} for i in range(12)]
+    targets = [
+        {"name": "app-tier-net", "type": "nad", "namespace": "apps"},
+        {"name": "dmz-net", "type": "nad", "namespace": "apps"},
+    ]
+    result = suggest_network_mappings(sources=sources, targets=targets, backend=MockBackend())
+    # 12 ambiguous sources → two LLM calls (≤10 each), both accepted first try.
+    assert result["methods"] == {"llm": 12}
+    assert {s["target_network_name"] for s in result["suggestions"]} == {"app-tier-net"}

@@ -137,6 +137,8 @@ def _vm_with_resolution(vm: VM, resolved: ResolvedTarget | None) -> dict:
                 "target_network_name": n.target_network_name,
                 "target_network_namespace": n.target_network_namespace,
                 "target_network_type": n.target_network_type,
+                "destination_kind": n.destination_kind,
+                "ignored": n.ignored,
             }
             for n in resolved.networks
         ]
@@ -145,6 +147,7 @@ def _vm_with_resolution(vm: VM, resolved: ResolvedTarget | None) -> dict:
                 "source": s.source,
                 "target_storage_class_name": s.target_storage_class_name,
                 "access_mode": s.access_mode,
+                "volume_mode": s.volume_mode,
             }
             for s in resolved.storage
         ]

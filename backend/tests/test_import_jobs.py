@@ -398,3 +398,67 @@ def test_inventory_filters_on_imported_columns(client):
     assert facets["power_state"] == {"poweredOn": 2, "poweredOff": 1}
     item = client.get("/api/vms?search=db-01").json()["items"][0]
     assert item["moref"] == "vm-3" and item["num_cpus"] == 4
+
+
+def test_parser_stamps_portgroup_vlans_from_vport_and_dvport(tmp_path):
+    p = tmp_path / "vlans.xlsx"
+    p.write_bytes(
+        _workbook(
+            [_row("web-01", "vm-1")],
+            HEADER,
+            extra={
+                "vNetwork": [
+                    [
+                        "VM",
+                        "VM ID",
+                        "VI SDK Server",
+                        "NIC label",
+                        "Network",
+                        "Switch",
+                        "IPv4 Address",
+                    ],
+                    [
+                        "web-01",
+                        "vm-1",
+                        "vc-a.example",
+                        "Network adapter 1",
+                        "vlan-10",
+                        "vSwitch0",
+                        "10.0.10.5",
+                    ],
+                    [
+                        "web-01",
+                        "vm-1",
+                        "vc-a.example",
+                        "Network adapter 2",
+                        "DPG-DB",
+                        "dvs-core",
+                        "",
+                    ],
+                    [
+                        "web-01",
+                        "vm-1",
+                        "vc-a.example",
+                        "Network adapter 3",
+                        "DPG-Trunk",
+                        "dvs-core",
+                        "",
+                    ],
+                ],
+                "vPort": [
+                    ["Host", "Port Group", "Switch", "VLAN"],
+                    ["esx1", "vlan-10", "vSwitch0", 10],
+                ],
+                "dvPort": [
+                    ["Port", "Switch", "VLAN"],
+                    ["DPG-DB", "dvs-core", "120"],
+                    ["DPG-Trunk", "dvs-core", "0-4094"],
+                ],
+            },
+        )
+    )
+    vms = [i for i in iter_vms(p, ParseStats()) if isinstance(i, ParsedVM)]
+    nics = {n["network"]: n for n in vms[0].fields["hardware_facts"]["nics"]}
+    assert nics["vlan-10"]["vlan"] == 10
+    assert nics["DPG-DB"]["vlan"] == 120
+    assert nics["DPG-Trunk"]["vlan"] is None  # trunk, not an access VLAN

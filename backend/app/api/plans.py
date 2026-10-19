@@ -21,6 +21,7 @@ from app.core.assessment import blocks_migration_type
 from app.core.audit import record_audit
 from app.core.config import settings as _app_settings
 from app.core.db import get_db
+from app.core.mapping_catalog import load_catalog
 from app.core.mapping_validation import validate_plan_inputs
 from app.core.mtv import (
     MappingResolver,
@@ -976,6 +977,7 @@ def wave_mtv_yaml(
             network_mappings=list(mapping_for_wave.network_mappings or []),
             storage_mappings=list(mapping_for_wave.storage_mappings or []),
             namespace_mappings=mapping_for_wave.namespace_mappings or [],
+            catalog=load_catalog(db, mapping_for_wave.ocp_target_id),
         )
         used_mapping_id = mapping_for_wave.id
         # Stamp last_used_at so operators can spot stale mappings.
@@ -1082,6 +1084,7 @@ def plan_yaml_bundle(plan_id: int, db: Session = Depends(get_db)) -> Response:
                     network_mappings=list(mapping_for_wave.network_mappings or []),
                     storage_mappings=list(mapping_for_wave.storage_mappings or []),
                     namespace_mappings=mapping_for_wave.namespace_mappings or [],
+                    catalog=load_catalog(db, mapping_for_wave.ocp_target_id),
                 )
                 from app.models.target import OCPTarget
                 from app.models.vcenter import VCenterSource

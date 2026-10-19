@@ -36,6 +36,7 @@ class OCPTargetBase(BaseModel):
     mtv_namespace: str | None = Field(default=None, max_length=253)
     ocp_version: str | None = Field(default=None, max_length=32)
     kubernetes_version: str | None = Field(default=None, max_length=32)
+    mtv_version: str | None = Field(default=None, max_length=32)
     notes: str | None = Field(default=None, max_length=4096)
 
 
@@ -52,6 +53,7 @@ class OCPTargetUpdate(BaseModel):
     mtv_namespace: str | None = Field(default=None, max_length=253)
     ocp_version: str | None = Field(default=None, max_length=32)
     kubernetes_version: str | None = Field(default=None, max_length=32)
+    mtv_version: str | None = Field(default=None, max_length=32)
     notes: str | None = Field(default=None, max_length=4096)
 
 
@@ -60,6 +62,9 @@ class OCPTargetRead(OCPTargetBase):
 
     id: int
     status: OCPTargetStatus
+    # Written by the catalog import (NNCP ovn.bridge-mappings), not by
+    # create / PATCH.
+    localnet_bridge_mappings: list[str] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -74,16 +79,25 @@ class NetworkMappingItem(BaseModel):
     target_network_name: str | None = Field(default=None, max_length=255)
     target_network_type: Literal["nad", "cudn", "udn", "pod"] | None = None
     target_namespace: str | None = Field(default=None, max_length=253)
+    # Operator chose to drop this NIC: MTV NetworkMap destination
+    # ``type: ignored``. Counts as covered; target fields are ignored.
+    ignored: bool = False
     confidence: Literal["high", "medium", "low"] | None = None
     rationale: str | None = Field(default=None, max_length=1024)
+    # How the suggestion was produced (rule:vlan / rule:name / llm /
+    # llm_retry_N / mechanical_fallback*); None for hand-edited rows.
+    method: str | None = Field(default=None, max_length=48)
 
 
 class StorageMappingItem(BaseModel):
     source_datastore: str = Field(min_length=1, max_length=255)
     target_storage_class: str | None = Field(default=None, max_length=253)
     access_mode: Literal["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"] | None = None
+    # Row override; None inherits the catalog StorageClass's volume_mode.
+    volume_mode: Literal["Filesystem", "Block"] | None = None
     confidence: Literal["high", "medium", "low"] | None = None
     rationale: str | None = Field(default=None, max_length=1024)
+    method: str | None = Field(default=None, max_length=48)
 
 
 class NamespaceMappingItem(BaseModel):
@@ -166,6 +180,9 @@ class ResourceMappingRead(BaseModel):
 class MappingSuggestionResponse(BaseModel):
     suggestions: list[NetworkMappingItem | StorageMappingItem]
     rationale_summary: str = ""
+    # How many rows each path produced: rule:vlan / rule:name / llm /
+    # llm_retry_N / mechanical_fallback* (app.core.mapping_suggester).
+    methods: dict[str, int] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +194,11 @@ class SourceSignal(BaseModel):
 
     name: str
     vm_count: int = 0
+    # Networks only, from the RVTools vPort / dvPort sheets via the
+    # per-NIC facts. None when the export didn't include them or the
+    # portgroup is a trunk.
+    vlan_id: int | None = None
+    switch: str | None = None
 
 
 class MappingSourceSignals(BaseModel):
@@ -209,3 +231,6 @@ class PreflightCheckResponse(BaseModel):
     missing_networks_on_target: list[str] = Field(default_factory=list)
     missing_namespaces_on_target: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # app.core.mapping_checks findings: {code, severity, message, source,
+    # target, vm_names, vm_count}. Any ``blocking`` finding makes ok false.
+    findings: list[dict] = Field(default_factory=list)

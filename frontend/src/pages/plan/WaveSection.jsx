@@ -37,6 +37,7 @@ import { asArray } from "../../utils/asArray";
 import { fetchJSON } from "../../utils/fetchJSON";
 import PlanVMTable from "./PlanVMTable";
 import WaveRunPanel from "./WaveRunPanel";
+import WaveMappingSummary, { waveMappingBadges } from "./WaveMappingSummary";
 import { methodMeta, riskColor } from "./planRows";
 
 const PREVIEW_NAMES = 4;
@@ -87,6 +88,7 @@ export default function WaveSection({
   const overrides = asArray(wave?.overrides);
   const baselineMissing = asArray(waveState?.baseline?.missing_vm_ids);
   const method = methodMeta(wave?.method);
+  const mappingBadges = waveMappingBadges(wave);
   const selectedHere = all.filter((r) => selected?.has(r.vm_id)).length;
   const isOpen = isExpanded || isMatchOnly;
 
@@ -147,7 +149,7 @@ export default function WaveSection({
             <CardTitle component="h3">{`Wave ${number}`}</CardTitle>
           </FlexItem>
           <FlexItem>
-            <LabelGroup numLabels={8}>
+            <LabelGroup numLabels={10}>
               <Label isCompact>{`${all.length} VM${all.length === 1 ? "" : "s"}`}</Label>
               {selectedHere > 0 && (
                 <Label isCompact color="blue">{`${selectedHere} selected`}</Label>
@@ -182,6 +184,11 @@ export default function WaveSection({
                   Baseline out of date
                 </Label>
               )}
+              {mappingBadges.map((b) => (
+                <Label key={b.text} isCompact color={b.color} variant="outline">
+                  {b.text}
+                </Label>
+              ))}
             </LabelGroup>
           </FlexItem>
           {!isOpen && names.length > 0 && (
@@ -295,6 +302,8 @@ export default function WaveSection({
                   Ask the LLM for a rationale
                 </Button>
               )}
+
+              <WaveMappingSummary wave={wave} />
 
               {considerations.length > 0 && (
                 <Alert
