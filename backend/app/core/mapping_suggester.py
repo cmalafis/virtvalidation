@@ -110,6 +110,10 @@ def _tokens(name: str) -> set[str]:
     return {t for t in _TOKEN_RE.findall((name or "").lower()) if t not in _NOISE}
 
 
+def _words(name: str) -> frozenset[str]:
+    return frozenset(t for t in _tokens(name) if not t.isdigit())
+
+
 def _norm(name: str) -> str:
     return "".join(sorted(_tokens(name)))
 
@@ -183,6 +187,15 @@ def _network_rules(src: dict, targets: list[dict]) -> _Row | None:
         same = [t for t in targets if _norm(t["name"]) == key]
         if len(same) == 1:
             return _Row(src["name"], same[0]["name"], "medium", "Same name.", "rule:name")
+    # Same words once numbers are set aside ("prod-vlan-100" vs "prod-vlan"),
+    # when exactly one target qualifies.
+    words = _words(src["name"])
+    if words:
+        same = [t for t in targets if _words(t["name"]) == words]
+        if len(same) == 1:
+            return _Row(
+                src["name"], same[0]["name"], "medium", "Same name apart from numbers.", "rule:name"
+            )
     return None
 
 

@@ -228,7 +228,8 @@ async def test_chat_stream_yields_full_content_as_one_chunk():
 def test_mapping_suggest_response_round_trips_through_suggester():
     from app.core.mapping_suggester import suggest_network_mappings
 
-    sources = [{"name": f"App-Tier-{i}", "vm_count": 1} for i in range(12)]
+    # Names no rule can match, so every source goes to the (mock) LLM.
+    sources = [{"name": f"App-Tier-Segment-{i}", "vm_count": 1} for i in range(12)]
     targets = [
         {"name": "app-tier-net", "type": "nad", "namespace": "apps"},
         {"name": "dmz-net", "type": "nad", "namespace": "apps"},

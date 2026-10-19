@@ -180,3 +180,26 @@ def test_platform_lines_reach_the_prompt():
         platform_lines=["Target: OpenShift 4.22, MTV 2.12"],
     )
     assert "Target: OpenShift 4.22, MTV 2.12" in backend.prompts[0]
+
+
+def test_name_rule_ignores_numbers_when_unambiguous():
+    targets = [
+        {"name": "prod-vlan", "type": "nad", "namespace": "x"},
+        {"name": "app-vlan", "type": "nad", "namespace": "x"},
+    ]
+    sources = [{"name": "prod-vlan-100", "vm_count": 1}, {"name": "ehr-vlan-116", "vm_count": 1}]
+    backend = ScriptedBackend(
+        [
+            {
+                "suggestions": [
+                    {"source": "ehr-vlan-116", "target": "app-vlan", "confidence": "medium"}
+                ]
+            }
+        ]
+    )
+    rows = _rows(suggest_network_mappings(sources=sources, targets=targets, backend=backend))
+    assert (rows["prod-vlan-100"]["target_network_name"], rows["prod-vlan-100"]["method"]) == (
+        "prod-vlan",
+        "rule:name",
+    )
+    assert rows["ehr-vlan-116"]["method"] == "llm"
