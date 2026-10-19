@@ -230,3 +230,20 @@ def test_parser_strips_copied_placeholder_brackets():
         )
     )
     assert (rows["Seg-A"]["target_network_name"], rows["Seg-A"]["method"]) == ("dmz", "llm")
+
+
+def test_answers_for_unknown_sources_are_ignored():
+    raw = {
+        "suggestions": [
+            {"source": "Seg-A", "target": "dmz", "confidence": "low"},
+            {"source": "vmotion-pg", "target": None},  # the prompt's own example
+        ]
+    }
+    rows = _rows(
+        suggest_network_mappings(
+            sources=[{"name": "Seg-A", "vm_count": 1}],
+            targets=TARGETS,
+            backend=ScriptedBackend([raw]),
+        )
+    )
+    assert rows["Seg-A"]["method"] == "llm" and set(rows) == {"Seg-A"}

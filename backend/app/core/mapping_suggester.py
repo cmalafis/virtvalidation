@@ -285,7 +285,8 @@ def _render_prompt(
     # Null / bookkeeping fields only invite the model to echo them back.
     trimmed = [{k: v for k, v in s.items() if v is not None and k != "vm_count"} for s in batch]
     lines.append("SOURCES_JSON: " + json.dumps(trimmed, separators=(",", ":")))
-    lines.append("SHORTLIST_JSON: " + json.dumps(shortlist, separators=(",", ":")))
+    short = [{k: v for k, v in t.items() if v is not None} for t in shortlist]
+    lines.append("SHORTLIST_JSON: " + json.dumps(short, separators=(",", ":")))
     return "\n".join(lines)
 
 
@@ -339,7 +340,10 @@ def _parse(raw: str, batch_names: list[str], shortlist_names: set[str]) -> dict[
             src = src.get("name")
         src = _unwrap(src)
         if src not in batch_names:
-            raise ValueError(f"{src!r} is not one of the SOURCES")
+            # An answer for something we didn't ask about (often the prompt's
+            # own example) maps nothing — ignore it. Every real source must
+            # still be answered, below.
+            continue
         if src in out:
             raise ValueError(f"{src!r} answered more than once")
         tgt = _unwrap(s.get("target"))
