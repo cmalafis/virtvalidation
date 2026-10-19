@@ -243,6 +243,9 @@ service:
 route:
   enabled: false
   host: ""
+  # haproxy.router.openshift.io/timeout. The router default (30s) cuts off
+  # LLM-backed requests on CPU-only inference; 10m matches nginx proxy_read_timeout. Empty = router default.
+  timeout: "10m"
   tls:
     # edge | passthrough | reencrypt — edge is the right choice for
     # most deployments since the application itself doesn't terminate TLS.

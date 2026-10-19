@@ -14,6 +14,13 @@ metadata:
   name: {{ include "virtvalidate.fullname" . }}
   labels:
     {{- include "virtvalidate.componentLabels" (dict "root" . "component" "frontend") | nindent 4 }}
+  {{- with .Values.route.timeout }}
+  annotations:
+    # The router's default is 30s. Synchronous LLM-backed calls (mapping
+    # suggestions) on a CPU-only Ollama take longer; nginx already allows
+    # 600s for /api.
+    haproxy.router.openshift.io/timeout: {{ . | quote }}
+  {{- end }}
 spec:
   {{- with .Values.route.host }}
   host: {{ . | quote }}
