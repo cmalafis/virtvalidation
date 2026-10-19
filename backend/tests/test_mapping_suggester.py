@@ -203,3 +203,18 @@ def test_name_rule_ignores_numbers_when_unambiguous():
         "rule:name",
     )
     assert rows["ehr-vlan-116"]["method"] == "llm"
+
+
+def test_parser_tolerates_repeated_keys_and_echoed_sources():
+    sources = [{"name": "Seg-A", "vm_count": 1}, {"name": "Seg-B", "vm_count": 1}]
+    # Exactly what llama3.2:3b produced on the sandbox: one "suggestions" key
+    # per item, and the source echoed as the whole SOURCES object.
+    raw = (
+        '{"suggestions": [{"source": {"name": "Seg-A", "vlan_id": null}, "target": "dmz",'
+        ' "confidence": "low"}], "suggestions": [{"source": "Seg-B", "target": "null"}]}'
+    )
+    backend = ScriptedBackend([raw])
+    rows = _rows(suggest_network_mappings(sources=sources, targets=TARGETS, backend=backend))
+    assert rows["Seg-A"]["target_network_name"] == "dmz" and rows["Seg-A"]["method"] == "llm"
+    assert rows["Seg-B"]["target_network_name"] is None
+    assert '"vm_count"' not in backend.prompts[0]
