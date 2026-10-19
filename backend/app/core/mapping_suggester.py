@@ -36,6 +36,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from app.core.config import settings
 from app.core.llm.base import LLMAuthError, LLMBackend, LLMBackendError, LLMGuardrailError
@@ -273,7 +274,9 @@ def _render_prompt(
     lines.append(_TASK_LINE)
     lines.extend(platform_lines)
     lines.append("")
-    lines.append("SOURCES_JSON: " + json.dumps(batch, separators=(",", ":")))
+    # Null / bookkeeping fields only invite the model to echo them back.
+    trimmed = [{k: v for k, v in s.items() if v is not None and k != "vm_count"} for s in batch]
+    lines.append("SOURCES_JSON: " + json.dumps(trimmed, separators=(",", ":")))
     lines.append("SHORTLIST_JSON: " + json.dumps(shortlist, separators=(",", ":")))
     return "\n".join(lines)
 
@@ -287,11 +290,23 @@ def _strip_fences(raw: str) -> str:
     return text.strip()
 
 
+def _merge_repeated_lists(pairs: list[tuple[str, Any]]) -> dict:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out and isinstance(out[key], list) and isinstance(value, list):
+            out[key] = out[key] + value
+        else:
+            out[key] = value
+    return out
+
+
 def _parse(raw: str, batch_names: list[str], shortlist_names: set[str]) -> dict[str, dict]:
     """source → {target, confidence, rationale}; raises ValueError with a
     message the model can act on."""
     try:
-        body = json.loads(_strip_fences(raw))
+        # Small models often repeat the "suggestions" key once per item;
+        # merge the lists instead of keeping only the last one.
+        body = json.loads(_strip_fences(raw), object_pairs_hook=_merge_repeated_lists)
     except json.JSONDecodeError as e:
         raise ValueError(f"not valid JSON ({e.msg}). Reply with only the JSON object.") from e
     if not isinstance(body, dict) or not isinstance(body.get("suggestions"), list):
@@ -301,6 +316,8 @@ def _parse(raw: str, batch_names: list[str], shortlist_names: set[str]) -> dict[
         if not isinstance(s, dict):
             raise ValueError("every suggestion must be an object")
         src = s.get("source")
+        if isinstance(src, dict):  # echoed the whole SOURCES entry
+            src = src.get("name")
         if src not in batch_names:
             raise ValueError(f"{src!r} is not one of the SOURCES")
         if src in out:
