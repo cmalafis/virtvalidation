@@ -66,10 +66,14 @@ How to choose:
   equivalent: answer target null rather than force a match.
 - Never invent a target. Use only names from the SHORTLIST, or null.
 
-Reply with ONLY a JSON object:
-{"suggestions": [{"source": "<source name>", "target": "<candidate name or null>",
-  "confidence": "high|medium|low", "rationale": "<one sentence>"}]}
-Answer every source exactly once."""
+Reply with ONLY one JSON object holding ONE "suggestions" list with an entry
+per source, for example:
+{"suggestions": [
+  {"source": "web-pg-12", "target": "web-net", "confidence": "medium", "rationale": "Same tier name."},
+  {"source": "vmotion-pg", "target": null, "confidence": "low", "rationale": "No VM-facing equivalent."}
+]}
+"source" is the source's name exactly as given; "target" is a SHORTLIST name or
+null; "confidence" is high, medium or low. Answer every source exactly once."""
 
 STORAGE_SYSTEM_PROMPT = """You are an OpenShift Virtualization migration engineer.
 You map VMware vSphere datastores onto StorageClasses that already exist on the
@@ -84,10 +88,14 @@ How to choose:
 - Prefer the cluster default (is_default) when nothing else distinguishes.
 - Never invent a target. Use only names from the SHORTLIST, or null.
 
-Reply with ONLY a JSON object:
-{"suggestions": [{"source": "<source name>", "target": "<candidate name or null>",
-  "confidence": "high|medium|low", "rationale": "<one sentence>"}]}
-Answer every source exactly once."""
+Reply with ONLY one JSON object holding ONE "suggestions" list with an entry
+per source, for example:
+{"suggestions": [
+  {"source": "web-pg-12", "target": "web-net", "confidence": "medium", "rationale": "Same tier name."},
+  {"source": "vmotion-pg", "target": null, "confidence": "low", "rationale": "No VM-facing equivalent."}
+]}
+"source" is the source's name exactly as given; "target" is a SHORTLIST name or
+null; "confidence" is high, medium or low. Answer every source exactly once."""
 
 
 class SuggestionError(RuntimeError):
@@ -290,6 +298,17 @@ def _strip_fences(raw: str) -> str:
     return text.strip()
 
 
+def _unwrap(value: Any) -> Any:
+    """'<ehr-vlan-116>' → 'ehr-vlan-116': small models copy the prompt's
+    placeholder brackets around the real value."""
+    if isinstance(value, str):
+        v = value.strip()
+        if len(v) > 2 and v[0] == "<" and v[-1] == ">":
+            return v[1:-1].strip()
+        return v
+    return value
+
+
 def _merge_repeated_lists(pairs: list[tuple[str, Any]]) -> dict:
     out: dict[str, Any] = {}
     for key, value in pairs:
@@ -318,11 +337,12 @@ def _parse(raw: str, batch_names: list[str], shortlist_names: set[str]) -> dict[
         src = s.get("source")
         if isinstance(src, dict):  # echoed the whole SOURCES entry
             src = src.get("name")
+        src = _unwrap(src)
         if src not in batch_names:
             raise ValueError(f"{src!r} is not one of the SOURCES")
         if src in out:
             raise ValueError(f"{src!r} answered more than once")
-        tgt = s.get("target")
+        tgt = _unwrap(s.get("target"))
         if tgt in ("", "null", "none"):
             tgt = None
         if tgt is not None and tgt not in shortlist_names:

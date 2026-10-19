@@ -218,3 +218,15 @@ def test_parser_tolerates_repeated_keys_and_echoed_sources():
     assert rows["Seg-A"]["target_network_name"] == "dmz" and rows["Seg-A"]["method"] == "llm"
     assert rows["Seg-B"]["target_network_name"] is None
     assert '"vm_count"' not in backend.prompts[0]
+
+
+def test_parser_strips_copied_placeholder_brackets():
+    raw = {"suggestions": [{"source": "<Seg-A>", "target": "<dmz>", "confidence": "low"}]}
+    rows = _rows(
+        suggest_network_mappings(
+            sources=[{"name": "Seg-A", "vm_count": 1}],
+            targets=TARGETS,
+            backend=ScriptedBackend([raw]),
+        )
+    )
+    assert (rows["Seg-A"]["target_network_name"], rows["Seg-A"]["method"]) == ("dmz", "llm")
