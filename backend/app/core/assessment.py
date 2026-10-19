@@ -33,11 +33,13 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from app.core.platform_features import LIVE_MIGRATION_VM_NAME_MAX
+
 CRITICAL = "Critical"
 WARNING = "Warning"
 INFORMATION = "Information"
 
-RULESET_VERSION = "forklift-2.12.1+vv1"
+RULESET_VERSION = "forklift-2.12.1+vv2"
 
 # forklift `name.rego`: DNS-subdomain-ish, under 64 chars.
 _VALID_NAME_RE = re.compile(r"^(([A-Za-z0-9][-A-Za-z0-9.]*)?[A-Za-z0-9])?$")
@@ -371,6 +373,46 @@ def vm_name(f: VMFacts):
             "(monitoring, backup jobs, runbooks), choose the target name yourself with "
             "`targetName` in the Plan so the rename isn't a surprise.",
             {"name": f.name, "length": len(f.name)},
+        )
+    return None
+
+
+@_rule
+def vm_name_live_migration(f: VMFacts):
+    # Known issue in OpenShift Virtualization 4.21 and 4.22 (CNV-61066).
+    if len(f.name) > LIVE_MIGRATION_VM_NAME_MAX:
+        return Finding(
+            "vv.vm.name.live_migration_length",
+            WARNING,
+            f"VM name longer than {LIVE_MIGRATION_VM_NAME_MAX} characters cannot live-migrate",
+            "Known issue in OpenShift Virtualization 4.21 and 4.22 (CNV-61066): live "
+            f"migration fails for VMs whose name is longer than {LIVE_MIGRATION_VM_NAME_MAX} "
+            "characters, so node drains and cluster upgrades shut the VM down instead.",
+            "Set a shorter `targetName` for this VM in the Plan, or rename it in vSphere "
+            "before migrating.",
+            {"name": f.name, "length": len(f.name)},
+        )
+    return None
+
+
+@_rule
+def rhel_static_ip(f: VMFacts):
+    os_name = (f.guest_os_full or "").lower()
+    if f.ip_address and (
+        "red hat enterprise linux 9" in os_name or "red hat enterprise linux 10" in os_name
+    ):
+        return Finding(
+            "vv.os.rhel9_10.static_ip",
+            # Information, not Warning: it applies to every RHEL 9/10 guest
+            # with an address, and the remedy is a post-cutover check, not
+            # a change before migration.
+            INFORMATION,
+            "Static IP may not be preserved on RHEL 9 / 10",
+            "Known issue in MTV 2.12 (MTV-5530): static IP addresses can be lost when "
+            "RHEL 9 and RHEL 10 guests are migrated with preserveStaticIPs.",
+            "Record the guest's IP configuration before cutover and check it on first "
+            "boot, or move the guest to DHCP reservations before migrating.",
+            {"guest_os": f.guest_os_full, "ip_address": f.ip_address},
         )
     return None
 

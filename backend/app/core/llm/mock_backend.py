@@ -40,6 +40,13 @@ logger = logging.getLogger(__name__)
 # The first match wins; place more-specific tokens earlier.
 _INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
     (
+        # Mapping suggestions (app.core.mapping_suggester). First, because
+        # the shortlist JSON carries words like "topology" that other
+        # intents key on.
+        "mapping_suggest",
+        ["map each source to one candidate from the shortlist"],
+    ),
+    (
         "categorize",
         [
             "level 1 categorizer",
@@ -254,7 +261,9 @@ class MockBackend(LLMBackend):
     def _build_response(self, messages: list[dict], *, model: str | None) -> dict:
         prompt_text = self._concat(messages)
         intent = _detect_intent(prompt_text)
-        if intent == "categorize":
+        if intent == "mapping_suggest":
+            payload = self._mapping_suggest_response(prompt_text)
+        elif intent == "categorize":
             payload = self._categorization_response(prompt_text)
         elif intent == "wave_annotation":
             payload = self._wave_annotation_response(prompt_text)
@@ -284,6 +293,43 @@ class MockBackend(LLMBackend):
     # ------------------------------------------------------------------
     # Per-intent canned response generators
     # ------------------------------------------------------------------
+    def _mapping_suggest_response(self, prompt: str) -> dict:
+        """Same shape mapping_suggester._parse accepts: every SOURCES entry
+        answered once, targets drawn from the SHORTLIST. Picks the
+        candidate sharing the most name tokens, else the first one."""
+
+        def _line(tag: str) -> list:
+            for line in prompt.splitlines():
+                if line.startswith(tag):
+                    try:
+                        return json.loads(line[len(tag) :])
+                    except ValueError:
+                        return []
+            return []
+
+        def _toks(name: str) -> set[str]:
+            return set(re.findall(r"[a-z]+|\d+", (name or "").lower()))
+
+        sources = _line("SOURCES_JSON: ")
+        shortlist = _line("SHORTLIST_JSON: ")
+        out = []
+        for src in sources:
+            name = (src or {}).get("name") or ""
+            best = max(
+                shortlist,
+                key=lambda c: len(_toks(name) & _toks((c or {}).get("name") or "")),
+                default=None,
+            )
+            out.append(
+                {
+                    "source": name,
+                    "target": (best or {}).get("name"),
+                    "confidence": "low",
+                    "rationale": "mock: closest candidate name",
+                }
+            )
+        return {"suggestions": out}
+
     def _categorization_response(self, prompt: str) -> dict:
         """Real categorizer schema: every vm_id appears in one application,
         one environment, and one business_unit group. The mock packs every

@@ -52,7 +52,8 @@ def _ids(a):
 
 def test_clean_vm_is_ok_and_says_what_it_could_not_check():
     a = assess(_facts())
-    assert a.status == "ok" and a.findings == []
+    # The only finding on a clean RHEL 9 guest is the MTV-5530 static-IP note.
+    assert a.status == "ok" and _ids(a) == {"vv.os.rhel9_10.static_ip"}
     skipped = {s.id for s in a.not_evaluated}
     # RVTools can't answer these — the assessment must say so, not imply "clean".
     assert {"vmware.tpm.detected", "vmware.passthrough_device.detected"} <= skipped
@@ -212,7 +213,7 @@ def test_inventory_filters_by_status_and_finding(fleet):
 
 def test_rerun_is_idempotent(fleet):
     assert fleet.post("/api/assessment/run").json() == {
-        "ruleset": "forklift-2.12.1+vv1",
+        "ruleset": "forklift-2.12.1+vv2",
         "assessed": 1000,
         "changed": 0,
     }
@@ -234,3 +235,15 @@ def test_plan_gate_refuses_blocked_and_warm_unfit_vms(fleet, monkeypatch):
     # exists in this test, so it fails later, on target resolution).
     cold = fleet.post("/api/plans", json={"vm_ids": [no_cbt["id"]]})
     assert "cannot migrate as a" not in json.dumps(cold.json())
+
+
+def test_long_name_cannot_live_migrate():
+    assert "vv.vm.name.live_migration_length" in _ids(assess(_facts(name="a" * 48)))
+    assert "vv.vm.name.live_migration_length" not in _ids(assess(_facts(name="a" * 47)))
+
+
+def test_rhel9_static_ip_known_issue():
+    assert "vv.os.rhel9_10.static_ip" in _ids(assess(_facts()))
+    rhel8 = _facts(guest_os_full="Red Hat Enterprise Linux 8 (64-bit)")
+    assert "vv.os.rhel9_10.static_ip" not in _ids(assess(rhel8))
+    assert "vv.os.rhel9_10.static_ip" not in _ids(assess(_facts(ip_address=None)))

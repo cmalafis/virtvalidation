@@ -84,8 +84,12 @@ spec:
   volumeClaimTemplates:
     - metadata:
         name: data
+        # Selector labels only. volumeClaimTemplates is immutable, so the
+        # helm.sh/chart / app version labels in componentLabels made every
+        # chart-version bump fail with "updates to statefulset spec ... are
+        # forbidden".
         labels:
-          {{- include "virtvalidate.componentLabels" (dict "root" . "component" "postgres") | nindent 10 }}
+          {{- include "virtvalidate.componentSelectorLabels" (dict "root" . "component" "postgres") | nindent 10 }}
       spec:
         accessModes:
           - ReadWriteOnce

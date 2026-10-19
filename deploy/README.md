@@ -81,6 +81,41 @@ helm install virtvalidate deploy/helm/virtvalidate/ \
   --create-namespace
 ```
 
+### Ollama on OpenShift / Developer Sandbox (CPU only)
+
+The Ollama pod runs under restricted-v2 with an arbitrary UID: the chart
+sets `HOME=/ollama` and `OLLAMA_MODELS=/ollama/models` on the models PVC and
+pulls `llm.ollama.model` itself on first start (nothing else does). With no
+GPU, use a ~3B model — `llama3.2:3b` has been run at the 10-items-per-call
+ceiling. Per-wave annotation takes roughly 50 s per call on 8 CPU.
+
+```bash
+helm upgrade --install virtvalidate deploy/helm/virtvalidate/ -n "$(oc project -q)" \
+  --set llm.backend=ollama --set llm.ollama.model=llama3.2:3b \
+  --set llm.ollama.persistence.size=10Gi \
+  --set llm.ollama.resources.requests.cpu=1 --set llm.ollama.resources.requests.memory=4Gi \
+  --set llm.ollama.resources.limits.cpu=8 --set llm.ollama.resources.limits.memory=8Gi \
+  --set-json 'extraEnv=[{"name":"OLLAMA_NUM_CTX","value":"4096"},{"name":"LLM_READ_TIMEOUT","value":"300"}]'
+# The active backend is a DB setting; on an existing install switch it:
+curl -sk -X PUT https://<route>/api/settings/llm -H 'content-type: application/json' \
+  -d '{"active_llm_backend":"ollama"}'
+```
+
+The Developer Sandbox requests quota is 3 CPU in total; limits can go to 30,
+and Ollama's throughput follows its CPU *limit*. The sandbox idler scales every
+Deployment and StatefulSet to 0 after inactivity — scale
+`sts/virtvalidate-postgres` back up as well as the Deployments.
+
+Chart 0.1.5 changed the Postgres `volumeClaimTemplates` labels to selector
+labels only (the chart-version label made every chart bump fail with
+"updates to statefulset spec … are forbidden"). Upgrading an existing release
+from ≤ 0.1.4 needs a one-time orphan delete; the pod and its PVC are kept and
+adopted:
+
+```bash
+oc delete sts virtvalidate-postgres --cascade=orphan && helm upgrade …
+```
+
 ### Quick start (KServe backend, RHOAI)
 
 ```bash

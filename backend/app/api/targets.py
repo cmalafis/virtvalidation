@@ -24,10 +24,16 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.db import get_db
+from app.core.llm.runtime import get_active_backend
 from app.core.mapping_suggester import (
-    SuggestionError,
     suggest_network_mappings,
     suggest_storage_mappings,
+)
+from app.core.platform_features import (
+    SUPPORTED_OCP_VERSIONS,
+    effective_versions,
+    features_for,
+    prompt_context,
 )
 from app.models.plan import MigrationPlan
 from app.models.target import (
@@ -151,6 +157,24 @@ def delete_target(
 # ---------------------------------------------------------------------------
 # Mappings router
 # ---------------------------------------------------------------------------
+@targets_router.get("/{target_id}/platform-features")
+def target_platform_features(target_id: int, db: Session = Depends(get_db)) -> dict:
+    """What this cluster's OpenShift / MTV release supports
+    (app.core.platform_features), for the cluster page and the mapping
+    editor. ``mtv_version`` is the recorded one, else the paired release."""
+    target = db.get(OCPTarget, target_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"OCP target {target_id} not found")
+    ocp, mtv = effective_versions(target.ocp_version, target.mtv_version)
+    return {
+        "ocp_version": f"{ocp[0]}.{ocp[1]}" if ocp else None,
+        "mtv_version": f"{mtv[0]}.{mtv[1]}" if mtv else None,
+        "mtv_version_inferred": not target.mtv_version and mtv is not None,
+        "supported_ocp_versions": list(SUPPORTED_OCP_VERSIONS),
+        "features": features_for(target.ocp_version, target.mtv_version),
+    }
+
+
 mappings_router = APIRouter(tags=["resource-mappings"])
 
 
@@ -184,7 +208,7 @@ def _compute_mapping_status(mapping: ResourceMapping, db: Session) -> ResourceMa
     networks = {
         m.get("source_network")
         for m in network_rows
-        if (m.get("target_network_name") or "").strip()
+        if (m.get("target_network_name") or "").strip() or m.get("ignored")
     }
     datastores = {
         m.get("source_datastore")
@@ -510,13 +534,28 @@ def _vcenter_source_signals(db: Session, mapping: ResourceMapping) -> tuple[list
     )
     net_counts: Counter[str] = Counter()
     ds_counts: Counter[str] = Counter()
+    net_facts: dict[str, dict] = {}
     for vm in vms:
         for n in vm.vsphere_networks or []:
             net_counts[n] += 1
         for d in vm.vsphere_datastores or []:
             ds_counts[d] += 1
+        for nic in (vm.hardware_facts or {}).get("nics") or []:
+            name = nic.get("network")
+            if not name:
+                continue
+            facts = net_facts.setdefault(name, {})
+            if nic.get("vlan") is not None:
+                facts.setdefault("vlan_id", nic["vlan"])
+            if nic.get("switch"):
+                facts.setdefault("switch", nic["switch"])
     networks = [
-        {"name": name, "vm_count": count}
+        {
+            "name": name,
+            "vm_count": count,
+            "vlan_id": net_facts.get(name, {}).get("vlan_id"),
+            "switch": net_facts.get(name, {}).get("switch"),
+        }
         for name, count in sorted(net_counts.items(), key=lambda x: -x[1])
     ]
     datastores = [
@@ -568,13 +607,21 @@ def suggest_networks(mapping_id: int, db: Session = Depends(get_db)) -> dict:
             "name": n.name,
             "type": n.network_type.value,
             "namespace": n.namespace,
+            "role": n.role,
+            "topology": n.topology,
+            "vlan_id": n.vlan_id,
         }
         for n in declared
     ]
-    try:
-        result = suggest_network_mappings(sources=networks, targets=target_payload)
-    except SuggestionError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+    # Never a 502: LLM trouble falls back to the deterministic matcher.
+    result = suggest_network_mappings(
+        sources=networks,
+        targets=target_payload,
+        backend=get_active_backend(),
+        platform_lines=prompt_context(target.ocp_version, target.mtv_version),
+        on_inference=_inference_sink(db, "mapping_suggest_network", mapping.id),
+    )
+    db.commit()
     return result
 
 
@@ -600,17 +647,43 @@ def suggest_storage(mapping_id: int, db: Session = Depends(get_db)) -> dict:
     target_payload = [
         {
             "name": s.name,
-            "provisioner": "operator-declared",
+            "provisioner": s.provisioner,
             "is_default": s.is_default,
-            "access_modes": [s.access_mode.value],
+            "access_mode": s.access_mode.value,
+            "volume_mode": s.volume_mode,
         }
         for s in declared
     ]
-    try:
-        result = suggest_storage_mappings(sources=datastores, targets=target_payload)
-    except SuggestionError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+    result = suggest_storage_mappings(
+        sources=datastores,
+        targets=target_payload,
+        backend=get_active_backend(),
+        platform_lines=prompt_context(target.ocp_version, target.mtv_version),
+        on_inference=_inference_sink(db, "mapping_suggest_storage", mapping.id),
+    )
+    db.commit()
     return result
+
+
+def _inference_sink(db: Session, operation: str, mapping_id: int):
+    """Capture each suggestion LLM call as an InferenceLog row."""
+    from app.core.llm.inference_log import record_inference
+
+    def sink(call: dict) -> None:
+        record_inference(
+            db,
+            operation=operation,
+            backend_type=call["backend_type"],
+            model=call["model"],
+            method=call["method"],
+            input_messages=call["messages"],
+            output_text=call["output"],
+            latency_ms=call["latency_ms"],
+            resource_type="resource_mapping",
+            resource_id=mapping_id,
+        )
+
+    return sink
 
 
 # ---------------------------------------------------------------------------
@@ -636,7 +709,7 @@ def preflight(mapping_id: int, db: Session = Depends(get_db)) -> dict:
     mapped_networks = {
         m.get("source_network")
         for m in (mapping.network_mappings or [])
-        if (m.get("target_network_name") or "").strip()
+        if (m.get("target_network_name") or "").strip() or m.get("ignored")
     }
     mapped_datastores = {
         m.get("source_datastore")
@@ -678,11 +751,13 @@ def preflight(mapping_id: int, db: Session = Depends(get_db)) -> dict:
             "No namespace mapping configured — every VM will land in the cluster's default namespace."
         )
 
+    findings = _mapping_findings(db, mapping)
     ok = (
         not unmapped_networks
         and not unmapped_datastores
         and not missing_storage_classes_on_target
         and not missing_networks_on_target
+        and not any(f["severity"] == "blocking" for f in findings)
     )
     return {
         "ok": ok,
@@ -693,4 +768,38 @@ def preflight(mapping_id: int, db: Session = Depends(get_db)) -> dict:
         "missing_networks_on_target": sorted(set(missing_networks_on_target)),
         "missing_namespaces_on_target": [],
         "warnings": warnings,
+        "findings": findings,
     }
+
+
+def _mapping_findings(db: Session, mapping: ResourceMapping) -> list[dict]:
+    """Deterministic platform checks (app.core.mapping_checks) for every VM
+    in the mapping's vCenter scope, against the target cluster's catalog."""
+    from app.core.mapping_catalog import load_catalog
+    from app.core.mapping_checks import check_mapping, vm_view
+    from app.core.mtv import MappingResolver
+    from app.core.plan_pipeline import vm_payload
+
+    catalog = load_catalog(db, mapping.ocp_target_id)
+    resolver = MappingResolver(
+        network_mappings=list(mapping.network_mappings or []),
+        storage_mappings=list(mapping.storage_mappings or []),
+        namespace_mappings=mapping.namespace_mappings or [],
+        catalog=catalog,
+    )
+    vms = db.scalars(select(VM).where(VM.source_vcenter_id == mapping.vcenter_source_id))
+    views = []
+    for vm in vms:
+        ns = vm.target_namespace_override or resolver.resolve_namespace(vm_payload(vm))
+        views.append(vm_view(vm, ns))
+    vcenter = db.get(VCenterSource, mapping.vcenter_source_id)
+    return [
+        f.to_dict()
+        for f in check_mapping(
+            network_mappings=list(mapping.network_mappings or []),
+            storage_mappings=list(mapping.storage_mappings or []),
+            catalog=catalog,
+            vms=views,
+            provider_address=getattr(vcenter, "hostname", None),
+        )
+    ]

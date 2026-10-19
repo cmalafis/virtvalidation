@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
+from app.core.catalog_import import CatalogImportError, parse_cluster_yaml, plan_import
 from app.core.db import get_db
 from app.models.ocp_namespace import OCPTargetNamespace
 from app.models.target import OCPTarget, ResourceMapping
@@ -36,6 +37,10 @@ from app.schemas.ocp_namespace import (
     OCPTargetNamespaceUpdate,
 )
 from app.schemas.target_entities import (
+    NETWORK_ATTRIBUTE_FIELDS,
+    STORAGE_ATTRIBUTE_FIELDS,
+    CatalogImportRequest,
+    CatalogImportResponse,
     TargetNetworkCreate,
     TargetNetworkRead,
     TargetNetworkUpdate,
@@ -157,6 +162,7 @@ def create_network(
         namespace=payload.namespace,
         is_default=payload.is_default,
         notes=payload.notes,
+        **{f: getattr(payload, f) for f in NETWORK_ATTRIBUTE_FIELDS},
     )
     db.add(net)
     try:
@@ -218,6 +224,9 @@ def update_network(
         net.network_type = TargetNetworkType(updates["network_type"])
     for field in ("name", "namespace", "is_default", "notes"):
         if field in updates and updates[field] is not None:
+            setattr(net, field, updates[field])
+    for field in NETWORK_ATTRIBUTE_FIELDS:
+        if field in updates:
             setattr(net, field, updates[field])
     try:
         db.flush()
@@ -314,6 +323,7 @@ def create_storage_class(
         access_mode=StorageAccessMode(payload.access_mode),
         is_default=payload.is_default,
         notes=payload.notes,
+        **{f: getattr(payload, f) for f in STORAGE_ATTRIBUTE_FIELDS},
     )
     db.add(sc)
     try:
@@ -383,6 +393,9 @@ def update_storage_class(
         sc.access_mode = StorageAccessMode(updates["access_mode"])
     for field in ("name", "is_default", "notes"):
         if field in updates and updates[field] is not None:
+            setattr(sc, field, updates[field])
+    for field in STORAGE_ATTRIBUTE_FIELDS:
+        if field in updates:
             setattr(sc, field, updates[field])
     try:
         db.flush()
@@ -525,6 +538,7 @@ def create_namespace(
         ocp_target_id=target_id,
         name=payload.name,
         description=payload.description,
+        primary_udn_network=payload.primary_udn_network,
     )
     db.add(ns)
     try:
@@ -585,6 +599,8 @@ def update_namespace(
     for field in ("name", "description"):
         if field in updates and updates[field] is not None:
             setattr(ns, field, updates[field])
+    if "primary_udn_network" in updates:
+        ns.primary_udn_network = updates["primary_udn_network"]
     try:
         db.flush()
     except IntegrityError as e:
@@ -647,6 +663,164 @@ def delete_namespace(
     db.delete(ns)
     db.commit()
     request.state.skip_audit_log = True
+
+
+# ---------------------------------------------------------------------------
+# Catalog import from pasted cluster YAML
+# ---------------------------------------------------------------------------
+@router.post("/{target_id}/catalog/import", response_model=CatalogImportResponse)
+def import_catalog(
+    request: Request,
+    target_id: int,
+    payload: CatalogImportRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Fill the network / StorageClass / namespace catalogs from pasted
+    ``oc get … -o yaml`` output (app.core.catalog_import).
+
+    ``dry_run`` (the default) returns the preview only. Applying creates
+    missing entries and updates derived attributes on existing ones; it
+    never deletes an entry and never clears a field the paste doesn't
+    mention. The appliance still never connects to the cluster.
+    """
+    target = _get_target_or_404(db, target_id)
+    try:
+        parsed = parse_cluster_yaml(payload.yaml)
+    except CatalogImportError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    nets = {
+        n.name: n
+        for n in db.scalars(select(TargetNetwork).where(TargetNetwork.ocp_target_id == target_id))
+    }
+    scs = {
+        s.name: s
+        for s in db.scalars(
+            select(TargetStorageClass).where(TargetStorageClass.ocp_target_id == target_id)
+        )
+    }
+    nss = {
+        n.name: n
+        for n in db.scalars(
+            select(OCPTargetNamespace).where(OCPTargetNamespace.ocp_target_id == target_id)
+        )
+    }
+
+    def _net_dict(n: TargetNetwork) -> dict:
+        d = {f: getattr(n, f) for f in NETWORK_ATTRIBUTE_FIELDS}
+        d["network_type"] = n.network_type.value
+        d["namespace"] = n.namespace
+        return d
+
+    def _sc_dict(sc: TargetStorageClass) -> dict:
+        return {
+            "provisioner": sc.provisioner,
+            "access_mode": sc.access_mode.value,
+            "volume_mode": sc.volume_mode,
+            "is_default": sc.is_default,
+        }
+
+    preview = plan_import(
+        parsed,
+        current_networks={k: _net_dict(v) for k, v in nets.items()},
+        current_storage={k: _sc_dict(v) for k, v in scs.items()},
+        current_namespaces={k: v.primary_udn_network for k, v in nss.items()},
+    )
+    if payload.dry_run:
+        request.state.skip_audit_log = True
+        return {"dry_run": True, "applied": False, **preview}
+
+    summary = {"created": 0, "updated": 0}
+    for row in preview["networks"]:
+        if row["action"] == "unchanged":
+            continue
+        values = {f: row[f] for f in NETWORK_ATTRIBUTE_FIELDS if row.get(f) is not None}
+        net = nets.get(row["name"])
+        if net is None:
+            net = TargetNetwork(
+                ocp_target_id=target_id,
+                name=row["name"],
+                network_type=TargetNetworkType(row["network_type"]),
+                namespace=row.get("namespace"),
+                notes="Imported from cluster YAML",
+                **values,
+            )
+            db.add(net)
+            summary["created"] += 1
+        else:
+            net.network_type = TargetNetworkType(row["network_type"])
+            if row.get("namespace"):
+                net.namespace = row["namespace"]
+            for f, v in values.items():
+                setattr(net, f, v)
+            summary["updated"] += 1
+    new_default: str | None = None
+    for row in preview["storage_classes"]:
+        if row["action"] == "unchanged":
+            continue
+        sc = scs.get(row["name"])
+        if sc is None:
+            sc = TargetStorageClass(
+                ocp_target_id=target_id,
+                name=row["name"],
+                access_mode=StorageAccessMode(row["access_mode"]),
+                volume_mode=row.get("volume_mode"),
+                provisioner=row.get("provisioner"),
+                is_default=bool(row.get("is_default")),
+                notes="Imported from cluster YAML",
+            )
+            db.add(sc)
+            summary["created"] += 1
+        else:
+            if "access_mode" in row["changed"]:
+                sc.access_mode = StorageAccessMode(row["access_mode"])
+            for f in ("volume_mode", "provisioner"):
+                if row.get(f) is not None:
+                    setattr(sc, f, row[f])
+            if row.get("is_default"):
+                sc.is_default = True
+            summary["updated"] += 1
+        if row.get("is_default"):
+            new_default = row["name"]
+    for row in preview["namespaces"]:
+        if row["action"] == "unchanged":
+            continue
+        ns = nss.get(row["name"])
+        if ns is None:
+            db.add(
+                OCPTargetNamespace(
+                    ocp_target_id=target_id,
+                    name=row["name"],
+                    primary_udn_network=row["primary_udn_network"],
+                    description="Imported from cluster YAML (primary UDN namespace)",
+                )
+            )
+            summary["created"] += 1
+        else:
+            ns.primary_udn_network = row["primary_udn_network"]
+            summary["updated"] += 1
+    if preview["localnet_bridge_mappings"] is not None:
+        target.localnet_bridge_mappings = list(preview["localnet_bridge_mappings"])
+    db.flush()
+    if new_default is not None:
+        keep = db.scalars(
+            select(TargetStorageClass).where(
+                TargetStorageClass.ocp_target_id == target_id,
+                TargetStorageClass.name == new_default,
+            )
+        ).first()
+        _enforce_single_storage_default(db, target_id, skip_id=keep.id if keep else None)
+    record_audit(
+        db,
+        action="ocp_target.catalog_import",
+        actor=request.headers.get("x-actor", "user"),
+        resource_type="ocp_target",
+        resource_id=target_id,
+        details={**summary, "counts": preview["counts"], "warnings": len(preview["warnings"])},
+    )
+    db.commit()
+    request.state.skip_audit_log = True
+    return {"dry_run": False, "applied": True, **preview}
 
 
 def _count_star():

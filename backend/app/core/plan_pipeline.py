@@ -33,6 +33,8 @@ from typing import Any
 
 from app.core.concurrency import assign_concurrency_groups
 from app.core.family import split_overconcentrated_families
+from app.core.mapping_catalog import CatalogSnapshot
+from app.core.mapping_checks import wave_mapping_view
 from app.core.mapping_validation import (
     MappingGap,
     ValidationResult,
@@ -98,6 +100,10 @@ class AnnotatedWave:
     # [{id, category, label, vm_count, vm_names}]. Deterministic (from
     # app.core.assessment); never produced or seen by the LLM.
     considerations: list[dict[str, Any]] = field(default_factory=list)
+    # Where this wave's networks / datastores land, and the deterministic
+    # mapping checks scoped to it (app.core.mapping_checks.wave_mapping_view).
+    mapping_summary: dict[str, Any] = field(default_factory=dict)
+    mapping_findings: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Render to the JSON shape persisted in MigrationPlan.waves[]."""
@@ -115,6 +121,8 @@ class AnnotatedWave:
             "notable_concerns": list(self.notable_concerns),
             "method": self.method,
             "considerations": list(self.considerations),
+            "mapping_summary": dict(self.mapping_summary),
+            "mapping_findings": list(self.mapping_findings),
             "rationale": self.description,  # legacy field name; kept for UI back-compat
             "mtv_yaml_available": bool(self.mtv_yaml),
         }
@@ -175,13 +183,20 @@ def _vm_payload(vm: VM) -> dict[str, Any]:
     }
 
 
-def _build_resolver(mapping: ResourceMapping | None) -> MappingResolver | None:
+def _build_resolver(
+    mapping: ResourceMapping | None,
+    catalogs: dict[int, CatalogSnapshot] | None = None,
+) -> MappingResolver | None:
+    """``catalogs`` (keyed by ocp_target_id) lets the resolver tell a
+    primary UDN from a secondary network and emit volumeMode / copy
+    offload. Without it the resolver uses the mapping rows alone."""
     if mapping is None:
         return None
     return MappingResolver(
         network_mappings=list(mapping.network_mappings or []),
         storage_mappings=list(mapping.storage_mappings or []),
         namespace_mappings=mapping.namespace_mappings or [],
+        catalog=(catalogs or {}).get(mapping.ocp_target_id),
     )
 
 
@@ -252,6 +267,7 @@ def emit_wave_yaml(
 wave_considerations = _wave_considerations
 mapping_for_wave = _mapping_for_wave
 build_resolver = _build_resolver
+vm_payload = _vm_payload
 
 
 async def run_pipeline(
@@ -263,6 +279,7 @@ async def run_pipeline(
     max_llm_attempts: int = 3,
     progress_cb=None,
     migration_type: str = "cold",
+    catalogs: dict[int, CatalogSnapshot] | None = None,
 ) -> PlanPipelineResult:
     """Walk the seven stages and return an end-to-end annotated plan.
 
@@ -275,6 +292,10 @@ async def run_pipeline(
     pipeline still runs but every wave's ``method`` is
     ``"mechanical_fallback"`` — useful for tests of the deterministic
     layers in isolation.
+
+    ``catalogs`` is the per-cluster catalog snapshot
+    (:func:`app.core.mapping_catalog.load_catalogs_for`), loaded by the
+    caller so this function stays DB-free.
     """
     # Lazy import — wave_annotation may import this module's
     # AnnotatedWave for typing, so avoid the cycle at top-level.
@@ -336,7 +357,10 @@ async def run_pipeline(
             [vm_by_id[vid] for vid in aw.wave.vm_ids if vid in vm_by_id], migration_type
         )
         wave_mapping = _mapping_for_wave(aw.wave, mappings, vm_by_id)
-        resolver = _build_resolver(wave_mapping)
+        resolver = _build_resolver(wave_mapping, catalogs)
+        aw.mapping_summary, aw.mapping_findings = wave_mapping_view(
+            [vm_by_id[vid] for vid in aw.wave.vm_ids if vid in vm_by_id], resolver, migration_type
+        )
         try:
             aw.mtv_yaml = emit_wave_yaml(
                 plan_id, aw.wave, aw.description, vm_by_id, resolver, migration_type

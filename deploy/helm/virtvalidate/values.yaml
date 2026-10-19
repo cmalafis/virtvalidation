@@ -153,9 +153,13 @@ llm:
     image:
       repository: ollama/ollama
       registry: docker.io
-      tag: "latest"
+      # Pinned — `latest` moves daily and pullPolicy is Always.
+      tag: "0.34.4"
     service:
       port: 11434
+    # Pulled automatically on first start (see deployment-ollama.yaml).
+    # CPU-only clusters (e.g. Developer Sandbox) should use a ~3B model
+    # such as llama3.2:3b.
     model: "llama3:8b"
     # Persistent volume for downloaded model weights. Without this,
     # every pod restart re-downloads the model.

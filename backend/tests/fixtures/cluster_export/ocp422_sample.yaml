@@ -1,0 +1,121 @@
+# Representative `oc get ... -o yaml` output from an OpenShift 4.22 cluster
+# with OpenShift Virtualization: a primary Layer2 CUDN for two tenant
+# namespaces, a localnet CUDN on VLAN 200, a Linux-bridge NAD on VLAN 100,
+# an SR-IOV NAD, ODF + NFS StorageClasses, and the NNCP bridge mapping.
+apiVersion: v1
+kind: List
+items:
+- apiVersion: k8s.ovn.org/v1
+  kind: ClusterUserDefinedNetwork
+  metadata:
+    name: tenant-blue
+  spec:
+    namespaceSelector:
+      matchLabels:
+        tenant: blue
+    network:
+      topology: Layer2
+      layer2:
+        role: Primary
+        subnets: ["10.20.0.0/16"]
+        ipam:
+          lifecycle: Persistent
+  status:
+    conditions:
+    - type: NetworkCreated
+      status: "True"
+      message: "NetworkAttachmentDefinition has been created in following namespaces: [blue-prod, blue-dev]"
+- apiVersion: k8s.ovn.org/v1
+  kind: ClusterUserDefinedNetwork
+  metadata:
+    name: vlan-200
+  spec:
+    namespaceSelector:
+      matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values: [blue-prod, finance-prod]
+    network:
+      topology: Localnet
+      localnet:
+        role: Secondary
+        physicalNetworkName: physnet-vms
+        vlan:
+          mode: Access
+          access:
+            id: 200
+        ipam:
+          mode: Disabled
+- apiVersion: k8s.ovn.org/v1
+  kind: UserDefinedNetwork
+  metadata:
+    name: finance-primary
+    namespace: finance-prod
+  spec:
+    topology: Layer2
+    layer2:
+      role: Primary
+      subnets: ["192.168.50.0/24"]
+      ipam:
+        lifecycle: Persistent
+- apiVersion: k8s.cni.cncf.io/v1
+  kind: NetworkAttachmentDefinition
+  metadata:
+    name: vlan-200
+    namespace: blue-prod
+    ownerReferences:
+    - apiVersion: k8s.ovn.org/v1
+      kind: ClusterUserDefinedNetwork
+      name: vlan-200
+  spec:
+    config: '{"cniVersion":"1.0.0","type":"ovn-k8s-cni-overlay","topology":"localnet","name":"cluster_udn_vlan-200"}'
+- apiVersion: k8s.cni.cncf.io/v1
+  kind: NetworkAttachmentDefinition
+  metadata:
+    name: db-vlan-100
+    namespace: finance-prod
+  spec:
+    config: '{"cniVersion":"0.3.1","name":"db-vlan-100","type":"bridge","bridge":"br1","vlan":100,"macspoofchk":true}'
+- apiVersion: k8s.cni.cncf.io/v1
+  kind: NetworkAttachmentDefinition
+  metadata:
+    name: storage-sriov
+    namespace: finance-prod
+  spec:
+    config: '{"cniVersion":"0.3.1","name":"storage-sriov","type":"sriov","vlan":300}'
+- apiVersion: storage.k8s.io/v1
+  kind: StorageClass
+  metadata:
+    name: ocs-storagecluster-ceph-rbd-virtualization
+    annotations:
+      storageclass.kubevirt.io/is-default-virt-class: "true"
+  provisioner: openshift-storage.rbd.csi.ceph.com
+- apiVersion: storage.k8s.io/v1
+  kind: StorageClass
+  metadata:
+    name: nfs-csi
+  provisioner: nfs.csi.k8s.io
+- apiVersion: storage.k8s.io/v1
+  kind: StorageClass
+  metadata:
+    name: gp3-csi
+  provisioner: ebs.csi.aws.com
+- apiVersion: cdi.kubevirt.io/v1beta1
+  kind: StorageProfile
+  metadata:
+    name: gp3-csi
+  status:
+    claimPropertySets:
+    - accessModes: [ReadWriteOnce]
+      volumeMode: Filesystem
+- apiVersion: nmstate.io/v1
+  kind: NodeNetworkConfigurationPolicy
+  metadata:
+    name: physnet-vms
+  spec:
+    desiredState:
+      ovn:
+        bridge-mappings:
+        - localnet: physnet-vms
+          bridge: br-ex
+          state: present

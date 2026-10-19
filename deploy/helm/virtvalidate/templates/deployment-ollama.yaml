@@ -31,17 +31,44 @@ spec:
             - name: ollama
               containerPort: 11434
               protocol: TCP
+          # Wrapper: serve, wait for the API, pull the configured model if
+          # it isn't on the PVC yet, then hand back to the server. Nothing
+          # else pulls the model — a fresh install would otherwise answer
+          # every chat call with "model not found".
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ollama serve &
+              pid=$!
+              until ollama list >/dev/null 2>&1; do sleep 1; done
+              ollama list | grep -q "^${OLLAMA_MODEL} " || ollama pull "${OLLAMA_MODEL}"
+              wait $pid
           env:
-            # OLLAMA_MODELS points at the persistent volume so model
-            # weights survive pod restarts. Without this, every restart
-            # re-downloads the model.
+            # HOME and OLLAMA_MODELS both live on the PVC. Under
+            # restricted-v2 the pod runs as an arbitrary UID with no
+            # writable /root, and Ollama writes its identity key to
+            # $HOME/.ollama on startup.
+            - name: HOME
+              value: /ollama
             - name: OLLAMA_MODELS
-              value: /root/.ollama/models
+              value: /ollama/models
+            - name: OLLAMA_MODEL
+              value: {{ .Values.llm.ollama.model | quote }}
+          securityContext:
+            {{- toYaml .Values.security.containerSecurityContext | nindent 12 }}
+          readinessProbe:
+            # /api/tags answers as soon as the server is up; the model
+            # pull runs after it, so readiness doesn't wait on gigabytes.
+            httpGet:
+              path: /api/tags
+              port: ollama
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             {{- toYaml .Values.llm.ollama.resources | nindent 12 }}
           volumeMounts:
             - name: models
-              mountPath: /root/.ollama
+              mountPath: /ollama
       volumes:
         - name: models
           {{- if .Values.llm.ollama.persistence.enabled }}

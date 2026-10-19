@@ -46,6 +46,7 @@ const BLANK = {
   classification_level: "unclassified",
   mtv_namespace: "",
   ocp_version: "",
+  mtv_version: "",
   kubernetes_version: "",
   notes: "",
 };
@@ -181,8 +182,33 @@ function TargetModal({ isOpen, editing, onClose, onSaved }) {
               id="t-ocp"
               value={form.ocp_version ?? ""}
               onChange={set("ocp_version")}
-              placeholder="4.16"
+              placeholder="4.22"
             />
+            <FormHelperText>
+              <HelperText>
+                <HelperTextItem>
+                  Decides which network and storage features the mapping checks treat as GA
+                  (primary UDN, localnet, EVPN, copy offload). `oc version` prints it.
+                </HelperTextItem>
+              </HelperText>
+            </FormHelperText>
+          </FormGroup>
+
+          <FormGroup label="MTV version" fieldId="t-mtv-version">
+            <TextInput
+              id="t-mtv-version"
+              value={form.mtv_version ?? ""}
+              onChange={set("mtv_version")}
+              placeholder="Paired release"
+            />
+            <FormHelperText>
+              <HelperText>
+                <HelperTextItem>
+                  Leave blank to assume the MTV release paired with the OpenShift version (4.21 →
+                  2.11, 4.22 → 2.12).
+                </HelperTextItem>
+              </HelperText>
+            </FormHelperText>
           </FormGroup>
 
           <FormGroup label="Region" fieldId="t-region">

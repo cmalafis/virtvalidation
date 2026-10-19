@@ -55,6 +55,48 @@ import { asArray } from "../utils/asArray";
 
 const CONFIDENCE_COLOR = { high: "green", medium: "orange", low: "red" };
 const ACCESS_MODES = ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"];
+const VOLUME_MODES = ["Block", "Filesystem"];
+const IGNORED = "__ignored__";
+
+// Where a mapped network lands in the MTV NetworkMap. Mirrors
+// app.core.mapping_catalog.destination_kind: a primary UDN/CUDN is emitted
+// as `type: pod` (MTV detects it from the namespace), the rest as multus.
+const DESTINATIONS = {
+  pod: { label: "Pod network", color: "grey" },
+  primary_udn: { label: "Primary UDN", color: "purple" },
+  localnet: { label: "Localnet", color: "teal" },
+  multus: { label: "Multus", color: "blue" },
+  ignored: { label: "Ignored", color: "orange" },
+};
+
+function destinationKind(row, net) {
+  if (row?.ignored) return "ignored";
+  if (!row?.target_network_name && row?.target_network_type !== "pod") return null;
+  const type = net?.network_type ?? row?.target_network_type ?? "nad";
+  if (type === "pod") return "pod";
+  if ((type === "udn" || type === "cudn") && net?.role === "primary") return "primary_udn";
+  if (net?.topology === "localnet") return "localnet";
+  return "multus";
+}
+
+// The `method` field every LLM-assisted row carries (CLAUDE.md): which
+// path decided it — a deterministic rule, the model, or the fallback.
+function methodText(method) {
+  if (!method) return null;
+  if (method === "rule:vlan") return "Rule: VLAN";
+  if (method === "rule:name") return "Rule: name";
+  if (method === "rule:single_target") return "Rule: only option";
+  if (method === "llm") return "LLM";
+  if (method.startsWith("llm_retry_")) return `LLM (retry ${method.slice(10)})`;
+  if (method.startsWith("mechanical_fallback")) return "Automatic fallback";
+  return method;
+}
+
+const SEVERITY = {
+  blocking: { title: "Will fail or land VMs in the wrong place", variant: "danger" },
+  warning: { title: "Decide knowingly", variant: "warning" },
+  info: { title: "For information", variant: "info" },
+};
 
 // Mirrors app.core.environment.Environment, minus UNKNOWN — there is no
 // point offering a namespace for VMs whose environment never resolved.
@@ -89,13 +131,21 @@ const withKeys = (rows) =>
 // request honest about what it means.
 const stripKeys = (rows) => asArray(rows).map(({ _key, ...rest }) => rest);
 
-function ConfidenceCell({ confidence, rationale }) {
-  if (!confidence) return "—";
+function ConfidenceCell({ confidence, rationale, method }) {
+  const how = methodText(method);
+  if (!confidence && !how) return "—";
   return (
     <>
-      <Label isCompact color={CONFIDENCE_COLOR[confidence] ?? "grey"}>
-        {confidence}
-      </Label>
+      {confidence && (
+        <Label isCompact color={CONFIDENCE_COLOR[confidence] ?? "grey"}>
+          {confidence}
+        </Label>
+      )}
+      {how && (
+        <Label isCompact variant="outline" className="pf-v6-u-ml-xs">
+          {how}
+        </Label>
+      )}
       {rationale && (
         <Content component="small" className="pf-v6-u-display-block pf-v6-u-color-200">
           {rationale}
@@ -230,7 +280,7 @@ export default function ResourceMappingDetailPage() {
       });
 
       toast.success(
-        `${suggestions.length} suggestion(s) applied to the form — review, then save.`,
+        `${result?.rationale_summary || `${suggestions.length} suggestion(s).`} Applied to the form — review, then save.`,
       );
     } catch (e) {
       toast.error(e?.message ?? "Could not get suggestions");
@@ -433,6 +483,45 @@ export default function ResourceMappingDetailPage() {
         </Flex>
       }
     >
+      {preflight && asArray(preflight.findings).length > 0 && (
+        <PageSection hasBodyWrapper={false}>
+          <Card>
+            <CardTitle>Platform checks</CardTitle>
+            <CardBody>
+              {Object.entries(SEVERITY).map(([sev, meta]) => {
+                const items = asArray(preflight.findings).filter((f) => f?.severity === sev);
+                if (items.length === 0) return null;
+                return (
+                  <Alert
+                    key={sev}
+                    variant={meta.variant}
+                    isInline
+                    isPlain
+                    title={`${meta.title} (${items.length})`}
+                    className="pf-v6-u-mb-sm"
+                  >
+                    <List>
+                      {items.map((f) => (
+                        <ListItem key={`${f?.code}-${f?.source ?? ""}-${f?.target ?? ""}`}>
+                          {f?.message}
+                          {(f?.vm_count ?? 0) > 0 && (
+                            <Content component="small" className="pf-v6-u-display-block pf-v6-u-color-200">
+                              {`${f.vm_count} VM(s): ${asArray(f?.vm_names).slice(0, 5).join(", ")}${
+                                f.vm_count > 5 ? ", …" : ""
+                              }`}
+                            </Content>
+                          )}
+                        </ListItem>
+                      ))}
+                    </List>
+                  </Alert>
+                );
+              })}
+            </CardBody>
+          </Card>
+        </PageSection>
+      )}
+
       {preflight && (
         <PageSection hasBodyWrapper={false}>
           <Alert
@@ -464,6 +553,11 @@ export default function ResourceMappingDetailPage() {
                 )}
                 {(preflight.warnings ?? []).length > 0 &&
                   gapList("Warnings", preflight.warnings)}
+                {asArray(preflight.findings).some((f) => f?.severity === "blocking") && (
+                  <Content component="p" className="pf-v6-u-mt-sm">
+                    Blocking platform checks are listed above.
+                  </Content>
+                )}
               </>
             )}
           </Alert>
@@ -495,7 +589,7 @@ export default function ResourceMappingDetailPage() {
                         isLoading={suggesting === "networks"}
                         isDisabled={Boolean(suggesting) || networks.length === 0}
                       >
-                        Suggest with AI
+                        Suggest mappings
                       </Button>
                     </FlexItem>
                   </Flex>
@@ -513,17 +607,21 @@ export default function ResourceMappingDetailPage() {
                   <Table aria-label="Network mappings" variant="compact">
                     <Thead>
                       <Tr>
-                        <Th width={25}>Source network</Th>
+                        <Th width={20}>Source network</Th>
                         <Th width={25}>Target network</Th>
-                        <Th width={20}>Namespace</Th>
-                        <Th width={20}>Confidence</Th>
-                        <Th width={10} screenReaderText="Row actions" />
+                        <Th width={10}>Lands as</Th>
+                        <Th width={15}>Namespace</Th>
+                        <Th width={25}>Confidence</Th>
+                        <Th width={5} screenReaderText="Row actions" />
                       </Tr>
                     </Thead>
                     <Tbody>
                       {networks.map((row, i) => {
                         const src = (row.source_network ?? "").trim();
                         const isDup = src && dupNet.get(src) > 1;
+                        const net = catalog.networks.find((n) => n.name === row.target_network_name);
+                        const kind = destinationKind(row, net);
+                        const dest = DESTINATIONS[kind];
                         return (
                           <Tr key={row._key ?? i}>
                             <Td dataLabel="Source network">
@@ -548,10 +646,20 @@ export default function ResourceMappingDetailPage() {
                             <Td dataLabel="Target network">
                               <FormSelect
                                 aria-label={`Target for ${row.source_network || `row ${i + 1}`}`}
-                                value={row.target_network_name ?? ""}
+                                value={row.ignored ? IGNORED : (row.target_network_name ?? "")}
                                 onChange={(_e, v) => {
+                                  if (v === IGNORED) {
+                                    patchRow("networks", i, {
+                                      ignored: true,
+                                      target_network_name: null,
+                                      target_network_type: null,
+                                      target_namespace: null,
+                                    });
+                                    return;
+                                  }
                                   const hit = catalog.networks.find((n) => n.name === v);
                                   patchRow("networks", i, {
+                                    ignored: false,
                                     target_network_name: v || null,
                                     target_network_type: hit?.network_type ?? null,
                                     target_namespace: hit?.namespace ?? row.target_namespace,
@@ -559,19 +667,37 @@ export default function ResourceMappingDetailPage() {
                                 }}
                               >
                                 <FormSelectOption value="" label="Not mapped" />
+                                <FormSelectOption value={IGNORED} label="Drop this NIC (ignored)" />
                                 {catalog.networks.map((n) => (
                                   <FormSelectOption
                                     key={n.id}
                                     value={n.name}
-                                    label={`${n.name} (${n.network_type})`}
+                                    label={`${n.name} (${n.network_type}${
+                                      n.role === "primary" ? ", primary" : ""
+                                    }${n.topology ? `, ${n.topology}` : ""}${
+                                      n.vlan_id != null ? `, VLAN ${n.vlan_id}` : ""
+                                    })`}
                                   />
                                 ))}
                               </FormSelect>
+                            </Td>
+                            <Td dataLabel="Lands as">
+                              {dest ? (
+                                <Label isCompact color={dest.color}>
+                                  {dest.label}
+                                </Label>
+                              ) : (
+                                "—"
+                              )}
                             </Td>
                             <Td dataLabel="Namespace">
                               <TextInput
                                 aria-label={`Namespace for ${row.source_network || `row ${i + 1}`}`}
                                 value={row.target_namespace ?? ""}
+                                isDisabled={["ignored", "pod", "primary_udn"].includes(kind)}
+                                placeholder={
+                                  net?.network_type === "cudn" ? "VM's namespace" : undefined
+                                }
                                 onChange={(_e, v) =>
                                   patchRow("networks", i, { target_namespace: v || null })
                                 }
@@ -581,6 +707,7 @@ export default function ResourceMappingDetailPage() {
                               <ConfidenceCell
                                 confidence={row.confidence}
                                 rationale={row.rationale}
+                                method={row.method}
                               />
                             </Td>
                             {rowActions("networks", i, row, "source_network")}
@@ -617,7 +744,7 @@ export default function ResourceMappingDetailPage() {
                         isLoading={suggesting === "storage"}
                         isDisabled={Boolean(suggesting) || storage.length === 0}
                       >
-                        Suggest with AI
+                        Suggest mappings
                       </Button>
                     </FlexItem>
                   </Flex>
@@ -635,17 +762,21 @@ export default function ResourceMappingDetailPage() {
                   <Table aria-label="Storage mappings" variant="compact">
                     <Thead>
                       <Tr>
-                        <Th width={25}>Source datastore</Th>
-                        <Th width={25}>Target storage class</Th>
-                        <Th width={20}>Access mode</Th>
-                        <Th width={20}>Confidence</Th>
-                        <Th width={10} screenReaderText="Row actions" />
+                        <Th width={20}>Source datastore</Th>
+                        <Th width={22}>Target storage class</Th>
+                        <Th width={15}>Access mode</Th>
+                        <Th width={13}>Volume mode</Th>
+                        <Th width={25}>Confidence</Th>
+                        <Th width={5} screenReaderText="Row actions" />
                       </Tr>
                     </Thead>
                     <Tbody>
                       {storage.map((row, i) => {
                         const src = (row.source_datastore ?? "").trim();
                         const isDup = src && dupStore.get(src) > 1;
+                        const sc = catalog.storageClasses.find(
+                          (c) => c.name === row.target_storage_class,
+                        );
                         return (
                           <Tr key={row._key ?? i}>
                             <Td dataLabel="Source datastore">
@@ -673,19 +804,30 @@ export default function ResourceMappingDetailPage() {
                                   row.source_datastore || `row ${i + 1}`
                                 }`}
                                 value={row.target_storage_class ?? ""}
-                                onChange={(_e, v) => {
-                                  const hit = catalog.storageClasses.find((s) => s.name === v);
-                                  patchRow("storage", i, {
-                                    target_storage_class: v || null,
-                                    access_mode: hit?.access_mode ?? row.access_mode,
-                                  });
-                                }}
+                                onChange={(_e, v) =>
+                                  // Access / volume mode stay "Inherit": the
+                                  // StorageClass's own values apply unless
+                                  // the row overrides them.
+                                  patchRow("storage", i, { target_storage_class: v || null })
+                                }
                               >
                                 <FormSelectOption value="" label="Not mapped" />
                                 {catalog.storageClasses.map((s) => (
-                                  <FormSelectOption key={s.id} value={s.name} label={s.name} />
+                                  <FormSelectOption
+                                    key={s.id}
+                                    value={s.name}
+                                    label={`${s.name}${s.copy_offload_vendor ? " (copy offload)" : ""}`}
+                                  />
                                 ))}
                               </FormSelect>
+                              {sc?.copy_offload_vendor && (
+                                <Content
+                                  component="small"
+                                  className="pf-v6-u-display-block pf-v6-u-color-200"
+                                >
+                                  {`Copy offload: ${sc.copy_offload_vendor}`}
+                                </Content>
+                              )}
                             </Td>
                             <Td dataLabel="Access mode">
                               <FormSelect
@@ -697,8 +839,30 @@ export default function ResourceMappingDetailPage() {
                                   patchRow("storage", i, { access_mode: v || null })
                                 }
                               >
-                                <FormSelectOption value="" label="Inherit" />
+                                <FormSelectOption
+                                  value=""
+                                  label={sc?.access_mode ? `Inherit (${sc.access_mode})` : "Inherit"}
+                                />
                                 {ACCESS_MODES.map((m) => (
+                                  <FormSelectOption key={m} value={m} label={m} />
+                                ))}
+                              </FormSelect>
+                            </Td>
+                            <Td dataLabel="Volume mode">
+                              <FormSelect
+                                aria-label={`Volume mode for ${
+                                  row.source_datastore || `row ${i + 1}`
+                                }`}
+                                value={row.volume_mode ?? ""}
+                                onChange={(_e, v) =>
+                                  patchRow("storage", i, { volume_mode: v || null })
+                                }
+                              >
+                                <FormSelectOption
+                                  value=""
+                                  label={sc?.volume_mode ? `Inherit (${sc.volume_mode})` : "Inherit"}
+                                />
+                                {VOLUME_MODES.map((m) => (
                                   <FormSelectOption key={m} value={m} label={m} />
                                 ))}
                               </FormSelect>
@@ -707,6 +871,7 @@ export default function ResourceMappingDetailPage() {
                               <ConfidenceCell
                                 confidence={row.confidence}
                                 rationale={row.rationale}
+                                method={row.method}
                               />
                             </Td>
                             {rowActions("storage", i, row, "source_datastore")}

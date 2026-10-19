@@ -13,6 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field
 class OCPTargetNamespaceBase(BaseModel):
     name: str = Field(min_length=1, max_length=253)
     description: str | None = Field(default=None, max_length=4096)
+    # Primary UDN/CUDN serving this namespace (catalog network name), if any.
+    primary_udn_network: str | None = Field(default=None, max_length=128)
 
 
 class OCPTargetNamespaceCreate(OCPTargetNamespaceBase):
@@ -22,6 +24,7 @@ class OCPTargetNamespaceCreate(OCPTargetNamespaceBase):
 class OCPTargetNamespaceUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=253)
     description: str | None = Field(default=None, max_length=4096)
+    primary_udn_network: str | None = Field(default=None, max_length=128)
 
 
 class OCPTargetNamespaceRead(OCPTargetNamespaceBase):

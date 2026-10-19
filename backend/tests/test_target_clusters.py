@@ -640,15 +640,18 @@ def test_suggest_storage_drops_hallucinated_target_names(client):
             }
         ],
     }
-    with patch("app.core.mapping_suggester.get_active_backend") as factory:
+    with patch("app.api.targets.get_active_backend") as factory:
         backend = factory.return_value
+        backend.backend_type = "fake"
         backend.chat_sync.return_value = {"content": __import__("json").dumps(fake_response)}
         r = client.post(f"/api/mappings/{mapping['id']}/suggest-storage")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["suggestions"][0]["target_storage_class"] is None
-    assert body["suggestions"][0]["confidence"] == "low"
-    assert "Dropped" in body["rationale_summary"]
+    row = body["suggestions"][0]
+    # A made-up target is never returned: the answer fails validation, is
+    # retried, and the deterministic fallback (or a rule) decides instead.
+    assert row["target_storage_class"] != "non-existent-sc"
+    assert row["method"] in ("mechanical_fallback", "rule:single_target", "rule:name")
 
 
 # ---------------------------------------------------------------------------
@@ -678,6 +681,9 @@ def test_mapping_resolver_resolves_network_storage_namespace():
         "name": "prod-vlan-100",
         "namespace": "openshift-multus",
         "type": "nad",
+        # No catalog snapshot → classified from the row's own type.
+        "kind": "multus",
+        "network": None,
     }
     assert resolver.resolve_network("missing") is None
     assert resolver.resolve_storage("src-tier1") == "ocs-rbd"
