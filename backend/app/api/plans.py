@@ -172,14 +172,19 @@ def _exclude_uncovered(
             kept.append((key, p_vms))
             continue
         gaps_by_vm: dict[int, list[str]] = {}
+        inventory_by_vm: dict[int, list[str]] = {}
         for g in coverage.gaps:
-            gaps_by_vm.setdefault(g.vm_id, []).append(f"{g.kind} '{g.source_value}'")
+            if g.kind == "no_datastore":
+                inventory_by_vm.setdefault(g.vm_id, []).append(g.source_value)
+            else:
+                gaps_by_vm.setdefault(g.vm_id, []).append(f"{g.kind} '{g.source_value}'")
         for vm in p_vms:
+            parts = list(inventory_by_vm.get(vm.id, []))
             if vm.id in gaps_by_vm:
-                excluded.append(
-                    _excluded_entry(vm, "no mapping for " + ", ".join(gaps_by_vm[vm.id]))
-                )
-        remaining = [vm for vm in p_vms if vm.id not in gaps_by_vm]
+                parts.append("no mapping for " + ", ".join(gaps_by_vm[vm.id]))
+            if parts:
+                excluded.append(_excluded_entry(vm, "; ".join(parts)))
+        remaining = [vm for vm in p_vms if vm.id not in gaps_by_vm and vm.id not in inventory_by_vm]
         if remaining:
             kept.append((key, remaining))
     return kept
@@ -1023,7 +1028,9 @@ def wave_mtv_yaml(
     )
     db.commit()
 
-    filename = f"wave-{wave_number}-plan-{plan_id}.yaml"
+    # Same name the bundle uses, so the bundle README's `plan-N-wave-*.yaml` loop
+    # also matches a wave downloaded on its own.
+    filename = f"plan-{plan_id}-wave-{wave_number}.yaml"
     return Response(
         content=yaml_text,
         media_type="application/yaml",

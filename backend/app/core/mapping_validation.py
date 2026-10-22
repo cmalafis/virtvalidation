@@ -28,6 +28,11 @@ from dataclasses import dataclass, field
 from app.models.target import ResourceMapping
 from app.models.vm import VM
 
+NO_DATASTORE_REASON = (
+    "no datastore recorded for this VM — re-export RVTools with the vInfo "
+    "Path column and the vDisk sheet"
+)
+
 
 @dataclass(frozen=True)
 class MappingGap:
@@ -37,10 +42,12 @@ class MappingGap:
 
     vm_id: int
     vm_name: str
-    kind: str  # "network" | "datastore" | "namespace"
+    kind: str  # "network" | "datastore" | "namespace" | "no_mapping" | "no_datastore"
     source_value: str
 
     def render(self) -> str:
+        if self.kind == "no_datastore":
+            return f"VM {self.vm_id} ({self.vm_name!r}): {self.source_value}"
         return (
             f"VM {self.vm_id} ({self.vm_name!r}): missing {self.kind} mapping "
             f"for source {self.source_value!r}"
@@ -181,8 +188,14 @@ def validate_plan_inputs(
     operator has selected mappings (``mappings`` non-empty) but a VM's
     vCenter isn't covered by any of them, that's a ``no_mapping``
     gap surfaced as-is. When ``mappings`` is empty (operator opted
-    out of mapping-driven coverage), every VM is validated as if
-    ``mapping=None`` — only per-VM target fields count.
+    out), no network or datastore resolves, so every VM that uses one
+    gets a gap — only ``target_namespace_override`` still counts.
+
+    A VM with no datastore at all is a ``no_datastore`` gap: every real
+    VM lives on one, so an empty list means the inventory (usually the
+    RVTools export) is missing data, and the StorageMap would silently
+    omit the VM's disks. A VM with no network is NOT a gap — a NIC-less
+    VM is valid in MTV and gets an empty NetworkMap.
 
     VMs with no ``source_vcenter_id`` (test fixtures, legacy imports
     pre-dating the source_vcenter_id column) can't be routed by
@@ -240,6 +253,15 @@ def validate_plan_inputs(
         # Datastores — same as networks; per-VM target_storage_class
         # was removed in the multi-cluster target architecture
         # migration.
+        if not any(vm.vsphere_datastores or []):
+            gaps.append(
+                MappingGap(
+                    vm_id=vm.id,
+                    vm_name=vm.name,
+                    kind="no_datastore",
+                    source_value=NO_DATASTORE_REASON,
+                )
+            )
         for src in vm.vsphere_datastores or []:
             if not src:
                 continue

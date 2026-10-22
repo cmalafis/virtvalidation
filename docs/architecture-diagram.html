@@ -10821,6 +10821,7 @@ const DATA = {
           "/api/plans/{id}",
           "/api/plans/{id}/mark-succeeded",
           "/api/plans/{id}/vms",
+          "/api/plans/{id}/yaml",
           "/api/plans?limit=200&series_id={id}"
         ],
         "members": [
@@ -11495,6 +11496,25 @@ const DATA = {
       },
       {
         "kind": "frontend",
+        "id": "frontend/src/test/planningPath.test.jsx",
+        "title": "planningPath.test.jsx",
+        "subtitle": "frontend/src/test/planningPath.test.jsx",
+        "summary": "Behavior tests for the RVTools-only planning path: wizard \u2192 plan \u2192 YAML.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "respond",
+            "kind": "helper"
+          },
+          {
+            "name": "stub",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
         "id": "frontend/src/test/rvtoolsImport.test.jsx",
         "title": "rvtoolsImport.test.jsx",
         "subtitle": "frontend/src/test/rvtoolsImport.test.jsx",
@@ -11641,6 +11661,25 @@ const DATA = {
         "members": [
           {
             "name": "asArray",
+            "kind": "helper"
+          }
+        ]
+      },
+      {
+        "kind": "frontend",
+        "id": "frontend/src/utils/download.js",
+        "title": "download.js",
+        "subtitle": "frontend/src/utils/download.js",
+        "summary": "Save a fetch() Response as a file download.",
+        "category": "frontend",
+        "api_calls": [],
+        "members": [
+          {
+            "name": "filenameFrom",
+            "kind": "helper"
+          },
+          {
+            "name": "saveResponseAsFile",
             "kind": "helper"
           }
         ]

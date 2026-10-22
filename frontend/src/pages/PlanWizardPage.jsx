@@ -1,7 +1,9 @@
 // Generate a migration plan.
 //
 // Three steps on PF's Wizard: name it, pick the mappings that cover the
-// estate, pick the VMs. Generation is async, so the last step polls the
+// estate (all ticked by default — the backend narrows them to each
+// partition's (vCenter, cluster) pair, and an empty list means "no
+// mappings", which skips every VM), pick the VMs. Generation is async, so the last step polls the
 // plan's pipeline status and reports which stage it's on — the stages are
 // named in plan_pipeline._PIPELINE_STAGE_TO_STATUS and the LLM annotation
 // step is slow enough that a bare spinner reads as stuck.
@@ -172,7 +174,11 @@ export default function PlanWizardPage() {
 
   useEffect(() => {
     fetchJSON("/api/mappings")
-      .then((rows) => setMappings(Array.isArray(rows) ? rows : []))
+      .then((rows) => {
+        const list = asArray(rows);
+        setMappings(list);
+        setMappingIds(new Set(list.map((m) => m?.id).filter((id) => id != null)));
+      })
       .catch(() => setMappings([]))
       .finally(() => setMappingsLoading(false));
   }, []);
@@ -322,7 +328,12 @@ export default function PlanWizardPage() {
   const previewPlans = asArray(preview?.plans);
   const previewExcluded = asArray(preview?.excluded);
   const overCeiling = selected.size > requestCeiling;
-  const canGenerate = name.trim().length > 0 && selected.size > 0 && !generating && !overCeiling;
+  const canGenerate =
+    name.trim().length > 0 &&
+    selected.size > 0 &&
+    mappingIds.size > 0 &&
+    !generating &&
+    !overCeiling;
 
   const submit = async () => {
     if (!canGenerate) return;
@@ -729,7 +740,11 @@ export default function PlanWizardPage() {
             </Form>
           </WizardStep>
 
-          <WizardStep name="Resource mappings" id="step-mappings">
+          <WizardStep
+            name="Resource mappings"
+            id="step-mappings"
+            footer={{ isNextDisabled: mappingIds.size === 0 }}
+          >
             <Content component="p" className="pf-v6-u-mb-md">
               Mappings translate vSphere networks and datastores into
               OpenShift NADs and StorageClasses. Every selected VM must
@@ -759,6 +774,16 @@ export default function PlanWizardPage() {
                     onChange={(_e, on) => toggleMapping(m.id, on)}
                   />
                 ))}
+                {mappingIds.size === 0 && (
+                  <Alert
+                    variant="warning"
+                    isInline
+                    title="Select at least one mapping"
+                  >
+                    With no mapping, no VM can resolve a target network or
+                    storage class, so every VM would be skipped.
+                  </Alert>
+                )}
               </Form>
             )}
           </WizardStep>

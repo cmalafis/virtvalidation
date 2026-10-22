@@ -189,7 +189,11 @@ def test_empty_wave_raises():
         generate_wave_yaml(ctx, [])
 
 
-def test_wave_with_no_networks_raises(ctx):
+def test_wave_with_no_networks_emits_an_empty_network_map(ctx):
+    # A NIC-less VM is valid in MTV; the CRD allows ``map: []``. Refusing
+    # it made a whole wave undownloadable over VMs Stage 0 had accepted.
+    from app.core.mtv_validate import validate_documents
+
     vms = [
         {
             "name": "stray",
@@ -200,7 +204,16 @@ def test_wave_with_no_networks_raises(ctx):
             "target_network_attachment": "nad-a",
         },
     ]
-    with pytest.raises(MTVGenerationError, match="no source networks"):
+    text = generate_wave_yaml(ctx, vms)
+    docs = _docs(text)
+    assert docs[0]["kind"] == "NetworkMap"
+    assert docs[0]["spec"]["map"] == []
+    assert validate_documents(text) == []
+
+
+def test_wave_with_no_datastores_raises(ctx):
+    vms = [_one_vm(vsphere_datastores=[])]
+    with pytest.raises(MTVGenerationError, match="no source datastores"):
         generate_wave_yaml(ctx, vms)
 
 

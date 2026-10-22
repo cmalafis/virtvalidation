@@ -2,6 +2,10 @@
 
 End-to-end, from an empty appliance to a validated migration wave.
 
+**Only planning?** If you want waves and MTV YAML from an RVTools export and
+won't validate over SSH, follow [PLANNING_QUICKSTART.md](PLANNING_QUICKSTART.md)
+instead. It skips everything SSH-related.
+
 This is the operator's guide. It assumes VirtValidate is already deployed
 — see [INSTALLATION.md](INSTALLATION.md) for Podman/Quadlet and
 [deploy/README.md](../deploy/README.md) for the Helm chart.
@@ -135,8 +139,9 @@ worth completing now.
 
 **Discover → Virtual Machines → Import VMs.**
 
-Select an RVTools `.xlsx` (the `vInfo` sheet) or a CSV. Parsing happens in
-your browser; only the parsed rows are sent to the appliance.
+Select an RVTools `.xlsx` (use **Export all to Excel**; the `vInfo` sheet is
+required, the others add disk, NIC, VLAN and snapshot detail) or a CSV. The
+file is uploaded and parsed on the appliance.
 
 The import then shows every vCenter hostname it detected and lets you
 route each one to a registered source. **VMs whose hostname doesn't route
@@ -153,7 +158,9 @@ column list.
 Plans partition production separately from development and DR, because
 operators sequence those stages separately in practice. Environment is
 auto-detected from VM name, folder, cluster and custom attributes where
-possible; you can correct it in bulk from the inventory table.
+possible. There is no screen for correcting it yet. Use
+`POST /api/vms/bulk-set-environment` (`{"vm_ids": [...], "environment":
+"production"}`); labels set this way survive re-imports.
 
 See [ENVIRONMENT_LABELS.md](ENVIRONMENT_LABELS.md).
 
@@ -180,7 +187,7 @@ The **Namespaces** tab decides where VMs land: a single namespace for
 everything, one per environment, or one per application. Without it, VMs
 fall back to the cluster default and preflight warns about it.
 
-**Suggest with AI** proposes matches with a confidence and a rationale for
+**Suggest mappings** proposes matches with a confidence and a rationale for
 each row. These populate the form only — **nothing is saved until you
 press Save.** Review them. A wrong network mapping puts a production VM on
 the wrong VLAN.
@@ -305,7 +312,14 @@ captured and YAML you already applied still refer to the same wave. A
 removed VM returns to the inventory as available. Every change is in the
 audit log. A plan you have marked succeeded can no longer be edited.
 
-See [PLANNING_GUIDE.md](PLANNING_GUIDE.md) and
+**Download MTV YAML** on a wave card gives `plan-<id>-wave-<n>.yaml`.
+**Download all YAML** on the plan gives a zip with every wave plus a README
+that walks through `oc apply --dry-run=server`, applying, and starting the
+`Migration`. The YAML is built when you download it, so it always reflects
+your latest edits.
+
+See [PLANNING_QUICKSTART.md](PLANNING_QUICKSTART.md),
+[PLANNING_GUIDE.md](PLANNING_GUIDE.md) and
 [HA_MIGRATION_STRATEGY.md](HA_MIGRATION_STRATEGY.md).
 
 ---
@@ -367,9 +381,10 @@ the app chrome and flattens to ink on paper.
 2. **Revoke the validation key** from the wave's VMs. Access was scoped to
    this wave; don't leave it in place.
 
-If a migration has to be reversed, the inventory offers
-**Revert to VMware** (`migrated` → `rolled_back`) and then **Make
-available** (`rolled_back` → `available`) so those VMs can join a new plan.
+If a migration has to be reversed, there is no button for it yet. Call
+`PATCH /api/vms/{id}` with `{"lifecycle_state": "rolled_back"}`, then with
+`{"lifecycle_state": "available"}`, so the VM can join a new plan. Marking a
+plan succeeded does not require a validation.
 
 ---
 

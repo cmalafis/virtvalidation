@@ -3197,6 +3197,7 @@ API calls:
 - `/api/plans/{id}`
 - `/api/plans/{id}/mark-succeeded`
 - `/api/plans/{id}/vms`
+- `/api/plans/{id}/yaml`
 - `/api/plans?limit=200&series_id={id}`
 
 Exports / inner components:
@@ -3537,6 +3538,14 @@ Exports / inner components:
 
 </details>
 
+<details><summary><strong><code>frontend/src/test/planningPath.test.jsx</code></strong> — <em>Frontend component</em> · Behavior tests for the RVTools-only planning path: wizard → plan → YAML.</summary>
+
+Exports / inner components:
+- **`respond`** (helper)
+- **`stub`** (helper)
+
+</details>
+
 <details><summary><strong><code>frontend/src/test/rvtoolsImport.test.jsx</code></strong> — <em>Frontend component</em> · Behavior tests for the server-side import flow.</summary>
 
 Exports / inner components:
@@ -3594,6 +3603,14 @@ Exports / inner components:
 
 Exports / inner components:
 - **`asArray`** (helper)
+
+</details>
+
+<details><summary><strong><code>frontend/src/utils/download.js</code></strong> — <em>Frontend component</em> · Save a fetch() Response as a file download.</summary>
+
+Exports / inner components:
+- **`filenameFrom`** (helper)
+- **`saveResponseAsFile`** (helper)
 
 </details>
 
