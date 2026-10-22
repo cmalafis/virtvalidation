@@ -35,6 +35,7 @@ import {
 
 import { asArray } from "../../utils/asArray";
 import { fetchJSON } from "../../utils/fetchJSON";
+import { saveResponseAsFile } from "../../utils/download";
 import PlanVMTable from "./PlanVMTable";
 import WaveRunPanel from "./WaveRunPanel";
 import WaveMappingSummary, { waveMappingBadges } from "./WaveMappingSummary";
@@ -95,17 +96,7 @@ export default function WaveSection({
   const downloadYaml = async () => {
     try {
       const res = await fetch(`/api/plans/${plan.id}/waves/${number}/mtv-yaml`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      const blob = new Blob([text], { type: "application/yaml" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `plan-${plan.id}-wave-${number}.yaml`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await saveResponseAsFile(res, `plan-${plan.id}-wave-${number}.yaml`);
     } catch (e) {
       toast.error(`Could not download the YAML: ${e.message}`);
     }

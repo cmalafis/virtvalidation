@@ -533,7 +533,11 @@ class TestPlanLifecycle:
         """Regression: ``mapping_ids: []`` (the operator opting out of
         mappings) used to crash the background task on a removed
         ``plan_row.mapping_id`` attribute, leaving the plan stuck in
-        ``validating`` with its VM held as ``planned``."""
+        ``validating`` with its VM held as ``planned``.
+
+        A datastore-less VM no longer gets past Stage 0 (the inventory is
+        missing data), so with no mappings nothing is plannable: the
+        request is refused up front and the VM is never held."""
         _setup_backend(monkeypatch)
         vm = _enroll(
             client,
@@ -545,11 +549,26 @@ class TestPlanLifecycle:
         r = client.post(
             "/api/plans", json={"name": "No mappings", "vm_ids": [vm["id"]], "mapping_ids": []}
         )
+        assert r.status_code == 422, r.text
+        assert "no datastore recorded" in r.text
+        assert client.get(f"/api/vms/{vm['id']}").json()["lifecycle_state"] == "available"
+
+    def test_vm_without_datastore_is_listed_as_skipped(self, client, monkeypatch):
+        """``skip_ineligible``: a VM the inventory recorded no datastore for
+        is reported in ``excluded`` with a re-export hint instead of
+        producing a StorageMap that silently omits its disks."""
+        _setup_backend(monkeypatch)
+        ok = _enroll(client, "has-ds-01")
+        bad = _enroll(client, "no-ds-01", vsphere_datastores=[])
+        r = client.post(
+            "/api/plans",
+            json={"name": "mixed", "vm_ids": [ok["id"], bad["id"]], "skip_ineligible": True},
+        )
         assert r.status_code == 202, r.text
-        body = client.get(f"/api/plans/{r.json()['id']}").json()
-        assert body["status"] in ("complete", "failed"), body
-        expected = "planned" if body["status"] == "complete" else "available"
-        assert client.get(f"/api/vms/{vm['id']}").json()["lifecycle_state"] == expected
+        excluded = r.json()["excluded"]
+        assert [e["vm_name"] for e in excluded] == ["no-ds-01"]
+        assert "re-export RVTools" in excluded[0]["reason"]
+        assert client.get(f"/api/vms/{bad['id']}").json()["lifecycle_state"] == "available"
 
     def test_mark_succeeded_idempotent(self, client, monkeypatch):
         _setup_backend(monkeypatch)

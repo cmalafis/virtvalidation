@@ -39,6 +39,7 @@ import ConfirmModal from "../common/ConfirmModal";
 import { ErrorEmptyState } from "../common/EmptyStates";
 import { asArray } from "../utils/asArray";
 import { fetchJSON } from "../utils/fetchJSON";
+import { saveResponseAsFile } from "../utils/download";
 import AddVMsModal from "./plan/AddVMsModal";
 import PlanEditModal from "./plan/PlanEditModal";
 import PlanEditToolbar from "./plan/PlanEditToolbar";
@@ -329,6 +330,17 @@ export default function PlanDetailPage() {
     : waves;
   const otherBatches = siblings.filter((p) => p?.id !== plan?.id);
 
+  // fetch + blob, not a bare href: on a 422 an href download saves the
+  // JSON error body as the bundle instead of telling the operator why.
+  const downloadAllYaml = async () => {
+    try {
+      const res = await fetch(`/api/plans/${id}/yaml`);
+      await saveResponseAsFile(res, `plan-${id}-mtv-bundle.zip`);
+    } catch (e) {
+      toast.error(`Could not download the YAML: ${e?.message ?? "unknown error"}`);
+    }
+  };
+
   return (
     <PageFrame
       {...frameProps}
@@ -336,7 +348,7 @@ export default function PlanDetailPage() {
       actions={
         <Flex spaceItems={{ default: "spaceItemsSm" }}>
           <FlexItem>
-            <Button variant="secondary" component="a" href={`/api/plans/${id}/yaml`} download>
+            <Button variant="secondary" onClick={downloadAllYaml}>
               Download all YAML
             </Button>
           </FlexItem>

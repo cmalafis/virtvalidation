@@ -591,15 +591,16 @@ def generate_wave_yaml(
         resolver=resolver,
     )
 
-    if not netmap["spec"]["map"]:
-        raise MTVGenerationError(
-            f"Wave {ctx.wave_number} has no source networks across its VMs — "
-            "set vsphere_networks on at least one VM before generating MTV YAML"
-        )
+    # An empty NetworkMap is valid (the CRD allows ``map: []``): a wave of
+    # NIC-less VMs has nothing to map, and if the inventory merely missed a
+    # NIC, MTV's own Plan validation reports the unmapped NIC before any
+    # disk is copied. An empty StorageMap is not — every VM has disks.
     if not storagemap["spec"]["map"]:
         raise MTVGenerationError(
-            f"Wave {ctx.wave_number} has no source-to-storageclass mappings — "
-            "set vsphere_datastores and target_storage_class on at least one VM"
+            f"Wave {ctx.wave_number} has no source datastores across its VMs — "
+            "the inventory recorded none (re-export RVTools with the vInfo Path "
+            "column and the vDisk sheet), or open the resource mapping and "
+            "assign a storage class to each datastore"
         )
 
     text = yaml.safe_dump_all(

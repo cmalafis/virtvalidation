@@ -725,9 +725,10 @@ running on OCP-Virt"; `lifecycle_state=migrated` means "operator
 declared this plan succeeded". Both can be set independently.
 
 The plan selector hides anything not `available` by default;
-inventory shows the lifecycle pill on every row and surfaces
-"Revert to VMware" + "Make available" affordances on the
-operator-driven transitions. `GET /api/vms` rows carry `plan_id` /
+inventory shows the lifecycle pill on every row. The
+`migrated → rolled_back → available` transitions are API-only today
+(`PATCH /api/vms/{id}`) — there is no Revert / Make available button
+in the PF6 UI, despite older docs saying so. `GET /api/vms` rows carry `plan_id` /
 `plan_name` (and `plan_wave_number` on the single GET) so the UI can
 link a planned VM to its plan and wave.
 
@@ -783,7 +784,8 @@ virtvalidate/
 - [x] PostgreSQL models
 - [x] VM plan-membership lifecycle (`VMLifecycleState`)
 - [x] PlanWizard per-VM selector with selection cap + filters
-- [x] Inventory revert affordances (migrated → rolled_back → available)
+- [ ] Inventory revert affordances (migrated → rolled_back → available) —
+      API works; the PF6 rebuild dropped the buttons
 - [x] Manual plan edits (move / add / remove VMs across waves and plans)
 - [x] OCP 4.21/4.22 mapping refresh (UDN/CUDN/localnet roles, ignored NICs,
       volumeMode + copy offload, catalog import, platform checks)

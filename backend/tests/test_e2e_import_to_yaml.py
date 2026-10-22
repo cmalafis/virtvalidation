@@ -85,16 +85,38 @@ def planned(client, tmp_path, monkeypatch):
         }
         assert client.patch(f"/api/mappings/{m['id']}", json=body).json()["status"] == "complete"
 
-    # The two fixture VMs with no datastore / no network can't be mapped;
-    # plan everything that can be.
+    # Send exactly what the plan wizard sends: every VM, every mapping
+    # (ticked by default), skip_ineligible — after the same preview call.
     vms = client.get("/api/vms?limit=1000").json()["items"]
-    plannable = [v for v in vms if v["vsphere_networks"] and v["vsphere_datastores"]]
-    assert len(plannable) == 998
+    mapping_ids = [m["id"] for m in client.get("/api/mappings").json()]
+    body = {
+        "name": "fleet",
+        "vm_ids": [v["id"] for v in vms],
+        "mapping_ids": mapping_ids,
+        "skip_ineligible": True,
+        "migration_type": "cold",
+    }
+    preview = client.post("/api/plans/preview", json=body)
+    assert preview.status_code == 200, preview.text
 
     started = time.monotonic()
-    r = client.post("/api/plans", json={"name": "fleet", "vm_ids": [v["id"] for v in plannable]})
+    r = client.post("/api/plans", json=body)
     assert r.status_code == 202, r.text
     elapsed = time.monotonic() - started
+
+    # The fixture's datastore-less VM is skipped with a reason, in the
+    # preview and in the real call alike; the network-less VM is planned
+    # (it gets an empty NetworkMap).
+    excluded = r.json()["excluded"]
+    assert [e["vm_name"] for e in excluded] == [e["vm_name"] for e in preview.json()["excluded"]]
+    no_ds = [v for v in vms if not v["vsphere_datastores"]]
+    assert {e["vm_id"] for e in excluded} == {v["id"] for v in no_ds}
+    assert all("datastore" in e["reason"] for e in excluded), excluded
+    assert [p["name"] for p in preview.json()["plans"]] == [p["name"] for p in r.json()["plans"]]
+
+    skipped = {e["vm_id"] for e in excluded}
+    plannable = [v for v in vms if v["id"] not in skipped]
+    assert len(plannable) == 999
     plans = [client.get(f"/api/plans/{p['id']}").json() for p in r.json()["plans"]]
     return {
         "client": client,
@@ -161,6 +183,26 @@ def test_every_emitted_document_passes_the_real_crd_schemas(planned):
                     "namespace": "vms-prod",
                 }
     assert waves > 90
+
+
+def test_wave_of_a_nic_less_vm_downloads_per_wave(planned):
+    """The per-wave endpoint (the wave card's button) emits a valid empty
+    NetworkMap for a VM the export recorded no network for."""
+    client = planned["client"]
+    nic_less = [v["id"] for v in planned["vms"].values() if not v["vsphere_networks"]]
+    assert nic_less, "fixture lost its network-less VM"
+    for plan in planned["plans"]:
+        for wave in plan["waves"]:
+            if nic_less[0] in wave["vm_ids"]:
+                r = client.get(f"/api/plans/{plan['id']}/waves/{wave['wave_number']}/mtv-yaml")
+                assert r.status_code == 200, r.text
+                assert validate_documents(r.text) == []
+                assert (
+                    f'filename="plan-{plan["id"]}-wave-{wave["wave_number"]}.yaml"'
+                    in r.headers["content-disposition"]
+                )
+                return
+    raise AssertionError("network-less VM was not placed in any wave")
 
 
 def test_warm_plan_emits_type_warm_and_warns_in_the_readme(planned):
