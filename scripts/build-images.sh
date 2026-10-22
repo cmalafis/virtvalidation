@@ -62,7 +62,7 @@ VERSION=""
 # backend/Containerfile and frontend/Containerfile.
 UBI_BASE_IMAGES=(
     "registry.access.redhat.com/ubi9/python-312:latest"
-    "registry.access.redhat.com/ubi9/nodejs-20:latest"
+    "registry.access.redhat.com/ubi9/nodejs-22:latest"
     "registry.access.redhat.com/ubi9/nginx-124:latest"
 )
 
@@ -274,7 +274,7 @@ build_frontend() {
         echo "    Building dist/ on host to bypass esbuild QEMU crash"
         if ! command -v npm >/dev/null 2>&1; then
             echo "ERROR: npm not on PATH; needed for host-side dist/ build." >&2
-            echo "       Install Node 20+, or run with PLATFORM=linux/arm64" >&2
+            echo "       Install Node 22+, or run with PLATFORM=linux/arm64" >&2
             echo "       for a native build." >&2
             exit 6
         fi

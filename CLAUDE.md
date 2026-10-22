@@ -262,7 +262,7 @@ Virtualization using SSH + local LLM reasoning. Air-gapped by design.
   - **Standard variant (default).** Red Hat UBI 9, pinned to patched
     digests rather than `:latest`:
     - `registry.access.redhat.com/ubi9/python-312@sha256:...` (backend)
-    - `registry.access.redhat.com/ubi9/nodejs-20@sha256:...` (frontend builder)
+    - `registry.access.redhat.com/ubi9/nodejs-22@sha256:...` (frontend builder)
     - `registry.access.redhat.com/ubi9/nginx-124@sha256:...` (frontend runtime)
   - **Hardened variant (opt-in).** Red Hat Hardened Images via
     `registry.redhat.io`. Minimal, signed, SBOM-embedded, ~0 CVE.

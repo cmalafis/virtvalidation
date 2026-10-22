@@ -1,4 +1,4 @@
-FROM registry.access.redhat.com/ubi9/nginx-124@sha256:1f87af5815e0056db802c1323dbe5dc0643602268b46b891c2d4bc1fc369f9f3
+FROM registry.access.redhat.com/ubi9/nginx-124@sha256:f414eb6c23a501c921542b75e30032979640682d8eaa37b500d7d34f4048e5ec
 
 # IMAGE_VERSION not VERSION: ubi9/nginx-124 sets ENV VERSION=0 which
 # clobbers ARG VERSION during LABEL substitution. See frontend/Containerfile.
@@ -11,7 +11,7 @@ LABEL org.opencontainers.image.title="virtvalidate-frontend" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.source="https://github.com/virtvalidate/virtvalidate" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/nginx-124@sha256:1f87af5815e0056db802c1323dbe5dc0643602268b46b891c2d4bc1fc369f9f3"
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/nginx-124@sha256:f414eb6c23a501c921542b75e30032979640682d8eaa37b500d7d34f4048e5ec"
 
 # Runtime-only stage used by the cross-arch build path
 # (scripts/build-images.sh on Apple Silicon → linux/amd64). The

@@ -1,0 +1,17 @@
+# Dev / CI tooling. Not installed into the container images — the
+# Containerfiles install requirements.txt only, so linters, test runners
+# and scanners (and their transitive deps, e.g. nltk via safety) never
+# ship in production.
+-r requirements.txt
+
+# --- dev / test ---
+ruff==0.4.4
+mypy==1.10.0
+pytest==9.0.3             # bumped from 8.2.0 — fixes GHSA-6w46-j5rx-g56g
+pytest-asyncio==1.3.0     # bumped from 0.23.6 — pytest 9 compatibility (1.0.0 caps pytest<9)
+pytest-cov==6.0.0         # bumped from 5.0.0 — pytest 9 compatibility
+
+# --- security scanners (run locally; CI is deferred — see CLAUDE.md) ---
+bandit==1.7.9
+pip-audit==2.7.3
+safety==3.7.0             # bumped from 3.2.7 — older safety pins filelock~=3.12.2

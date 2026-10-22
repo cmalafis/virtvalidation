@@ -1,10 +1,10 @@
 # --- build stage -----------------------------------------------------------
-# Red Hat UBI 9 Node.js 20 — see docs/CONTAINER_IMAGES.md for the UBI
+# Red Hat UBI 9 Node.js 22 — see docs/CONTAINER_IMAGES.md for the UBI
 # rationale. UBI images run as UID 1001 by default; COPY brings files
 # in with the host UID, which doesn't match. --chown=1001:0 keeps the
 # UBI default user (1001 / GID 0) the owner so npm + vite can write
 # their temp files in /opt/app-root/src/node_modules during the build.
-FROM registry.access.redhat.com/ubi9/nodejs-20@sha256:e395d430f6534e9f8df4519cbbf11fe5a3ac8f2c1209c821bf7b05520dd7c7ce AS builder
+FROM registry.access.redhat.com/ubi9/nodejs-22@sha256:1d423d9a54713c59859c77f35ae7d2e61d330993aa4f28fe979c920038c4c867 AS builder
 WORKDIR /opt/app-root/src
 COPY --chown=1001:0 package*.json ./
 RUN npm ci
@@ -16,7 +16,7 @@ RUN npm run build
 # and listens on 8080 by default. That maps cleanly onto OpenShift's
 # restricted-v2 SCC without the upstream nginx-unprivileged chmod
 # gymnastics we used to need.
-FROM registry.access.redhat.com/ubi9/nginx-124@sha256:1f87af5815e0056db802c1323dbe5dc0643602268b46b891c2d4bc1fc369f9f3
+FROM registry.access.redhat.com/ubi9/nginx-124@sha256:f414eb6c23a501c921542b75e30032979640682d8eaa37b500d7d34f4048e5ec
 
 # IMAGE_VERSION not VERSION: ubi9/nginx-124 sets ENV VERSION=0 which
 # clobbers ARG VERSION during LABEL substitution. Renaming the build
@@ -31,7 +31,7 @@ LABEL org.opencontainers.image.title="virtvalidate-frontend" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.source="https://github.com/virtvalidate/virtvalidate" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/nginx-124@sha256:1f87af5815e0056db802c1323dbe5dc0643602268b46b891c2d4bc1fc369f9f3"
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/nginx-124@sha256:f414eb6c23a501c921542b75e30032979640682d8eaa37b500d7d34f4048e5ec"
 
 # UBI nginx serves from /opt/app-root/src and reads its config from
 # /etc/nginx/nginx.conf. We replace the stock config with a template

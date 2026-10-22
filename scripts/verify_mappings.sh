@@ -21,7 +21,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/backend"
 
 if [[ ! -x .venv/bin/python ]]; then
-  echo "FAIL: backend/.venv not found. Run 'python3.12 -m venv backend/.venv && backend/.venv/bin/pip install -r backend/requirements.txt' first." >&2
+  echo "FAIL: backend/.venv not found. Run 'python3.12 -m venv backend/.venv && backend/.venv/bin/pip install -r backend/requirements-dev.txt' first." >&2
   exit 2
 fi
 

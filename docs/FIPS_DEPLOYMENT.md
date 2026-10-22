@@ -57,7 +57,7 @@ The shipped images already use Red Hat UBI 9 — no swap required:
 # backend/Containerfile
 FROM registry.access.redhat.com/ubi9/python-312:latest
 # frontend/Containerfile
-FROM registry.access.redhat.com/ubi9/nodejs-20:latest AS builder
+FROM registry.access.redhat.com/ubi9/nodejs-22:latest AS builder
 FROM registry.access.redhat.com/ubi9/nginx-124:latest
 ```
 

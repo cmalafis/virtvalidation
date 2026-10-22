@@ -1,6 +1,6 @@
 # --- runtime ---
-fastapi==0.121.3          # bumped from 0.111.0 to admit starlette 0.49.1
-starlette==0.49.1         # fixes GHSA-f96h-pmfr-66vw, GHSA-2c2j-9gv5-cj73, GHSA-7f5h-v6xp-fcq8
+fastapi==0.134.0          # first release admitting starlette 1.x while keeping pydantic 2.7
+starlette==1.3.1          # bumped from 0.49.1 — clears the High/Medium advisories fixed in 1.0.1–1.3.1
 uvicorn[standard]==0.30.0
 sqlalchemy==2.0.30
 alembic==1.13.1
@@ -23,17 +23,6 @@ svglib<1.6.0              # xhtml2pdf hard-requires svglib; 1.6.0+ added
 pyyaml==6.0.1
 jsonschema==4.23.0         # offline validation of generated MTV YAML against the forklift CRDs
 openpyxl==3.1.5           # server-side RVTools parsing (read-only streaming mode)
-python-multipart==0.0.20  # FastAPI UploadFile / Form for POST /api/imports/rvtools
+python-multipart==0.0.31  # FastAPI UploadFile / Form for POST /api/imports/rvtools; 0.0.31 clears the 0.0.20 Highs
 filelock==3.20.3          # explicit pin — fixes GHSA-w853-jp5j-5j7f, GHSA-qmgc-5h2g-mvrw
-
-# --- dev / CI only (kept here per project convention) ---
-ruff==0.4.4
-mypy==1.10.0
-pytest==9.0.3             # bumped from 8.2.0 — fixes GHSA-6w46-j5rx-g56g
-pytest-asyncio==1.3.0     # bumped from 0.23.6 — pytest 9 compatibility (1.0.0 caps pytest<9)
-pytest-cov==6.0.0         # bumped from 5.0.0 — pytest 9 compatibility
-
-# --- security scanners (CI-only; run via .github/workflows/ci.yml) ---
-bandit==1.7.9
-pip-audit==2.7.3
-safety==3.7.0             # bumped from 3.2.7 — older safety pins filelock~=3.12.2
+certifi>=2026.10.19       # explicit floor — 2026.10.18 is flagged Critical by Quay/Clair
