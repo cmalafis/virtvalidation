@@ -2,8 +2,8 @@ apiVersion: v2
 name: virtvalidate
 description: AI-powered VM migration validation platform — air-gapped, local LLM
 type: application
-version: 0.1.6
-appVersion: "0.1.2-alpha"
+version: 0.1.7
+appVersion: "v0.5.6-cve-patch"
 keywords:
   - migration
   - vmware
