@@ -86,7 +86,7 @@ Two-stage build:
 
 | Stage | Base | Purpose |
 |-------|------|---------|
-| `builder` | `ubi9/nodejs-20` | `npm ci` + `npm run build` |
+| `builder` | `ubi9/nodejs-22` | `npm ci` + `npm run build` |
 | runtime | `ubi9/nginx-124` | Serves `/opt/app-root/src` on port 8080 |
 
 **Runtime user:** UID 1001 / GID 0.
@@ -174,6 +174,16 @@ update the `FROM` lines in:
 - The `UBI_BASE_IMAGES` array in `scripts/build-images.sh`
 - The `org.opencontainers.image.base.name` label in each Containerfile
 
+Pin the **manifest-list** digest (multi-arch), not a per-arch image
+digest, so arm64 dev builds and amd64 cluster builds resolve the same
+pin. The Red Hat catalog shows it as `manifest_list_digest`.
+
+`backend/requirements.txt` is runtime-only — it is what the images
+install. Linters, test runners and scanners live in
+`backend/requirements-dev.txt` (which includes `requirements.txt`) and
+never enter an image. Keep it that way: scanner tooling drags in
+transitive deps (e.g. `safety` → `nltk`) that show up as image CVEs.
+
 Resolve a new digest the same way:
 
 ```bash
@@ -226,7 +236,7 @@ product.
 
 ### What the `-s` flag does *not* scan
 
-- Build-stage layers (`ubi9/nodejs-20`). Those layers don't ship in
+- Build-stage layers (`ubi9/nodejs-22`). Those layers don't ship in
   the runtime image, so a CVE in a node devDep doesn't reach
   production. Trivy is invoked against the final tag only.
 
@@ -271,7 +281,7 @@ Helm chart at the mirror.
 
 ```bash
 # On a connected host, save the bases
-for tag in ubi9/python-312:latest ubi9/nodejs-20:latest ubi9/nginx-124:latest; do
+for tag in ubi9/python-312:latest ubi9/nodejs-22:latest ubi9/nginx-124:latest; do
     podman pull "registry.access.redhat.com/$tag"
     podman save -o "${tag//\//-}.tar" "registry.access.redhat.com/$tag"
 done

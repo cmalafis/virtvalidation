@@ -141,7 +141,7 @@ Output image is byte-identical to the multi-stage build's output
 
 ### Prevention
 - The script handles this automatically; the only operator
-  burden is having Node 20+ installed locally.
+  burden is having Node 22+ installed locally.
 - Override with `PLATFORM=linux/arm64` to build natively for
   M-series testing.
 

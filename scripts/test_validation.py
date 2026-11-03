@@ -272,7 +272,7 @@ def main() -> int:
     except ModuleNotFoundError as e:
         print(
             f"error: failed to import app.core ({e}).\n"
-            "  Install backend deps first: pip install -r backend/requirements.txt",
+            "  Install backend deps first: pip install -r backend/requirements-dev.txt",
             file=sys.stderr,
         )
         return 2

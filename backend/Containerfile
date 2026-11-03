@@ -3,7 +3,7 @@
 # is the only path that can pair with a FIPS-enabled host kernel to
 # produce a FIPS-validated runtime. See docs/CONTAINER_IMAGES.md and
 # docs/FIPS_DEPLOYMENT.md for the full requirements.
-FROM registry.access.redhat.com/ubi9/python-312@sha256:69047002cca0357b0ebf4fd95c29eff7d357e7b906807af0d9b5c62783074ce0 AS runtime
+FROM registry.access.redhat.com/ubi9/python-312@sha256:f43a57e9a6a2243e333008219002b9f2b1661868a94199f5dec4d602e1501482 AS runtime
 
 # Build args allow CI to inject version and SHA without rebuilding the
 # whole image on every commit (BuildKit layer caching keeps the
@@ -21,7 +21,7 @@ LABEL org.opencontainers.image.title="virtvalidate-backend" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.source="https://github.com/virtvalidate/virtvalidate" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/python-312@sha256:69047002cca0357b0ebf4fd95c29eff7d357e7b906807af0d9b5c62783074ce0"
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/python-312@sha256:f43a57e9a6a2243e333008219002b9f2b1661868a94199f5dec4d602e1501482"
 
 # UBI Python ships a default user (UID 1001, GID 0) that owns
 # /opt/app-root. Convention is to run as that user with the working
@@ -43,7 +43,12 @@ WORKDIR /opt/app-root/src
 # installs into the UBI default site without needing a virtualenv
 # managed in the Containerfile.
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Upgrade the base image's pip first — the UBI-shipped pip trails
+# upstream security fixes and is itself flagged by image scanners.
+# requirements.txt is runtime-only; dev/test tooling lives in
+# requirements-dev.txt and never enters the image.
+RUN pip install --no-cache-dir --upgrade "pip>=26.2" \
+    && pip install --no-cache-dir -r requirements.txt
 COPY backend/app/ ./app/
 COPY backend/migrations/ ./migrations/
 COPY backend/alembic.ini ./alembic.ini
